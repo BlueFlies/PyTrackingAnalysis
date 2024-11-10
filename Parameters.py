@@ -1,8 +1,21 @@
 import pandas as pd
 import numpy as np
+from enum import Enum
+
+class TrackingType(Enum):
+    TRACKER = 1
+    TWOCHOICETRACKER = 2
+    XCHOICETRACKER = 3
+    DDROPTRACKER = 4
+    PAIRWISEINTERACTIONTRACKER = 5
+    CENTROPHOBISMTRACKER = 6
+    COUNTER = 7
+    TWOCHOICECOUNTER = 7
+    PAIRWISEINTERACTIONCOUNTER = 8
+
 
 class Parameters:
-    def __init__(self, tracking_type="Tracker",fps=0,mm_per_pixel=0.1, speed_window_seconds=1, micromove_speed_mm_sec = [0.2,2],walking_speed_mm_sec=2, sleep_threshold_min=5):
+    def __init__(self, tracking_type=TrackingType.TRACKER,fps=0,mm_per_pixel=0.1, speed_window_seconds=1, micromove_speed_mm_sec = [0.2,2],walking_speed_mm_sec=2, sleep_threshold_min=5):
         self.fps = fps
         self.mm_per_pixel = mm_per_pixel        
         self.speed_window_seconds = speed_window_seconds
@@ -11,6 +24,10 @@ class Parameters:
         self.sleep_threshold_min = sleep_threshold_min
         self.tracking_type = tracking_type
         
+    def set_tracking_type(self, tracking_type):
+        if not isinstance(tracking_type, TrackingType):
+            raise ValueError(f"Invalid tracking type: {tracking_type}. Must be an instance of TrackingType enum.")
+        self.tracking_type = tracking_type
 
     def set_small_arena_values(self,tracking_type):
         self.fps=0
@@ -19,6 +36,7 @@ class Parameters:
         self.micro_move_speed_mm_sec = [0.2,2]
         self.walking_speed_mm_sec = 2
         self.sleep_threshold_min = 5
+        self.set_tracking_type(tracking_type)
 
     def set_movie_values(self,tracking_type, fps, mm_per_pixel):
         self.fps=fps
@@ -27,6 +45,7 @@ class Parameters:
         self.micro_move_speed_mm_sec = [0.2,2]
         self.walking_speed_mm_sec = 2
         self.sleep_threshold_min = 5
+        self.set_tracking_type(tracking_type)
 
     def set_obscura_vales(self,tracking_type):
         self.fps=0
@@ -35,4 +54,5 @@ class Parameters:
         self.micro_move_speed_mm_sec = [0.2,2]
         self.walking_speed_mm_sec = 2
         self.sleep_threshold_min = 5
+        self.set_tracking_type(tracking_type)
         

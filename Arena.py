@@ -3,12 +3,13 @@ import pandas as pd
 import Tracker 
 import TwoChoiceTracker
 import Parameters
+import glob
+from natsort import natsorted
 
 class Arena:
     def __init__(self, exp_name, parameters):        
         self.parameters = parameters
-        self.experiment_name = exp_name
-        self.csv_file = exp_name + "_Data_1.csv"        
+        self.experiment_name = exp_name   
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers()
@@ -34,15 +35,29 @@ class Arena:
         except:
             self.experimental_design = None
 
+
+    def read_all_data(self):
+        csv_files = natsorted(glob.glob(self.experiment_name + "_Data_*.csv"))
+        #Read each CSV file into a DataFrame and store them in a list
+        dataframes = [pd.read_csv(file,keep_default_na=False,na_values=['NaN']) for file in csv_files]
+
+        # Concatenate all DataFrames into a single DataFrame
+        rd = pd.concat(dataframes, ignore_index=True)
+        return rd
+
+
+
     def create_trackers(self):
-        rawdata = pd.read_csv(self.csv_file,keep_default_na=False,na_values=['NaN'])
+        rawdata = self.read_all_data()
         self.trackers = {}
         grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
         for (region,object_id), group in grouped_data:
-            if(self.parameters.tracking_type=="Tracker"):
+            if(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
                 tracker = Tracker.Tracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
-            elif(self.parameters.tracking_type=="TwoChoiceTracker"):
+            elif(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
                 tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+            else:
+                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be an instance of TrackingType enum.")
             self.trackers[f'{region}_{object_id}'] = tracker 
         self.trackerKeys = list(self.trackers.keys())
 
@@ -58,12 +73,13 @@ class Arena:
 
 if __name__ == "__main__":
     p=Parameters.Parameters()
-    p.set_small_arena_values("TwoChoiceTracker")
+    #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
+    p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     arena = Arena('MaxIRSetup',p)
-    print(arena.get_tracker("T_4_0"))
+    print(arena.get_tracker("T_1_0").plot_y([10,10.1],True))
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
-    #print(arena.firstTracker().PlotXY())
+    #print(arena.first_tracker().PlotXY())
     #print(arena.firstTracker().PlotX())
     #print(arena.firstTracker().PlotY())
     #arena.firstTracker().summarize()

@@ -9,10 +9,11 @@ class Tracker:
         self.object_id = object_id
         self.rawdata.reset_index(drop=True, inplace=True)
         self.parameters =parameters
-        self.experimental_design = exp_design
         self.name = f'{tracking_region_id}_{object_id}'
         self.tracking_region = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)
         self.counting_regions = counting_regions
+        ## This function needs to come after tracking regions and name/objectid are set.
+        self.isolate_experimental_design(exp_design)
         self.calculate_minutes()
         self.calculate_speeds_and_feeds()
 
@@ -20,14 +21,21 @@ class Tracker:
         if(self.parameters.fps==-1):
             fulltime = pd.to_datetime(self.rawdata['Time'])+pd.to_timedelta(self.rawdata['Millisec'],unit='ms')
             timediff = fulltime.diff().dt.total_seconds().copy()
-            timediff[0]=0   
+            timediff.iat[0]=0   
             self.rawdata['Minutes']= timediff.cumsum()/60            
         elif (self.parameters.fps==0):
             self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)                      
         else:
-            mmin = (1.0/self.parameters.fps*60)
-            self.rawdata['Minutes'] = pd.Series(np.arange(0,mmin*len(self.rawdata['MSec'],mmin)))
+            ## Can't trust the MSec column so we will base time on frames.           
+            self.rawdata['Minutes'] = self.rawdata['Frame']/(self.parameters.fps*60)
         return
+
+    def isolate_experimental_design(self, exp_design):
+        if(exp_design is None):
+            self.experimental_design = None
+        #self.experimental_design = exp_design
+        self.experimental_design = exp_design[(exp_design['TrackingRegion']==self.tracking_region['Name'].values[0]) & (exp_design['ObjectID']==self.object_id)]
+        self.experimental_design.reset_index(drop=True, inplace=True)
 
 
     def calculate_speeds_and_feeds(self):
@@ -93,6 +101,8 @@ class Tracker:
         return run_boundaries
 
     def get_data_subset(self, range_minutes):
+        if(len(range_minutes)!=2):
+            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
         if(sum(range_minutes)==0):
             return self.rawdata
         data_subset = self.rawdata[(self.rawdata['Minutes']>=range_minutes[0]) & (self.rawdata['Minutes']<=range_minutes[1])]
@@ -124,33 +134,70 @@ class Tracker:
         ylims=(self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel)/(2.0)
         return xlims,ylims
         
-    def PlotX(self):
-        plt.figure(figsize=(10, 6))
-        plt.plot(self.rawdata['Minutes'], self.rawdata['Xpos_mm'], label='X Position (mm)')
-        plt.xlabel('Minutes')
-        plt.ylabel('Position (mm)')
-        plt.title(f'{self.name}')
-        plt.legend()
-        tmp = self.get_plot_limits()        
-        plt.ylim(tmp[0])
-        plt.grid(True)
-        plt.show()
-    
-    def PlotY(self):
-        plt.figure(figsize=(10, 6))        
-        plt.plot(self.rawdata['Minutes'], self.rawdata['Ypos_mm'], label='Y Position (mm)')
-        plt.xlabel('Minutes')
-        plt.ylabel('Position (mm)')
-        plt.title(f'{self.name}')
-        plt.legend()
-        tmp = self.get_plot_limits()
-        plt.ylim(tmp[1])
-        plt.grid(True)
-        plt.show()
+    def plot_x(self, range_minutes=[0,0], show_light=False):
+        if(show_light):
+            data_subset = self.get_data_subset(range_minutes)            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(data_subset['Minutes'], data_subset['Xpos_mm'], label=self.name)
+            ax.set_xlabel('Minutes')
+            ax.set_ylabel('Position (mm)')
+            ax.set_title(f'{self.name}')
+            ax.legend()      
+            tmp = self.get_plot_limits()        
+            ax.set_ylim(tmp[0])
+            ax.grid(True)
 
-    def PlotXY(self):
+            for i in range(len(data_subset) - 1):
+              if data_subset['Indicator'].iloc[i]>0:
+                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+            plt.show()
+        else:
+            data_subset = self.get_data_subset(range_minutes)
+            plt.figure(figsize=(10, 6))
+            plt.plot(data_subset['Minutes'], data_subset['Xpos_mm'], label=self.name)
+            plt.xlabel('Minutes')
+            plt.ylabel('Position (mm)')
+            plt.title(f'{self.name}')
+            plt.legend()
+            tmp = self.get_plot_limits()        
+            plt.ylim(tmp[0])
+            plt.grid(True)
+            plt.show()
+    
+    def plot_y(self, range_minutes=[0,0], show_light=False):
+        if(show_light):
+            data_subset = self.get_data_subset(range_minutes)            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(data_subset['Minutes'], data_subset['Ypos_mm'], label=self.name)
+            ax.set_xlabel('Minutes')
+            ax.set_ylabel('Position (mm)')
+            ax.set_title(f'{self.name}')
+            ax.legend()      
+            tmp = self.get_plot_limits()        
+            ax.set_ylim(tmp[1])
+            ax.grid(True)
+
+            for i in range(len(data_subset) - 1):
+              if data_subset['Indicator'].iloc[i]>0:
+                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+            plt.show()
+        else:
+            data_subset = self.get_data_subset(range_minutes)
+            plt.figure(figsize=(10, 6))        
+            plt.plot(data_subset['Minutes'], data_subset['Ypos_mm'], label='Y Position (mm)')
+            plt.xlabel('Minutes')
+            plt.ylabel('Position (mm)')
+            plt.title(f'{self.name}')
+            plt.legend()
+            tmp = self.get_plot_limits()
+            plt.ylim(tmp[1])
+            plt.grid(True)
+            plt.show()
+
+    def plot_xy(self, range_minutes=[0,0]):
+        data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(self.rawdata['Xpos_mm'], self.rawdata['Ypos_mm'], c=self.rawdata['Minutes'], cmap='viridis')
+        scatter = plt.scatter(data_subset['Xpos_mm'], data_subset['Ypos_mm'], c=data_subset['Minutes'], cmap='viridis')
         plt.colorbar(scatter, label='Minutes')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Y Position (mm)')
@@ -160,7 +207,7 @@ class Tracker:
         plt.ylim(tmp[1])
         plt.grid(True)
 
-        if(self.tracking_region['Shape'].values[0]=='Rectangle'):
+        if(self.tracking_region['Shape'].values[0]=='Ellipse'):
             ellipse = patches.Ellipse((0, 0), width=self.tracking_region['Width'].values[0]*self.parameters.mm_per_pixel, height=self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel, edgecolor='gray', facecolor='none', linewidth=1)            
             plt.gca().add_patch(ellipse)
 
