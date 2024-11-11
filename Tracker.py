@@ -125,7 +125,7 @@ class Tracker:
         end_minutes = data_subset.at[lastrow,'Minutes']
         total_distance_dtrack = (data_subset.at[lastrow,'TotalDistance'] - data_subset.at[0,'TotalDistance'])*self.parameters.mm_per_pixel
         tmp = (f"Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([self.name,self.tracking_region,self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
+        result = pd.Series([self.name,self.tracking_region['Name'][0],self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
         result.index = ['Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceDTrack','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
         return result
 
