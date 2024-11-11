@@ -3,6 +3,7 @@ import pandas as pd
 import Tracker 
 import TwoChoiceTracker
 import Parameters
+import ExperimentalDesign
 import glob
 from natsort import natsorted
 
@@ -13,6 +14,8 @@ class Arena:
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers()
+        self.summarize()
+        self.print_summary()
         
 
     def display_head(self, n=5):
@@ -31,10 +34,9 @@ class Arena:
 
     def get_experimental_design(self):
         try:
-            self.experimental_design = pd.read_csv("ExpDesign.csv",keep_default_na=False,na_values=['NaN'])
-        except:
+            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.experiment_name, self.parameters)
+        except:            
             self.experimental_design = None
-
 
     def read_all_data(self):
         csv_files = natsorted(glob.glob(self.experiment_name + "_Data_*.csv"))
@@ -46,6 +48,19 @@ class Arena:
         return rd
 
 
+    def summarize(self,range_minutes=[0,0]):
+        summaries = []
+        for key, tracker in self.trackers.items():
+            summary = tracker.summarize(range_minutes)
+            summaries.append(summary)
+    
+        # Concatenate all summaries into a single DataFrame
+        all_summaries = pd.DataFrame(summaries)
+
+        self.summary_data = all_summaries        
+    
+    def print_summary(self):
+        print(self.summary_data)
 
     def create_trackers(self):
         rawdata = self.read_all_data()
@@ -76,8 +91,9 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     arena = Arena('MaxIRSetup',p)
-    #arena.get_tracker("T_1_0").plot_cumulative_pi()
-    arena.get_tracker("T_1_0").plot_pis()
+    #print(arena.summarize([30,60]))
+    #print(arena.get_tracker("T_0_0").get_transitions())
+    #arena.get_tracker("T_1_0").plot_pis()
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
     #print(arena.first_tracker().PlotXY())

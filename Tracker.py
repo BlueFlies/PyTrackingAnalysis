@@ -5,15 +5,21 @@ import matplotlib.patches as patches
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
+        self.tracking_region_id = tracking_region_id
         self.rawdata = rawdata        
         self.object_id = object_id
         self.rawdata.reset_index(drop=True, inplace=True)
-        self.parameters =parameters
+        self.parameters =parameters        
+        if(exp_design is not None):            
+            self.tracking_region_design = exp_design.get_tracking_region(self.tracking_region_id)
+            self.counting_regions_design = exp_design.get_counting_regions(self.rawdata['CountingRegion'].unique()).reset_index(drop=True)
+        else:
+            self.tracking_region_design = None
+            self.counting_regions_design = None
         self.name = f'{tracking_region_id}_{object_id}'
-        self.tracking_region = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)
-        self.counting_regions = counting_regions
-        ## This function needs to come after tracking regions and name/objectid are set.
-        self.isolate_experimental_design(exp_design)
+        self.tracking_region_roi = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)
+        self.counting_regions_roi = counting_regions
+        ## This function needs to come after tracking regions and name/objectid are set.        
         self.calculate_minutes()
         self.calculate_speeds_and_feeds()
 
@@ -30,13 +36,7 @@ class Tracker:
             self.rawdata['Minutes'] = self.rawdata['Frame']/(self.parameters.fps*60)
         return
 
-    def isolate_experimental_design(self, exp_design):
-        if(exp_design is None):
-            self.experimental_design = None
-        #self.experimental_design = exp_design
-        self.experimental_design = exp_design[(exp_design['TrackingRegion']==self.tracking_region['Name'].values[0]) & (exp_design['ObjectID']==self.object_id)]
-        self.experimental_design.reset_index(drop=True, inplace=True)
-
+    
 
     def calculate_speeds_and_feeds(self):
         self.rawdata['Xpos_mm'] = self.rawdata['RelX']*self.parameters.mm_per_pixel
@@ -125,13 +125,13 @@ class Tracker:
         end_minutes = data_subset.at[lastrow,'Minutes']
         total_distance_dtrack = (data_subset.at[lastrow,'TotalDistance'] - data_subset.at[0,'TotalDistance'])*self.parameters.mm_per_pixel
         tmp = (f"Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([self.name,self.tracking_region['Name'][0],self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
+        result = pd.Series([self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
         result.index = ['Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceDTrack','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
         return result
 
     def get_plot_limits(self):
-        xlims=(self.tracking_region['Width'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region['Width'].values[0]*self.parameters.mm_per_pixel)/(2.0)
-        ylims=(self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel)/(2.0)
+        xlims=(self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel)/(2.0)
+        ylims=(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(2.0)
         return xlims,ylims
         
     def plot_x(self, range_minutes=[0,0], show_light=False):
@@ -207,8 +207,8 @@ class Tracker:
         plt.ylim(tmp[1])
         plt.grid(True)
 
-        if(self.tracking_region['Shape'].values[0]=='Ellipse'):
-            ellipse = patches.Ellipse((0, 0), width=self.tracking_region['Width'].values[0]*self.parameters.mm_per_pixel, height=self.tracking_region['Height'].values[0]*self.parameters.mm_per_pixel, edgecolor='gray', facecolor='none', linewidth=1)            
+        if(self.tracking_region_roi['Shape'].values[0]=='Ellipse'):
+            ellipse = patches.Ellipse((0, 0), width=self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel, height=self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel, edgecolor='gray', facecolor='none', linewidth=1)            
             plt.gca().add_patch(ellipse)
 
         plt.show()

@@ -6,9 +6,8 @@ import matplotlib.patches as patches
 
 class TwoChoiceTracker(Tracker.Tracker):
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
-        super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)
-        self.verify_experimental_design()
-        self.calculate_pi_data()
+        super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)                
+        self.calculate_pi_data()      
 
 
     def get_pi_subset(self, range_minutes):
@@ -20,12 +19,38 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.reset_index(drop=True, inplace=True)
         return data_subset
 
+    def rle(self, range_minutes=[0,0]):
+        rd = self.get_data_subset(range_minutes)
+        # Ensure the series is of type string
+        series = rd['CountingRegion'].astype(str)
+        
+        # Identify changes in the series values
+        changes = series.ne(series.shift())
+        
+        # Get the run lengths and values
+        run_lengths = series.groupby(changes.cumsum()).size()
+        run_values = series.groupby(changes.cumsum()).first()
+        
+        # Combine run lengths and values into a DataFrame
+        rle_df = pd.DataFrame({'lengths': run_lengths, 'values': run_values}).reset_index(drop=True)
+        
+        return rle_df
+
+
+    def get_transitions(self, range_minutes=[0,0]):        
+        rle_results = self.rle(range_minutes)
+        rle_results = rle_results[rle_results['values'] != "None"]
+
+        changes = rle_results['values'].ne(rle_results['values'].shift())
+
+        ## TODO: Maybe make sure the transitions happen only between counting regions that 
+        ## should be part of this 
+        return sum(changes)-1
 
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=[0,0]):
         data_subset = self.get_pi_subset(range_minutes)
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iloc[-1])
-        print(earliest_min,latest_min)
+        latest_min = round(data_subset['Minutes'].iloc[-1])        
         pis =[]
 
         for end in range(earliest_min, latest_min + 1, step_size_min):
@@ -36,7 +61,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             
     def get_counting_region_counts(self,range_minutes=[0,0]):
         data_subset = self.get_pi_subset(range_minutes)                
-        return data_subset.loc[:,self.experimental_design['Treatment'][0]:self.experimental_design['Treatment'][1]].sum()
+        return data_subset.loc[:,self.counting_regions_design['Characteristic'].iloc[0]:self.counting_regions_design['Characteristic'].iloc[1]].sum()
 
     def get_final_pi(self,range_minutes=[0,0]):
         tmp = self.get_cumulative_pi(range_minutes).iloc[-1].at['CumulativePI']
@@ -51,30 +76,16 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset
         
-    def verify_experimental_design(self):
-        if ("ObjectID" not in self.experimental_design.columns):
-            raise ValueError(f"Invalid design file for TwoChoiceTracker. Missing column: Object_ID")
-        if("TrackingRegion" not in self.experimental_design.columns):
-            raise ValueError(f"Invalid design file for TwoChoiceTracker. Missing column: TrackingRegion")
-        if("CountingRegion" not in self.experimental_design.columns):
-            raise ValueError(f"Invalid design file for TwoChoiceTracker. Missing column: CountingRegion")
-        if("Treatment" not in self.experimental_design.columns):
-            raise ValueError(f"Invalid design file for TwoChoiceTracker. Missing column: Treatment")
-        
-        if(self.experimental_design['Treatment'].nunique()!=2):
-            raise ValueError(f"Invalid design file for TwoChoiceTracker. Must have exactly two unique treatments.")
-        
-        if(self.experimental_design.shape[0]!=2):
-            raise ValueError(f"Possible invalid design file for TwoChoiceTracker. Should have two treatment rows.")
+   
 
     def calculate_pi_data(self):
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
-        trt1 = self.rawdata["CountingRegion"] == self.experimental_design['CountingRegion'][0]
-        trt2 = self.rawdata["CountingRegion"] == self.experimental_design['CountingRegion'][1]
+        trt1 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[0]
+        trt2 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[1]
         pi = trt1.astype(int) - trt2.astype(int)
         
-        self.pi_data.insert(1, self.experimental_design['Treatment'][1], trt2)
-        self.pi_data.insert(1, self.experimental_design['Treatment'][0], trt1)              
+        self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[1], trt2)
+        self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[0], trt1)              
         self.pi_data.insert(1, "PI", pi)
 
         return
@@ -170,7 +181,8 @@ class TwoChoiceTracker(Tracker.Tracker):
         tmp = Tracker.Tracker.summarize(self, range_minutes)
         final_pi = self.get_final_pi(range_minutes)
         counts = self.get_counting_region_counts(range_minutes)
+        treatment = self.tracking_region_design['Treatment'].iloc[0]
         
-        result = pd.concat([tmp,pd.Series({'Final PI': final_pi}),counts])
+        result = pd.concat([pd.Series({'Treatment': treatment}),tmp,pd.Series({'Final PI': final_pi}),counts,pd.Series({'Transitions': self.get_transitions(range_minutes)})])
 
         return result

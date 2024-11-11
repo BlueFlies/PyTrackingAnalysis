@@ -1,0 +1,45 @@
+[Tracking Regions]
+# TrackingRegion, Treatment
+T_0,Chrimson
+T_1,Control
+T_2,Chrimson
+T_3,Control
+T_4,Chrimson
+T_5,Control
+T_6,Chrimson
+T_7,Control
+T_8,Chrimson 
+T_9,Control
+T_10,Chrimson
+T_11,Control
+T_12,Chrimson
+T_13,Control
+T_14,Chrimson
+T_15,Control
+T_16,Chrimson
+T_17,Control
+T_18,Chrimson
+T_19,Control
+T_20,Chrimson
+T_21,Control
+T_22,Chrimson
+T_23,Control
+T_24,Chrimson
+T_25,Control
+T_26,Chrimson
+T_27,Control
+T_28,Chrimson
+T_29,Control
+T_30,Chrimson
+T_31,Control
+T_32,Chrimson
+T_33,Control
+T_34,Chrimson
+T_35,Control
+
+[Counting Regions]
+# CountingRegion, Characteristic 
+Left1,Off
+Right1,On
+Left2,On
+Right2,Off
