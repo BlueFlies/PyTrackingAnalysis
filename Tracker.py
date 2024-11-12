@@ -5,21 +5,29 @@ import matplotlib.patches as patches
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
+        ## These are the key identifiers for the tracker.  They are defined by the data file.
         self.tracking_region_id = tracking_region_id
-        self.rawdata = rawdata        
         self.object_id = object_id
+        ## Contact the two identifying features into a unique name for the tracking blob.
+        self.name = f'{tracking_region_id}_{object_id}'
+        self.rawdata = rawdata        
         self.rawdata.reset_index(drop=True, inplace=True)
         self.parameters =parameters        
+
+        ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
+        ## will likely be used in all stats like functions that combine replicates within a treatment group.
         if(exp_design is not None):            
             self.tracking_region_design = exp_design.get_tracking_region(self.tracking_region_id)
             self.counting_regions_design = exp_design.get_counting_regions(self.rawdata['CountingRegion'].unique()).reset_index(drop=True)
         else:
             self.tracking_region_design = None
             self.counting_regions_design = None
-        self.name = f'{tracking_region_id}_{object_id}'
+        
+        ## These are the ROI from the experiment file.  They are used for plotting and presumably for centrophobism stuff.
         self.tracking_region_roi = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)
         self.counting_regions_roi = counting_regions
-        ## This function needs to come after tracking regions and name/objectid are set.        
+
+        ## These functions should come after all the parameters are set.        
         self.calculate_minutes()
         self.calculate_speeds_and_feeds()
 
@@ -32,11 +40,10 @@ class Tracker:
         elif (self.parameters.fps==0):
             self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)                      
         else:
+            ## If there is a defined FPS we will use it directly with the frame number.
             ## Can't trust the MSec column so we will base time on frames.           
             self.rawdata['Minutes'] = self.rawdata['Frame']/(self.parameters.fps*60)
         return
-
-    
 
     def calculate_speeds_and_feeds(self):
         self.rawdata['Xpos_mm'] = self.rawdata['RelX']*self.parameters.mm_per_pixel
@@ -68,7 +75,7 @@ class Tracker:
         
         self.calculate_sleeping()
         
-    ## This is definitely beta code at the moment.
+    ## This is definitely beta code at the moment. But it may be working reasonably well. It requires a good value for the lower bound of micro move speed.
     def calculate_sleeping(self):
         self.rawdata['IsSleeping'] = False
         runs = self.calculate_run_boundaries() 
@@ -79,7 +86,6 @@ class Tracker:
 
     def calculate_run_boundaries(self):
         # Ensure the series is boolean
-
         series=self.rawdata['IsResting'].copy()
     
         # Identify where the value changes
@@ -123,10 +129,14 @@ class Tracker:
         obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
         start_minutes = data_subset.at[0,'Minutes']
         end_minutes = data_subset.at[lastrow,'Minutes']
+
+        if(self.tracking_region_design is not None):
+            treatment = self.tracking_region_design['Treatment'].iloc[0]
+
         total_distance_dtrack = (data_subset.at[lastrow,'TotalDistance'] - data_subset.at[0,'TotalDistance'])*self.parameters.mm_per_pixel
-        tmp = (f"Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
-        result.index = ['Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceDTrack','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
+        tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
+        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
+        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceDTrack','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
         return result
 
     def get_plot_limits(self):

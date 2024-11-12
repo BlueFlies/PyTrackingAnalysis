@@ -1,14 +1,14 @@
 import pandas as pd
-import numpy as np
+import numpy as np 
 import Tracker
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 class TwoChoiceTracker(Tracker.Tracker):
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
+        ## All of the relevant parameters are defined in the parent class.
         super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)                
         self.calculate_pi_data()      
-
 
     def get_pi_subset(self, range_minutes):
         if(len(range_minutes)!=2):            
@@ -76,7 +76,6 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset
         
-   
 
     def calculate_pi_data(self):
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
@@ -181,8 +180,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         tmp = Tracker.Tracker.summarize(self, range_minutes)
         final_pi = self.get_final_pi(range_minutes)
         counts = self.get_counting_region_counts(range_minutes)
-        treatment = self.tracking_region_design['Treatment'].iloc[0]
-        
-        result = pd.concat([pd.Series({'Treatment': treatment}),tmp,pd.Series({'Final PI': final_pi}),counts,pd.Series({'Transitions': self.get_transitions(range_minutes)})])
+       
+        result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),counts,pd.Series({'Transitions': self.get_transitions(range_minutes)})])
 
         return result
