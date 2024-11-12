@@ -100,7 +100,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.insert(1, "CumulativePercentage", cumperc)
         return data_subset
 
-    def calculate_pi_data(self):
+    def calculate_pi_data(self):        
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
         trt1 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[0]
         trt2 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[1]

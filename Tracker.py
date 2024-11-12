@@ -25,7 +25,7 @@ class Tracker:
             self.counting_regions_design = None
         
         ## These are the ROI from the experiment file.  They are used for plotting and presumably for centrophobism stuff.
-        self.tracking_region_roi = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)
+        self.tracking_region_roi = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)        
         self.counting_regions_roi = counting_regions
 
         ## These functions should come after all the parameters are set.        

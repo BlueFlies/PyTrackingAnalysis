@@ -26,7 +26,7 @@ class Arena:
 
 
     def get_experiment_file_info(self):
-        file_name = self.experiment_name + '.xlsx'
+        file_name = "./Data/" + self.experiment_name + '.xlsx'
         sheet_name = "ROI"
         
         roi = pd.read_excel(file_name, sheet_name=sheet_name)
@@ -36,12 +36,12 @@ class Arena:
 
     def get_experimental_design(self):
         try:
-            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.experiment_name, self.parameters)
+            self.experimental_design = ExperimentalDesign.ExperimentalDesign("./Data/"+self.experiment_name, self.parameters)
         except:            
             self.experimental_design = None
 
     def read_all_data(self):
-        csv_files = natsorted(glob.glob(self.experiment_name + "_Data_*.csv"))
+        csv_files = natsorted(glob.glob("./Data/"+self.experiment_name + "_Data_*.csv"))
         #Read each CSV file into a DataFrame and store them in a list
         dataframes = [pd.read_csv(file,keep_default_na=False,na_values=['NaN']) for file in csv_files]
 
@@ -95,19 +95,19 @@ class Arena:
         return self.trackers.get(key,None)
 
 
-    def plot_treatments(self, range_minutes=[0,0]):      
+    def plot_pi(self, range_minutes=[0,0]):      
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_treatments_twochoicetracker()
+            self.plot_pi_twochoicetracker()
         else:
             pass
        
-    def plot_treatments_facet(self,cutoffs=[10,70]):
+    def plot_pi_facet(se lf,cutoffs=[10,70]):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_treatments_facet_twochoicetracker()
         else:
             pass
 
-    def plot_treatments_twochoicetracker(self, range_minutes=[0,0]):
+    def plot_pi_twochoicetracker(self, range_minutes=[0,0]):
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True,  hue='Transitions')
@@ -127,7 +127,7 @@ class Arena:
             counter+=1
         plt.show()
 
-    def plot_treatments_facet_twochoicetracker(self, cutoffs=[10,70]):   
+    def plot_pi_facet_twochoicetracker(self, cutoffs=[10,70]):   
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -172,14 +172,15 @@ class Arena:
 if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
-    p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
+    #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)
     arena = Arena('MaxIRSetup',p)
     #arena.run_pairwise_comparisons(range_minutes=[10,70])
     #arena.plot_treatments()
-    #print(arena.plot_treatments_facet_twochoicetracker([30,50,60]))
+    print(arena.plot_treatments_facet_twochoicetracker([10,70]))
     #print(arena.summarize())
         
-    print(arena.get_tracker("T_0_0").plot_percentages())
+    #print(arena.get_tracker("T_0_0").plot_percentages())
     #arena.get_tracker("T_1_0").plot_pis()
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)

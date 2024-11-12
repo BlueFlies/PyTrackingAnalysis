@@ -1,0 +1,43 @@
+[Tracking Regions]
+# TrackingRegion, Treatment
+T_0,Control
+T_1,R2R4
+T_2,Control
+T_3,R2R4
+T_4,Control
+T_5,R2R4
+T_6,Control
+T_7,R2R4
+T_8,Control 
+T_9,R2R4
+T_10,Control
+T_11,R2R4
+T_12,Control
+T_13,R2R4
+T_14,Control
+T_15,R2R4
+T_16,Control
+T_17,R2R4
+T_18,Control
+T_19,R2R4
+T_20,Control
+T_21,R2R4
+T_22,Control
+T_23,R2R4
+T_24,Control
+T_25,R2R4
+T_26,Control
+T_27,R2R4
+T_28,Control
+T_29,R2R4
+T_30,Control
+T_31,R2R4
+T_32,Control
+T_33,R2R4
+T_34,Control
+T_35,R2R4
+
+[Counting Regions]
+# CountingRegion, Characteristic 
+Light,Light
+NoLight,NoLight
