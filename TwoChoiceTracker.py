@@ -36,7 +36,6 @@ class TwoChoiceTracker(Tracker.Tracker):
         
         return rle_df
 
-
     def get_transitions(self, range_minutes=[0,0]):        
         rle_results = self.rle(range_minutes)
         rle_results = rle_results[rle_results['values'] != "None"]
@@ -58,13 +57,29 @@ class TwoChoiceTracker(Tracker.Tracker):
             pis.append([start,end,self.get_final_pi([start,end])])
             
         return pd.DataFrame(pis, columns=['StartMin','EndMin','PI'])
+    
+    def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=[0,0]):
+        data_subset = self.get_pi_subset(range_minutes)
+        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        pis =[]
+
+        for end in range(earliest_min, latest_min + 1, step_size_min):
+            start = end - window_size_min
+            pis.append([start,end,self.get_final_percentage([start,end])])
             
+        return pd.DataFrame(pis, columns=['StartMin','EndMin','Percentage'])
+    
     def get_counting_region_counts(self,range_minutes=[0,0]):
         data_subset = self.get_pi_subset(range_minutes)                
         return data_subset.loc[:,self.counting_regions_design['Characteristic'].iloc[0]:self.counting_regions_design['Characteristic'].iloc[1]].sum()
 
     def get_final_pi(self,range_minutes=[0,0]):
         tmp = self.get_cumulative_pi(range_minutes).iloc[-1].at['CumulativePI']
+        return tmp
+    
+    def get_final_percentage(self,range_minutes=[0,0]):
+        tmp = self.get_cumulative_percentage(range_minutes).iloc[-1].at['CumulativePercentage']
         return tmp
 
     def get_cumulative_pi(self,range_minutes=[0,0]):                             
@@ -76,6 +91,14 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset
         
+    def get_cumulative_percentage(self,range_minutes=[0,0]):                             
+        data_subset = self.get_pi_subset(range_minutes)
+        cumperc_n = data_subset['Percentage'].cumsum() 
+        cumperc_d = list(range(1,data_subset.shape[0]+1))
+        cumperc = cumperc_n/cumperc_d
+        
+        data_subset.insert(1, "CumulativePercentage", cumperc)
+        return data_subset
 
     def calculate_pi_data(self):
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
@@ -83,10 +106,12 @@ class TwoChoiceTracker(Tracker.Tracker):
         trt2 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[1]
         pi = trt1.astype(int) - trt2.astype(int)
         
+        perc = trt1.astype(int)
+        
         self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[1], trt2)
         self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[0], trt1)              
+        self.pi_data.insert(1, "Percentage", perc)
         self.pi_data.insert(1, "PI", pi)
-
         return
 
     def plot_pis(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
@@ -109,6 +134,35 @@ class TwoChoiceTracker(Tracker.Tracker):
         ax.set_title(f'{self.name}')
         ax.legend()
         ax.set_ylim([-1, 1])
+        ax.grid(True)
+        
+        if show_light:
+            for i in range(len(cumulative_data) - 1):
+                if cumulative_data['Indicator'].iloc[i] > 0:
+                    ax.axvspan(cumulative_data['Minutes'].iloc[i], cumulative_data['Minutes'].iloc[i + 1], color='yellow', alpha=0.3)
+        
+        plt.show()       
+
+    def plot_percentages(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+        
+        cumulative_data = self.get_cumulative_percentage(range_minutes)
+        
+        # Get time-dependent PI data
+        time_dependent_data = self.get_time_dependent_percentage(window_size_min, step_size_min, range_minutes)
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Plot cumulative PI
+        ax.plot(cumulative_data['Minutes'], cumulative_data['CumulativePercentage'], label='Cumulative Percentage', linestyle='-', color='blue')
+        
+        # Plot time-dependent PI
+        ax.plot(time_dependent_data['EndMin'], time_dependent_data['Percentage'], marker='o', linestyle='--', label='Time-Dependent Percentage', color='red')
+        
+        ax.set_xlabel('Minutes')
+        ax.set_ylabel('Percentage')
+        ax.set_title(f'{self.name}')
+        ax.legend()
+        ax.set_ylim([-0.05, 1.05])
         ax.grid(True)
         
         if show_light:
@@ -146,6 +200,34 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
             
+    def plot_cumulative_percentage(self, range_minutes=[0,0],show_light=False):
+        if(show_light):
+            data_subset = self.get_cumulative_percentage(range_minutes)            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(data_subset['Minutes'], data_subset['CumulativePercentage'], label=self.name)
+            ax.set_xlabel('Minutes')
+            ax.set_ylabel('Cumulative Percentage')
+            ax.set_title(f'{self.name}')
+            ax.legend()      
+            ax.set_ylim([-0.05,1.05])
+            ax.grid(True)
+
+            for i in range(len(data_subset) - 1):
+              if data_subset['Indicator'].iloc[i]>0:
+                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+            plt.show()
+        else:
+            data_subset = self.get_cumulative_percentage(range_minutes)            
+            plt.figure(figsize=(10, 6))
+            plt.plot(data_subset['Minutes'], data_subset['CumulativePercentage'], label=self.name)
+            plt.xlabel('Minutes')
+            plt.ylabel('Cumulative Percentage')
+            plt.title(f'{self.name}')
+            plt.legend()      
+            plt.ylim([-0.05,1.05])
+            plt.grid(True)
+            plt.show()
+            
     def plot_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
         if(show_light):
             data = self.get_time_dependent_pi(window_size_min,step_size_min,range_minutes)
@@ -174,12 +256,42 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.ylim([-1,1])
             plt.grid(True)
             plt.show()
-        
+    
+    def plot_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+        if(show_light):
+            data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
+            ax.set_xlabel('Minutes')
+            ax.set_ylabel('Percentage')
+            ax.set_title(f'{self.name}')
+            ax.legend()      
+            ax.set_ylim([-0.05,1.05])
+            ax.grid(True)
+            
+            for i in range(len(data) - 1):
+              if data['Indicator'].iloc[i]>0:
+                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+            
+            plt.show()
+        else:    
+            data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
+            plt.figure(figsize=(10, 6))
+            plt.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
+            plt.xlabel('Minutes')
+            plt.ylabel('Percentage')
+            plt.title(f'{self.name}')
+            plt.legend()      
+            plt.ylim([-0.05,1.05])
+            plt.grid(True)
+            plt.show()
+    
     def summarize(self, range_minutes=[0,0]):        
         tmp = Tracker.Tracker.summarize(self, range_minutes)
         final_pi = self.get_final_pi(range_minutes)
+        final_perc = self.get_final_percentage(range_minutes)
         counts = self.get_counting_region_counts(range_minutes)
        
-        result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),counts,pd.Series({'Transitions': self.get_transitions(range_minutes)})])
+        result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),pd.Series({"FinalPercentage" : final_perc}),counts,pd.Series({'Transitions': self.get_transitions(range_minutes)})])
 
         return result

@@ -13,8 +13,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 class Arena:
     def __init__(self, exp_name, parameters):        
         self.parameters = parameters
-        self.experiment_name = exp_name   
-        self.summary_data = None
+        self.experiment_name = exp_name         
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers()
@@ -69,12 +68,11 @@ class Arena:
     
         # Concatenate all summaries into a single DataFrame
         all_summaries = pd.DataFrame(summaries)
-
-        self.summary_data = all_summaries        
+            
         return all_summaries
     
-    def print_summary(self):
-        print(self.summary_data)
+    def print_summary(self, range_minutes=[0,0]):
+        print(self.summarize(range_minutes))
 
     def create_trackers(self):
         rawdata = self.read_all_data()
@@ -96,10 +94,8 @@ class Arena:
     def get_tracker(self, key):
         return self.trackers.get(key,None)
 
-#region = Treatment plots
-    def plot_treatments(self):
-        if self.summary_data is None:
-            self.summarize()
+
+    def plot_treatments(self, range_minutes=[0,0]):      
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_treatments_twochoicetracker()
         else:
@@ -111,17 +107,18 @@ class Arena:
         else:
             pass
 
-    def plot_treatments_twochoicetracker(self):
+    def plot_treatments_twochoicetracker(self, range_minutes=[0,0]):
+        summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
-        p=sns.stripplot(x='Treatment', y='FinalPI', data=self.summary_data, jitter=True,  hue='Transitions')
-        tmp = f"PI Range Minutes = [{self.summary_data["StartMinutes"].min():.2f} , {self.summary_data["EndMinutes"].max():.2f}]" 
+        p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True,  hue='Transitions')
+        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
         plt.title(tmp)
         plt.xlabel('Treatment')
         plt.ylabel('PI')
         plt.ylim(-1.1,1.1)
         plt.xlim(-.5,1.5)
 
-        df_mean = self.summary_data.groupby('Treatment', sort=False)['FinalPI'].mean()
+        df_mean = summary_data.groupby('Treatment', sort=False)['FinalPI'].mean()
         ax = plt.gca()
         x_coords = ax.get_xticks()
         counter=0
@@ -130,14 +127,9 @@ class Arena:
             counter+=1
         plt.show()
 
-    def plot_treatments_facet_twochoicetracker(self, cutoffs=[10,70]):
-        if self.summary_data is None:
-            print("Summary data is not available.")
-            return
-        
+    def plot_treatments_facet_twochoicetracker(self, cutoffs=[10,70]):   
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
-
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='FinalPI', hue='Transitions', data=data, jitter=True, **kwargs)
@@ -161,9 +153,6 @@ class Arena:
         
         plt.show()
 
-
-#end region
-
     def run_pairwise_comparisons(self, column='FinalPI', range_minutes=[0,0]):
         summary = self.summarize(range_minutes)
         if 'Treatment' not in summary.columns:
@@ -185,12 +174,12 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     arena = Arena('MaxIRSetup',p)
-    arena.run_pairwise_comparisons(range_minutes=[10,70])
+    #arena.run_pairwise_comparisons(range_minutes=[10,70])
     #arena.plot_treatments()
-    #print(arena.plot_treatments_facet_twochoicetracker([30,60]))
-    #print(arena.summarize([0,30]))
-    
-    #print(arena.get_tracker("T_0_0").plot_xy([10,20]))
+    #print(arena.plot_treatments_facet_twochoicetracker([30,50,60]))
+    #print(arena.summarize())
+        
+    print(arena.get_tracker("T_0_0").plot_percentages())
     #arena.get_tracker("T_1_0").plot_pis()
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
