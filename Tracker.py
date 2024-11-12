@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.animation import FuncAnimation
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
@@ -173,7 +174,7 @@ class Tracker:
             plt.ylim(tmp[0])
             plt.grid(True)
             plt.show()
-    
+
     def plot_y(self, range_minutes=[0,0], show_light=False):
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
@@ -207,7 +208,7 @@ class Tracker:
     def plot_xy(self, range_minutes=[0,0]):
         data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(data_subset['Xpos_mm'], data_subset['Ypos_mm'], c=data_subset['Minutes'], cmap='viridis')
+        scatter = plt.scatter(data_subset['Xpos_mm'], data_subset['Ypos_mm'], c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
         plt.colorbar(scatter, label='Minutes')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Y Position (mm)')
@@ -222,6 +223,44 @@ class Tracker:
             plt.gca().add_patch(ellipse)
 
         plt.show()
+
+    def plot_xy_animated(self, range_minutes=[0, 0], interval = .1):
+        data_subset = self.get_data_subset(range_minutes)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        scatter = ax.scatter([], [], c=[], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
+        colorbar = plt.colorbar(scatter, ax=ax, label='Minutes')
+        ax.set_xlabel('X Position (mm)')
+        ax.set_ylabel('Y Position (mm)')
+        ax.set_title(f'{self.name}')
+        xlims, ylims = self.get_plot_limits()
+        ax.set_xlim(xlims)
+        ax.set_ylim(ylims)
+        ax.grid(True)
+
+        if self.tracking_region_roi['Shape'].values[0] == 'Ellipse':
+            ellipse = patches.Ellipse((0, 0), width=self.tracking_region_roi['Width'].values[0] * self.parameters.mm_per_pixel, height=self.tracking_region_roi['Height'].values[0] * self.parameters.mm_per_pixel, edgecolor='gray', facecolor='none', linewidth=1)
+            ax.add_patch(ellipse)
+
+        time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+
+        def init():
+            scatter.set_offsets([np.nan, np.nan])
+            scatter.set_array([])
+            time_text.set_text('')
+            return scatter,time_text
+
+        def update(frame):
+            current_data = data_subset.iloc[:frame + 1]            
+            scatter.set_offsets(np.c_[current_data['Xpos_mm'], current_data['Ypos_mm']])
+            scatter.set_array(current_data['Minutes'])
+            time_text.set_text(f"Minutes: {current_data['Minutes'].iloc[-1]:.2f}")
+            return scatter, time_text
+
+        ani = FuncAnimation(fig, update, frames=len(data_subset), init_func=init, blit=True, repeat=False, interval=interval)
+        plt.show()
+
+
 
     def __str__(self):
         #return f"a={self.rawdata['CountingRegion']}"

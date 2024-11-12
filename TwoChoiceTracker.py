@@ -135,8 +135,7 @@ class TwoChoiceTracker(Tracker.Tracker):
                 ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
             plt.show()
         else:
-            data_subset = self.get_cumulative_pi(range_minutes)
-            print(self.pi_data)
+            data_subset = self.get_cumulative_pi(range_minutes)            
             plt.figure(figsize=(10, 6))
             plt.plot(data_subset['Minutes'], data_subset['CumulativePI'], label=self.name)
             plt.xlabel('Minutes')

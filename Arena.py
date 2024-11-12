@@ -8,6 +8,7 @@ import glob
 from natsort import natsorted
 import seaborn as sns
 import matplotlib.pyplot as plt
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
 
 class Arena:
     def __init__(self, exp_name, parameters):        
@@ -154,7 +155,7 @@ class Arena:
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
-        g.set_titles(col_template="{col_name:.2f} StartMinutes")
+        g.set_titles(col_template="Start: {col_name:.2f}min")
         g.set_axis_labels('Treatment', 'PI')
         g.set(ylim=(-1.1, 1.1))
         
@@ -162,6 +163,19 @@ class Arena:
 
 
 #end region
+
+    def run_pairwise_comparisons(self, column='FinalPI', range_minutes=[0,0]):
+        summary = self.summarize(range_minutes)
+        if 'Treatment' not in summary.columns:
+            raise ValueError("The summary data does not contain a 'Treatment' column.")
+        if column not in summary.columns:
+            raise ValueError(f"The summary data does not contain a '{column}' column.")
+        
+        # Perform pairwise t-tests
+        tukey = pairwise_tukeyhsd(endog=summary[column], groups=summary['Treatment'], alpha=0.05)
+        print(f"Column = {column}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
+        print(tukey)
+    
     def test(self):
         print(self.firstTracker().locations())
 
@@ -171,11 +185,12 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     arena = Arena('MaxIRSetup',p)
+    arena.run_pairwise_comparisons(range_minutes=[10,70])
     #arena.plot_treatments()
-    print(arena.plot_treatments_facet_twochoicetracker([30,60]))
+    #print(arena.plot_treatments_facet_twochoicetracker([30,60]))
     #print(arena.summarize([0,30]))
     
-    #print(arena.get_tracker("T_0_0").summarize([0,30]))
+    #print(arena.get_tracker("T_0_0").plot_xy([10,20]))
     #arena.get_tracker("T_1_0").plot_pis()
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
