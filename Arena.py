@@ -203,6 +203,10 @@ class Arena:
         for i, y in df_mean.items():
             p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
             counter+=1
+        
+        tmp = list(self.experimental_design.counting_regions.keys())        
+        ax.text(-0.4,1,tmp[0])
+        ax.text(-0.4,-1,tmp[1])
         plt.show()
 
     def plot_pi_facet_twochoicetracker(self, cutoffs=(10,70)):   
@@ -219,6 +223,9 @@ class Arena:
                 p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
                 counter+=1
             ntreatments = data['Treatment'].nunique()
+            tmp = list(self.experimental_design.counting_regions.keys())        
+            ax.text(-0.4,1,tmp[0])
+            ax.text(-0.4,-1,tmp[1])
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
@@ -251,6 +258,9 @@ class Arena:
         for i, y in df_mean.items():
             p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
             counter+=1
+        tmp = list(self.experimental_design.counting_regions.keys())        
+        ax.text(-0.4,1,tmp[0])
+        ax.text(-0.4,-1,tmp[1])
         plt.show()
 
     def plot_percentage_facet_twochoicetracker(self, cutoffs=(10,70)):   
@@ -267,6 +277,9 @@ class Arena:
                 p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
                 counter+=1
             ntreatments = data['Treatment'].nunique()
+            tmp = list(self.experimental_design.counting_regions.keys())        
+            ax.text(-0.4,1,tmp[0])
+            ax.text(-0.4,0,tmp[1])
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
@@ -298,6 +311,7 @@ class Arena:
         for i, y in df_mean.items():
             p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
             counter+=1
+        tmp = list(self.experimental_design.counting_regions.keys())             
         plt.show()
 
     def plot_totaldistance_facet_generaltracker(self, cutoffs=(10,70)):   
@@ -369,6 +383,7 @@ if __name__ == "__main__":
     arena = Arena('MaxIRSetup',p,"./Data/Run2/")
     #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     arena.plot_percentage_facet(cutoffs=(10,70))
+    arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
     #print(arena.summarize_facet((10,20)))
         
