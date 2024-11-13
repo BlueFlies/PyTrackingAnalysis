@@ -12,20 +12,23 @@ class ExperimentalDesign:
         self.experiment_name = exp_name   
         self.parameters = parameters    
         self.experimentdesign_file_name = self.experiment_name + '_Design.txt'        
-        try:
-            self.read_experimental_design_file(self.experimentdesign_file_name)            
+        self.tracking_regions = None
+        # Counting regions is a dictionary with keys as the treatments and values as all the different regions in the datafile that correspond to each.
+        self.counting_regions = None
+        try:            
+            self.read_experimental_design_file(self.experimentdesign_file_name)                      
             self.experimental_design = True
         except:            
             self.experimental_design = False             
-        self.verify_experimental_design()         
+        self.verify_experimental_design()                 
         
 
     def read_experimental_design_file(self, file_name):
         tracking_regions = []
-        counting_regions = []
+        counting_regions = {}
         try:
             with open(file_name, 'r') as file:
-                lines = file.readlines()                
+                lines = file.readlines()                                          
             for l in lines:
                 l = l.strip()         
                 if len(l)==0 or l[0]=="#":
@@ -34,20 +37,24 @@ class ExperimentalDesign:
                     currentSection = l[l.index("[")+1:l.index("]")]                    
                 else:
                     if(currentSection.lower()=="tracking regions"):
-                        thesplit = l.split(",")                         
+                        thesplit = [x.strip() for x in l.split(",")]                               
                         if(len(thesplit)==2):                            
                             tracking_regions.append(thesplit)                            
                     elif(currentSection.lower()=="counting regions"):
-                        thesplit = l.split(",") 
-                        if(len(thesplit)==2):
-                            counting_regions.append(thesplit)
+                        thesplit = l.split(":")                                                                          
+                        if(len(thesplit)==2):   
+                            key = thesplit[0].strip()
+                            values = [x.strip() for x in thesplit[1].split(",")]                         
+                            counting_regions[key] = values
+                        else:
+                            raise ValueError("Invalid counting region format.")
                     elif(currentSection.lower()=="run"):
                         raise ValueError("Run section not implemented yet.")
                     elif(currentSection.lower()=="fly"):
                         raise ValueError("Fly section not implemented yet.")
 
-            self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment'])
-            self.counting_regions = pd.DataFrame(counting_regions, columns=['RegionName','Characteristic'])
+            self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment'])                          
+            self.counting_regions=counting_regions            
         except:
             self.tracking_regions = None
             self.counting_regions = None
@@ -57,10 +64,14 @@ class ExperimentalDesign:
             return None
         return self.tracking_regions[self.tracking_regions['RegionName']==region_name]
     
-    def get_counting_regions(self, region_names):
+    def get_counting_characteristic(self, region_name):
         if(self.counting_regions is None):
             return None                
-        return self.counting_regions[self.counting_regions['RegionName'].isin(region_names)]         
+        else:
+            for key,value in self.counting_regions.items():
+                if region_name in value:
+                    return key
+        return None
 
     def verify_experimental_design(self):
         if(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
@@ -68,7 +79,7 @@ class ExperimentalDesign:
         elif(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
             if(self.experimental_design==False):                                
                 raise ValueError("No experimental design file found for TwoChoiceTracker.")
-            elif(self.counting_regions['Characteristic'].nunique()!=2):                                
+            elif(len(self.counting_regions.keys())!=2):                                
                 raise ValueError(f"Invalid design file for TwoChoiceTracker. Must have exactly two unique counting region characteristics.")
             pass
         else:
@@ -80,5 +91,7 @@ class ExperimentalDesign:
 
 if __name__ == "__main__":
     p=Parameters.Parameters()
-    ed = ExperimentalDesign("MaxIRSetup",p)
-    print(ed.get_tracking_region("T_1"))
+    ed = ExperimentalDesign("./Data/Run2/MaxIRSetup",p)
+    print(ed.counting_regions)
+    print(ed.get_counting_characteristic("NL"))
+    #print(ed.get_tracking_region("T_1"))

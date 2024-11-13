@@ -71,8 +71,9 @@ class TwoChoiceTracker(Tracker.Tracker):
         return pd.DataFrame(pis, columns=['StartMin','EndMin','Percentage'])
     
     def get_counting_region_counts(self,range_minutes=(0,0)):
-        data_subset = self.get_pi_subset(range_minutes)                
-        return data_subset.loc[:,self.counting_regions_design['Characteristic'].iloc[0]:self.counting_regions_design['Characteristic'].iloc[1]].sum()
+        data_subset = self.get_pi_subset(range_minutes)               
+        keys = list(self.counting_regions_design.keys())
+        return data_subset.loc[:,keys[0]:keys[1]].sum()
 
     def get_final_pi(self,range_minutes=(0,0)):
         tmp = self.get_cumulative_pi(range_minutes).iloc[-1].at['CumulativePI']
@@ -102,16 +103,20 @@ class TwoChoiceTracker(Tracker.Tracker):
 
     def calculate_pi_data(self):        
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
-        trt1 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[0]
-        trt2 = self.rawdata["CountingRegion"] == self.counting_regions_design['RegionName'].iloc[1]
-        pi = trt1.astype(int) - trt2.astype(int)
         
-        perc = trt1.astype(int)
+        trts = []
+        for key, value in self.counting_regions_design.items():
+            trts.append(self.rawdata["CountingRegion"].isin(value))
+            
+        pi = trts[0].astype(int) - trts[1].astype(int)
         
-        self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[1], trt2)
-        self.pi_data.insert(1, self.counting_regions_design['Characteristic'].iloc[0], trt1)              
+        perc = trts[0].astype(int)
+        
+        keys = list(self.counting_regions_design.keys())
+        self.pi_data.insert(1, keys[1], trts[1])
+        self.pi_data.insert(1, keys[0], trts[0])              
         self.pi_data.insert(1, "Percentage", perc)
-        self.pi_data.insert(1, "PI", pi)
+        self.pi_data.insert(1, "PI", pi)        
         return
 
     def plot_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):

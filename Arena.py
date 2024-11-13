@@ -32,7 +32,7 @@ class Arena:
      
     def get_experimental_design(self):
         try:
-            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)
+            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)            
         except:            
             self.experimental_design = None
 
@@ -79,6 +79,7 @@ class Arena:
         results = []
         for i in range(len(cutoffs)-1):
             tmp = self.summarize(tuple([cutoffs[i],cutoffs[i+1]]))
+            tmp['FacetRange']=[tuple([cutoffs[i],cutoffs[i+1]])]*len(tmp)
             results.append(tmp)
         all_summaries = pd.concat(results, ignore_index=True)
         if(copy_to_clipboard):            
@@ -221,11 +222,11 @@ class Arena:
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
-        g = sns.FacetGrid(the_data, col='StartMinutes', col_wrap=3, height=4)
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
-        g.set_titles(col_template="Start: {col_name:.2f}min")
+        g.set_titles(col_template="Facet Range (min): {col_name}")
         g.set_axis_labels('Treatment', 'PI')
         g.set(ylim=(-1.1, 1.1))
         
@@ -269,11 +270,11 @@ class Arena:
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
-        g = sns.FacetGrid(the_data, col='StartMinutes', col_wrap=3, height=4)
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
-        g.set_titles(col_template="Start: {col_name:.2f}min")
+        g.set_titles(col_template="Facet Range (min): {col_name}")
         g.set_axis_labels('Treatment', 'Percentage')
         g.set(ylim=(-.05, 1.05))
         
@@ -316,11 +317,11 @@ class Arena:
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
-        g = sns.FacetGrid(the_data, col='StartMinutes', col_wrap=3, height=4)
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
-        g.set_titles(col_template="Start: {col_name:.2f}min")
+        g.set_titles(col_template="Facet Range (min): {col_name}")
         g.set_axis_labels('Treatment', 'Distance (mm/min)')        
         
         plt.show()
@@ -347,15 +348,15 @@ class Arena:
         if metric not in summary.columns:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
         
-        for start_minute in summary['StartMinutes'].unique():
-            subset = summary[summary['StartMinutes'] == start_minute]
+        for frange in summary['FacetRange'].unique():
+            subset = summary[summary['FacetRange'] == frange]
             if len(subset['Treatment'].unique()) > 1:  # Ensure there are at least two treatments to compare
                 tukey = pairwise_tukeyhsd(endog=subset[metric], groups=subset['Treatment'], alpha=0.05)
-                print(f"Column = {metric}, Start Minutes = {start_minute:.2f}")
+                print(f"Column = {metric}, Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
                 print(tukey)
                 print("\n")
             else:
-                print(f"Not enough treatments to compare for Start Minutes = {start_minute:.2f}")
+                print(f"Not enough treatments to compare for Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
 
 #endregion ########### Statistical Functions ############        
 
@@ -364,13 +365,12 @@ if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)
-    p.print()
-    arena = Arena('MaxIRSetup',p,"./Data/")
-    arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
-    #arena.plot_totaldistance_facet(cutoffs=(10,70))
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)    
+    arena = Arena('MaxIRSetup',p,"./Data/Run2/")
+    #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
+    arena.plot_percentage_facet(cutoffs=(10,70))
     #print(arena.plot_percentage_facet())
-    #print(arena.summarize(write_to_csvfile=True))
+    #print(arena.summarize_facet((10,20)))
         
     #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
     #arena.plot_pi(range_minutes=(0,0))
