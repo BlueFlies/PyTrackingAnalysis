@@ -1,4 +1,5 @@
 from enum import Enum
+import pandas as pd
 
 class TrackingType(Enum):
     TRACKER = 1
@@ -72,7 +73,7 @@ class Parameters:
             self.sleep_threshold_min = sleep_threshold_min
     
     def print(self):
-        return self.__str__()
+        print(self.__str__())
 
     def set_obscura_vales(self,tracking_type):
         self.fps=0
@@ -84,5 +85,5 @@ class Parameters:
         self.set_tracking_type(tracking_type)
 
     def __str__(self):
-        return f"tracking_type: {self.tracking_type}, fps: {self.fps}, mm_per_pixel: {self.mm_per_pixel}, speed_window_seconds: {self.speed_window_seconds}, micromove_speed_mm_sec: {self.micro_move_speed_mm_sec}, walking_speed_mm_sec: {self.walking_speed_mm_sec}, sleep_threshold_min: {self.sleep_threshold_min}"
+        return f"tracking_type: {self.tracking_type}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}"
         

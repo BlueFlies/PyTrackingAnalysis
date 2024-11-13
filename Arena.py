@@ -72,7 +72,7 @@ class Arena:
 #endregion ########### Access Functions ############
 
 #region ########### Basic Computation Functions ############
-    def summarize_facet(self,cutoffs=(10,70)):
+    def summarize_facet(self,cutoffs=(10,70),copy_to_clipboard=False, write_to_csvfile=False):
         cutoffs = list(cutoffs)
         cutoffs.insert(0,0)
         cutoffs.append(float('inf'))
@@ -81,6 +81,10 @@ class Arena:
             tmp = self.summarize(tuple([cutoffs[i],cutoffs[i+1]]))
             results.append(tmp)
         all_summaries = pd.concat(results, ignore_index=True)
+        if(copy_to_clipboard):            
+            all_summaries.to_clipboard(index=False)
+        if(write_to_csvfile==True):            
+            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary_Facet.csv",index=False)      
         return all_summaries
 
     def summarize(self,range_minutes=(0,0),copy_to_clipboard=False, write_to_csvfile=False):
@@ -141,20 +145,40 @@ class Arena:
         else:
             pass
 
-    def plot_tracker_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
+    def plot_trackers_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_percentages(window_size_min,step_size_min,range_minutes,show_light)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
     
-    def plot_tracker_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
+    def plot_trackers_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_pis(window_size_min,step_size_min,range_minutes,show_light)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
-        
+
+    def plot_trackers_x(self,range_minutes=(0,0)):
+        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            for key, tracker in self.trackers.items():
+                tracker.plot_x(range_minutes)
+        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+            for key, tracker in self.trackers.items():
+                tracker.plot_x(range_minutes)
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+
+    def plot_trackers_xy(self,range_minutes=(0,0)):
+        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            for key, tracker in self.trackers.items():
+                tracker.plot_xy(range_minutes)
+        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+            for key, tracker in self.trackers.items():
+                tracker.plot_xy(range_minutes)
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+                
 #endregion ########### User Plotting Functions ############
 
 
@@ -304,18 +328,34 @@ class Arena:
 #endregion ########### Backend Plotting ############
 
 #region ########### Statistical Functions ############
-    def run_pairwise_comparisons(self, column='FinalPI', range_minutes=(0,0)):
+    def run_pairwise_comparisons(self, metric='FinalPI', range_minutes=(0,0)):
         summary = self.summarize(range_minutes)
         if 'Treatment' not in summary.columns:
             raise ValueError("The summary data does not contain a 'Treatment' column.")
-        if column not in summary.columns:
-            raise ValueError(f"The summary data does not contain a '{column}' column.")
+        if metric not in summary.columns:
+            raise ValueError(f"The summary data does not contain a '{metric}' column.")
         
         # Perform pairwise t-tests
-        tukey = pairwise_tukeyhsd(endog=summary[column], groups=summary['Treatment'], alpha=0.05)
-        print(f"Column = {column}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
+        tukey = pairwise_tukeyhsd(endog=summary[metric], groups=summary['Treatment'], alpha=0.05)
+        print(f"Column = {metric}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
         print(tukey)
     
+    def run_pairwise_comparisons_facet(self, metric='FinalPI', cutoffs=(10,70)):
+        summary = self.summarize_facet(cutoffs)
+        if 'Treatment' not in summary.columns:
+            raise ValueError("The summary data does not contain a 'Treatment' column.")
+        if metric not in summary.columns:
+            raise ValueError(f"The summary data does not contain a '{metric}' column.")
+        
+        for start_minute in summary['StartMinutes'].unique():
+            subset = summary[summary['StartMinutes'] == start_minute]
+            if len(subset['Treatment'].unique()) > 1:  # Ensure there are at least two treatments to compare
+                tukey = pairwise_tukeyhsd(endog=subset[metric], groups=subset['Treatment'], alpha=0.05)
+                print(f"Column = {metric}, Start Minutes = {start_minute:.2f}")
+                print(tukey)
+                print("\n")
+            else:
+                print(f"Not enough treatments to compare for Start Minutes = {start_minute:.2f}")
 
 #endregion ########### Statistical Functions ############        
 
@@ -325,11 +365,12 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)
+    p.print()
     arena = Arena('MaxIRSetup',p,"./Data/")
-    arena.run_pairwise_comparisons(range_minutes=(10,70))
+    arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_totaldistance_facet(cutoffs=(10,70))
     #print(arena.plot_percentage_facet())
-    print(arena.summarize(write_to_csvfile=True))
+    #print(arena.summarize(write_to_csvfile=True))
         
     #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
     #arena.plot_pi(range_minutes=(0,0))
