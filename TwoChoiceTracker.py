@@ -19,7 +19,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.reset_index(drop=True, inplace=True)
         return data_subset
 
-    def rle(self, range_minutes=[0,0]):
+    def rle(self, range_minutes=(0,0)):
         rd = self.get_data_subset(range_minutes)
         # Ensure the series is of type string
         series = rd['CountingRegion'].astype(str)
@@ -36,7 +36,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         
         return rle_df
 
-    def get_transitions(self, range_minutes=[0,0]):        
+    def get_transitions(self, range_minutes=(0,0)):        
         rle_results = self.rle(range_minutes)
         rle_results = rle_results[rle_results['values'] != "None"]
 
@@ -46,7 +46,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         ## should be part of this 
         return sum(changes)-1
 
-    def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=[0,0]):
+    def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iloc[-1])        
@@ -58,7 +58,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             
         return pd.DataFrame(pis, columns=['StartMin','EndMin','PI'])
     
-    def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=[0,0]):
+    def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iloc[-1])        
@@ -70,19 +70,19 @@ class TwoChoiceTracker(Tracker.Tracker):
             
         return pd.DataFrame(pis, columns=['StartMin','EndMin','Percentage'])
     
-    def get_counting_region_counts(self,range_minutes=[0,0]):
+    def get_counting_region_counts(self,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)                
         return data_subset.loc[:,self.counting_regions_design['Characteristic'].iloc[0]:self.counting_regions_design['Characteristic'].iloc[1]].sum()
 
-    def get_final_pi(self,range_minutes=[0,0]):
+    def get_final_pi(self,range_minutes=(0,0)):
         tmp = self.get_cumulative_pi(range_minutes).iloc[-1].at['CumulativePI']
         return tmp
     
-    def get_final_percentage(self,range_minutes=[0,0]):
+    def get_final_percentage(self,range_minutes=(0,0)):
         tmp = self.get_cumulative_percentage(range_minutes).iloc[-1].at['CumulativePercentage']
         return tmp
 
-    def get_cumulative_pi(self,range_minutes=[0,0]):                             
+    def get_cumulative_pi(self,range_minutes=(0,0)):                             
         data_subset = self.get_pi_subset(range_minutes)
         cumpi_n = data_subset['PI'].cumsum()
         cumpi_d= data_subset['PI'].abs().cumsum()
@@ -91,7 +91,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset
         
-    def get_cumulative_percentage(self,range_minutes=[0,0]):                             
+    def get_cumulative_percentage(self,range_minutes=(0,0)):                             
         data_subset = self.get_pi_subset(range_minutes)
         cumperc_n = data_subset['Percentage'].cumsum() 
         cumperc_d = list(range(1,data_subset.shape[0]+1))
@@ -114,7 +114,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         self.pi_data.insert(1, "PI", pi)
         return
 
-    def plot_pis(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+    def plot_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         
         cumulative_data = self.get_cumulative_pi(range_minutes)
         
@@ -127,7 +127,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         ax.plot(cumulative_data['Minutes'], cumulative_data['CumulativePI'], label='Cumulative PI', linestyle='-', color='blue')
         
         # Plot time-dependent PI
-        ax.plot(time_dependent_data['EndMin'], time_dependent_data['PI'], marker='o', linestyle='--', label='Time-Dependent PI', color='red')
+        ax.plot(time_dependent_data['EndMin'], time_dependent_data['PI'], marker='o', linestyle='--', label='Time-Dependent PI', color='green')
         
         ax.set_xlabel('Minutes')
         ax.set_ylabel('PI')
@@ -139,11 +139,11 @@ class TwoChoiceTracker(Tracker.Tracker):
         if show_light:
             for i in range(len(cumulative_data) - 1):
                 if cumulative_data['Indicator'].iloc[i] > 0:
-                    ax.axvspan(cumulative_data['Minutes'].iloc[i], cumulative_data['Minutes'].iloc[i + 1], color='yellow', alpha=0.3)
+                    ax.axvspan(cumulative_data['Minutes'].iloc[i], cumulative_data['Minutes'].iloc[i + 1], color='red', alpha=0.1)
         
         plt.show()       
 
-    def plot_percentages(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+    def plot_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         
         cumulative_data = self.get_cumulative_percentage(range_minutes)
         
@@ -156,7 +156,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         ax.plot(cumulative_data['Minutes'], cumulative_data['CumulativePercentage'], label='Cumulative Percentage', linestyle='-', color='blue')
         
         # Plot time-dependent PI
-        ax.plot(time_dependent_data['EndMin'], time_dependent_data['Percentage'], marker='o', linestyle='--', label='Time-Dependent Percentage', color='red')
+        ax.plot(time_dependent_data['EndMin'], time_dependent_data['Percentage'], marker='o', linestyle='--', label='Time-Dependent Percentage', color='green')
         
         ax.set_xlabel('Minutes')
         ax.set_ylabel('Percentage')
@@ -168,11 +168,11 @@ class TwoChoiceTracker(Tracker.Tracker):
         if show_light:
             for i in range(len(cumulative_data) - 1):
                 if cumulative_data['Indicator'].iloc[i] > 0:
-                    ax.axvspan(cumulative_data['Minutes'].iloc[i], cumulative_data['Minutes'].iloc[i + 1], color='yellow', alpha=0.3)
+                    ax.axvspan(cumulative_data['Minutes'].iloc[i], cumulative_data['Minutes'].iloc[i + 1], color='red', alpha=0.01)
         
         plt.show()       
 
-    def plot_cumulative_pi(self, range_minutes=[0,0],show_light=False):
+    def plot_cumulative_pi(self, range_minutes=(0,0),show_light=False):
         if(show_light):
             data_subset = self.get_cumulative_pi(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -186,7 +186,7 @@ class TwoChoiceTracker(Tracker.Tracker):
 
             for i in range(len(data_subset) - 1):
               if data_subset['Indicator'].iloc[i]>0:
-                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.01)
             plt.show()
         else:
             data_subset = self.get_cumulative_pi(range_minutes)            
@@ -200,7 +200,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
             
-    def plot_cumulative_percentage(self, range_minutes=[0,0],show_light=False):
+    def plot_cumulative_percentage(self, range_minutes=(0,0),show_light=False):
         if(show_light):
             data_subset = self.get_cumulative_percentage(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -214,7 +214,7 @@ class TwoChoiceTracker(Tracker.Tracker):
 
             for i in range(len(data_subset) - 1):
               if data_subset['Indicator'].iloc[i]>0:
-                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.01)
             plt.show()
         else:
             data_subset = self.get_cumulative_percentage(range_minutes)            
@@ -228,7 +228,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
             
-    def plot_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+    def plot_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         if(show_light):
             data = self.get_time_dependent_pi(window_size_min,step_size_min,range_minutes)
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -242,7 +242,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             
             for i in range(len(data) - 1):
               if data['Indicator'].iloc[i]>0:
-                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.01)
             
             plt.show()
         else:    
@@ -257,7 +257,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
     
-    def plot_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=[0,0], show_light=False):
+    def plot_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         if(show_light):
             data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -271,7 +271,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             
             for i in range(len(data) - 1):
               if data['Indicator'].iloc[i]>0:
-                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.1)
+                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.01)
             
             plt.show()
         else:    
@@ -286,7 +286,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
     
-    def summarize(self, range_minutes=[0,0]):        
+    def summarize(self, range_minutes=(0,0)):        
         tmp = Tracker.Tracker.summarize(self, range_minutes)
         final_pi = self.get_final_pi(range_minutes)
         final_perc = self.get_final_percentage(range_minutes)

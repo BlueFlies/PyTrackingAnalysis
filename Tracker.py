@@ -116,7 +116,7 @@ class Tracker:
         data_subset.reset_index(drop=True, inplace=True)
         return data_subset
 
-    def summarize(self, range_minutes=[0,0]):
+    def summarize(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
         
         perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
@@ -130,14 +130,15 @@ class Tracker:
         obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
         start_minutes = data_subset.at[0,'Minutes']
         end_minutes = data_subset.at[lastrow,'Minutes']
+        total_distance_min = total_distance/obs_minutes
 
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iloc[0]
 
         total_distance_dtrack = (data_subset.at[lastrow,'TotalDistance'] - data_subset.at[0,'TotalDistance'])*self.parameters.mm_per_pixel
-        tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_dtrack,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
-        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceDTrack','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
+        #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
+        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
+        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
         return result
 
     def get_plot_limits(self):
@@ -145,7 +146,7 @@ class Tracker:
         ylims=(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(2.0)
         return xlims,ylims
         
-    def plot_x(self, range_minutes=[0,0], show_light=False):
+    def plot_x(self, range_minutes=(0,0), show_light=False):
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -175,7 +176,7 @@ class Tracker:
             plt.grid(True)
             plt.show()
 
-    def plot_y(self, range_minutes=[0,0], show_light=False):
+    def plot_y(self, range_minutes=(0,0), show_light=False):
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -205,7 +206,7 @@ class Tracker:
             plt.grid(True)
             plt.show()
 
-    def plot_xy(self, range_minutes=[0,0]):
+    def plot_xy(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
         scatter = plt.scatter(data_subset['Xpos_mm'], data_subset['Ypos_mm'], c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())

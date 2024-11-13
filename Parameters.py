@@ -1,5 +1,3 @@
-import pandas as pd
-import numpy as np
 from enum import Enum
 
 class TrackingType(Enum):
