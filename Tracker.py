@@ -58,7 +58,8 @@ class Tracker:
         self.rawdata.loc[0,'DeltaSec']=0
         window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
         if(window_size<=1):
-            self.rawdata['Speed_mm_s'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
+            print("hi")
+            self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
         else:
             self.rawdata['DistWindow_mm']  = self.rawdata['Dist_mm'].rolling(window=window_size).sum()
             self.rawdata.loc[0,'DistWindow_mm']=0
@@ -126,7 +127,7 @@ class Tracker:
 
         avg_speed = data_subset['Speed_mm_sec'].mean()
         total_distance = data_subset['Dist_mm'].sum()
-        lastrow = data_subset.shape[0]-1
+        lastrow = data_subset.shape[0]-1        
         obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
         start_minutes = data_subset.at[0,'Minutes']
         end_minutes = data_subset.at[lastrow,'Minutes']

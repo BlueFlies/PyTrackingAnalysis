@@ -77,7 +77,12 @@ class Arena:
 
 #region ########### Basic Computation Functions ############
     def summarize_facet(self,cutoffs=(10,70),copy_to_clipboard=False, write_to_csvfile=False):
-        cutoffs = list(cutoffs)
+        if(isinstance(cutoffs, tuple)):
+            cutoffs = list(cutoffs)
+        elif(isinstance(cutoffs, int)):
+            cutoffs = [cutoffs]
+        else:
+            raise ValueError("Invalid cutoffs. Must be a tuple or asingle integer")
         cutoffs.insert(0,0)
         cutoffs.append(float('inf'))
         results = []
@@ -117,36 +122,36 @@ class Arena:
 #region ########### User Plotting Functions ############
     def plot_pi(self, range_minutes=(0,0)):      
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_pi_twochoicetracker()
+            self.plot_pi_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
     def plot_pi_facet(self,cutoffs=(10,70)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_pi_facet_twochoicetracker()
+            self.plot_pi_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
     def plot_percentage(self, range_minutes=(0,0)):      
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_percentage_twochoicetracker()
+            self.plot_percentage_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")  
     def plot_percentage_facet(self,cutoffs=(10,70)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_percentage_facet_twochoicetracker()
+            self.plot_percentage_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
     def plot_totaldistance(self, range_minutes=(0,0)):      
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_totaldistance_generaltracker()
+            self.plot_totaldistance_generaltracker(range_minutes)
         elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
-            self.plot_totaldistance_generaltracker()
+            self.plot_totaldistance_generaltracker(range_minutes)
         else:
             pass
     def plot_totaldistance_facet(self,cutoffs=(10,70)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_totaldistance_facet_generaltracker()
+            self.plot_totaldistance_facet_generaltracker(cutoffs)
         elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
-            self.plot_totaldistance_facet_generaltracker()
+            self.plot_totaldistance_facet_generaltracker(cutoffs)
         else:
             pass
 
@@ -186,13 +191,13 @@ class Arena:
     
     def plot_transitions(self,range_minutes=(0,0)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_transitions_twochoicetracker()
+            self.plot_transitions_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
         
     def plot_transitions_facet(self,cutoffs=(10,70)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_transitions_facet_twochoicetracker()
+            self.plot_transitions_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
     
@@ -290,6 +295,7 @@ class Arena:
                 p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
                 counter+=1
             ntreatments = data['Treatment'].nunique()
+            plt.xlim(-.5,ntreatments-1+0.5)
             
         # Create the FacetGrid
         g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
@@ -463,13 +469,14 @@ if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)    
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)   
+    p.set(fps=8) 
     arena = Arena('MaxIRSetup',p,"./Data/")
-    arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
+    #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    #print(arena.summarize())
+    print(arena.summarize_facet(cutoffs=(10)))
         
     #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
     #arena.plot_pi(range_minutes=(0,0))
