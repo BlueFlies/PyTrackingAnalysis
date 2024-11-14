@@ -9,6 +9,8 @@ from natsort import natsorted
 import seaborn as sns
 import matplotlib.pyplot as plt
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
+from collections import OrderedDict
+from scipy.stats import ttest_ind
 
 class Arena:
 
@@ -46,7 +48,7 @@ class Arena:
         return rd
     def create_trackers(self):
         rawdata = self.read_all_data()
-        self.trackers = {}
+        tmp_trackers = {}
         grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
         for (region,object_id), group in grouped_data:
             if(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
@@ -55,8 +57,9 @@ class Arena:
                 tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
             else:
                 raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be an instance of TrackingType enum.")
-            self.trackers[f'{region}_{object_id}'] = tracker 
-        self.trackerKeys = list(self.trackers.keys())
+            tmp_trackers[f'{region}_{object_id}'] = tracker 
+        self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
+
 
 #endregion ########### Initialization Functions ############
     
@@ -64,7 +67,8 @@ class Arena:
 #region ########### Access Functions ############
     
     def first_tracker(self):
-        return self.trackers[self.trackerKeys[0]]
+        tmp = list(self.trackers.keys())
+        return self.trackers[tmp[0]]
 
     def get_tracker(self, key):
         return self.trackers.get(key,None)
@@ -179,7 +183,19 @@ class Arena:
                 tracker.plot_xy(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
-                
+    
+    def plot_transitions(self,range_minutes=(0,0)):
+        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            self.plot_transitions_twochoicetracker()
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+        
+    def plot_transitions_facet(self,cutoffs=(10,70)):
+        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            self.plot_transitions_facet_twochoicetracker()
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+    
 #endregion ########### User Plotting Functions ############
 
 
@@ -207,6 +223,27 @@ class Arena:
         tmp = list(self.experimental_design.counting_regions.keys())        
         ax.text(-0.4,1,tmp[0])
         ax.text(-0.4,-1,tmp[1])
+        plt.show()
+    
+    def plot_transitions_twochoicetracker(self, range_minutes=(0,0)):
+        summary_data = self.summarize(range_minutes)
+        plt.figure(figsize=(10, 6))
+        p=sns.stripplot(x='Treatment', y='TransitionsPerMin', data=summary_data, jitter=True,  hue='FinalPI')
+        tmp = f"Transitions Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        plt.title(tmp)
+        plt.xlabel('Treatment')
+        plt.ylabel('Transitions (transitions/min)')        
+        ntreatments = summary_data['Treatment'].nunique()
+        plt.xlim(-.5,ntreatments-1+0.5)
+
+        df_mean = summary_data.groupby('Treatment', sort=False)['TransitionsPerMin'].mean()
+        ax = plt.gca()
+        x_coords = ax.get_xticks()
+        counter=0
+        for i, y in df_mean.items():
+            p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+            counter+=1
+               
         plt.show()
 
     def plot_pi_facet_twochoicetracker(self, cutoffs=(10,70)):   
@@ -236,6 +273,31 @@ class Arena:
         g.set_titles(col_template="Facet Range (min): {col_name}")
         g.set_axis_labels('Treatment', 'PI')
         g.set(ylim=(-1.1, 1.1))
+        
+        plt.show()
+
+    def plot_transitions_facet_twochoicetracker(self, cutoffs=(10,70)):   
+        # Create a new column for the minute ranges
+        the_data = self.summarize_facet(cutoffs)
+
+        def custom_plot(data, **kwargs):
+            p=sns.stripplot(x='Treatment', y='TransitionsPerMin', hue='FinalPI', data=data, jitter=True, **kwargs)
+            means = data.groupby('Treatment', sort=False)['TransitionsPerMin'].mean()
+            ax = plt.gca()
+            x_coords = ax.get_xticks()
+            counter=0
+            for i, y in means.items():
+                p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+                counter+=1
+            ntreatments = data['Treatment'].nunique()
+            
+        # Create the FacetGrid
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
+        g.map_dataframe(custom_plot)
+        # Add titles and labels
+        g.set_titles(col_template="Facet Range (min): {col_name}")
+        g.set_axis_labels('Treatment', 'Transitions (transitions/min)')        
         
         plt.show()
 
@@ -351,9 +413,22 @@ class Arena:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
         
         # Perform pairwise t-tests
-        tukey = pairwise_tukeyhsd(endog=summary[metric], groups=summary['Treatment'], alpha=0.05)
-        print(f"Column = {metric}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
-        print(tukey)
+        treatments = summary['Treatment'].unique()
+
+        print(treatments)
+        if(len(treatments)<2):
+            raise ValueError("There must be at least two treatments to compare.")
+        elif(len(treatments)==2):
+            group1 = summary[summary['Treatment'] == treatments[0]][metric]
+            group2 = summary[summary['Treatment'] == treatments[1]][metric]
+            t_stat, p_value = ttest_ind(group1, group2)
+            print("############# T-Test #############")
+            print(f"Column = {metric}, Range Minutes = ({range_minutes[0]:.2f} , {range_minutes[1]:.2f}) ")
+            print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
+        else:
+            tukey = pairwise_tukeyhsd(endog=summary[metric], groups=summary['Treatment'], alpha=0.05)            
+            print(f"Column = {metric}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
+            print(tukey)
     
     def run_pairwise_comparisons_facet(self, metric='FinalPI', cutoffs=(10,70)):
         summary = self.summarize_facet(cutoffs)
@@ -364,14 +439,23 @@ class Arena:
         
         for frange in summary['FacetRange'].unique():
             subset = summary[summary['FacetRange'] == frange]
-            if len(subset['Treatment'].unique()) > 1:  # Ensure there are at least two treatments to compare
+            treatments = subset['Treatment'].unique()
+            if(len(treatments)<2):
+                raise ValueError("There must be at least two treatments to compare.")
+            elif(len(treatments)==2):
+                group1 = subset[subset['Treatment'] == treatments[0]][metric]
+                group2 = subset[subset['Treatment'] == treatments[1]][metric]
+                t_stat, p_value = ttest_ind(group1, group2)
+                print("############# T-Test #############")
+                print(f"Column = {metric}, Range Minutes = ({frange[0]:.2f} , {frange[1]:.2f}) ")
+                print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
+                print("\n")
+            else:              
                 tukey = pairwise_tukeyhsd(endog=subset[metric], groups=subset['Treatment'], alpha=0.05)
                 print(f"Column = {metric}, Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
                 print(tukey)
                 print("\n")
-            else:
-                print(f"Not enough treatments to compare for Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
-
+            
 #endregion ########### Statistical Functions ############        
 
 
@@ -380,17 +464,17 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)    
-    arena = Arena('MaxIRSetup',p,"./Data/Run2/")
-    #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
-    arena.plot_percentage_facet(cutoffs=(10,70))
-    arena.plot_pi_facet((10,70))
+    arena = Arena('MaxIRSetup',p,"./Data/")
+    arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
+    #arena.plot_percentage_facet(cutoffs=(10,70))
+    #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    #print(arena.summarize_facet((10,20)))
+    #print(arena.summarize())
         
     #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
     #arena.plot_pi(range_minutes=(0,0))
-    #arena.plot_pi(range_minutes=(0,0))
-    #arena.get_tracker("T_1_0").plot_pis()
+    #arena.plot_transitions_facet()
+    #arena.get_tracker("T_1_0").plot_x()
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
     #print(arena.first_tracker().PlotXY())
