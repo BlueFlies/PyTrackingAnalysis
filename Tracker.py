@@ -288,7 +288,12 @@ class Tracker:
         ani = FuncAnimation(fig, update, frames=len(data_subset), init_func=init, blit=True, repeat=False, interval=interval)
         plt.show()
 
+    def get_x_positions(self, range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)        
+        return data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])
 
+    def get_treatment(self):
+        return self.tracking_region_design['Treatment'].iloc[0]
 
     def __str__(self):
         #return f"a={self.rawdata['CountingRegion']}"

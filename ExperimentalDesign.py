@@ -38,8 +38,10 @@ class ExperimentalDesign:
                 else:
                     if(currentSection.lower()=="tracking regions"):
                         thesplit = [x.strip() for x in l.split(",")]                               
-                        if(len(thesplit)==2):                            
-                            tracking_regions.append(thesplit)                            
+                        if(len(thesplit)==4):                            
+                            tracking_regions.append(thesplit)                                                    
+                        elif(len(thesplit)==2):                            
+                            tracking_regions.append([thesplit[0],thesplit[1],1,1])
                     elif(currentSection.lower()=="counting regions"):
                         thesplit = l.split(":")                                                                          
                         if(len(thesplit)==2):   
@@ -53,7 +55,7 @@ class ExperimentalDesign:
                     elif(currentSection.lower()=="fly"):
                         raise ValueError("Fly section not implemented yet.")
 
-            self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment'])                          
+            self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment',"XLocationMultiplier","YLocationMultiplier"])                          
             self.counting_regions=counting_regions            
         except:
             self.tracking_regions = None
@@ -91,7 +93,6 @@ class ExperimentalDesign:
 
 if __name__ == "__main__":
     p=Parameters.Parameters()
-    ed = ExperimentalDesign("./Data/Run2/MaxIRSetup",p)
-    print(ed.counting_regions)
-    print(ed.get_counting_characteristic("NL"))
+    ed = ExperimentalDesign("./Data/MaxIRSetup",p)
+    print(ed.tracking_regions)
     #print(ed.get_tracking_region("T_1"))

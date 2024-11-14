@@ -169,15 +169,32 @@ class Arena:
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
 
-    def plot_trackers_x(self,range_minutes=(0,0)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-            for key, tracker in self.trackers.items():
-                tracker.plot_x(range_minutes)
-        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
-            for key, tracker in self.trackers.items():
-                tracker.plot_x(range_minutes)
-        else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+    def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
+        if(one_plot):
+            fig, ax = plt.subplots(figsize=(10, 6))
+        
+            # Generate a colormap
+            colormap = plt.cm.get_cmap('tab10', len(self.trackers))
+            
+            for idx, (key, tracker) in enumerate(self.trackers.items()):
+                if(tracker.get_treatment()=="Chrimson"):
+                    # Assuming tracker has a method to get x-positions within the specified range
+                    x_positions = tracker.get_x_positions(range_minutes)
+                    ax.plot(x_positions, label=key, color=colormap(idx))
+            
+            ax.set_xlabel('Minutes')
+            ax.set_ylabel('X Position')
+            ax.set_title("Chrimson Females")            
+            plt.show()            
+        else:            
+            if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+                for key, tracker in self.trackers.items():
+                    tracker.plot_x(range_minutes)
+            elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+                for key, tracker in self.trackers.items():
+                    tracker.plot_x(range_minutes)
+            else:
+                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
 
     def plot_trackers_xy(self,range_minutes=(0,0)):
         if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
@@ -469,19 +486,19 @@ if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)   
-    p.set(fps=8) 
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)       
     arena = Arena('MaxIRSetup',p,"./Data/")
     #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    print(arena.summarize_facet(cutoffs=(10)))
+    #print(arena.summarize_facet(cutoffs=(10)))
+    arena.plot_trackers_x(range_minutes=(0,0),one_plot=True)
         
     #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
     #arena.plot_pi(range_minutes=(0,0))
     #arena.plot_transitions_facet()
-    #arena.get_tracker("T_1_0").plot_x()
+    #arena.get_tracker("T_1_0").get_x_positions((10,20))
     #print(arena.firstTracker().tracking_region)
     #print(arena.firstTracker().counting_regions)
     #print(arena.first_tracker().PlotXY())
