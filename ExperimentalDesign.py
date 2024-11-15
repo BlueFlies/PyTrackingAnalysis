@@ -37,8 +37,14 @@ class ExperimentalDesign:
                     currentSection = l[l.index("[")+1:l.index("]")]                    
                 else:
                     if(currentSection.lower()=="tracking regions"):
-                        thesplit = [x.strip() for x in l.split(",")]                               
-                        if(len(thesplit)==4):                            
+                        thesplit = [x.strip() for x in l.split(",")]                                        
+                        if(len(thesplit)==4):    
+                            thesplit[2] = int(thesplit[2])
+                            if(thesplit[2]!=-1 and thesplit[2]!=1):
+                                thesplit[2] = 1
+                            thesplit[3] = int(thesplit[3])
+                            if(thesplit[3]!=-1 and thesplit[3]!=1):                                                           
+                                thesplit[3] = 1                        
                             tracking_regions.append(thesplit)                                                    
                         elif(len(thesplit)==2):                            
                             tracking_regions.append([thesplit[0],thesplit[1],1,1])

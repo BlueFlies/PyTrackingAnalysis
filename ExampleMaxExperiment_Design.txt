@@ -1,0 +1,43 @@
+[Tracking Regions]
+# TrackingRegion, Treatment, Flip X (1/no or -1/yes), Flip Y (1/no or -1/yes)
+T_0,Control,-1,1
+T_1,R2R4,-1,1
+T_2,Control,-1,1
+T_3,R2R4,-1,1
+T_4,Control,-1,1
+T_5,R2R4,-1,1
+T_6,Control,-1,1
+T_7,R2R4,-1,1
+T_8,Control,-1,1 
+T_9,R2R4,-1,1
+T_10,Control,-1,1
+T_11,R2R4,-1,1
+T_12,Control,-1,1
+T_13,R2R4,-1,1
+T_14,Control,-1,1
+T_15,R2R4,-1,1
+T_16,Control,-1,1
+T_17,R2R4,-1,1
+T_18,Control,1,1
+T_19,R2R4,1,1
+T_20,Control,1,1
+T_21,R2R4,1,1
+T_22,Control,1,1
+T_23,R2R4,1,1
+T_24,Control,1,1
+T_25,R2R4,1,1
+T_26,Control,1,1
+T_27,R2R4,1,1
+T_28,Control,1,1
+T_29,R2R4,1,1
+T_30,Control,1,1
+T_31,R2R4,1,1
+T_32,Control,1,1
+T_33,R2R4,1,1
+T_34,Control,1,1
+T_35,R2R4,1,1
+
+[Counting Regions]
+# Characteristic: Counting Regions 
+Light: Light,LL,L
+NoLight: NoLight,NL,NN

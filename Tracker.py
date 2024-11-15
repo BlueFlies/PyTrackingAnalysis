@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
+import time
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
@@ -57,8 +58,7 @@ class Tracker:
         self.rawdata['DeltaSec'] = self.rawdata['Minutes'].copy().diff() * 60
         self.rawdata.loc[0,'DeltaSec']=0
         window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
-        if(window_size<=1):
-            print("hi")
+        if(window_size<=1):            
             self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
         else:
             self.rawdata['DistWindow_mm']  = self.rawdata['Dist_mm'].rolling(window=window_size).sum()
@@ -151,10 +151,13 @@ class Tracker:
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(data_subset['Minutes'], data_subset['Xpos_mm'], label=self.name)
+            ax.plot(data_subset['Minutes'], data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), label=self.name)
             ax.set_xlabel('Minutes')
             ax.set_ylabel('Position (mm)')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+            if((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+            ax.set_title(title)
             ax.legend()      
             tmp = self.get_plot_limits()        
             ax.set_ylim(tmp[0])
@@ -167,10 +170,13 @@ class Tracker:
         else:
             data_subset = self.get_data_subset(range_minutes)
             plt.figure(figsize=(10, 6))
-            plt.plot(data_subset['Minutes'], data_subset['Xpos_mm'], label=self.name)
+            plt.plot(data_subset['Minutes'], data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), label=self.name)
             plt.xlabel('Minutes')
             plt.ylabel('Position (mm)')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+            if((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+            plt.title(title)
             plt.legend()
             tmp = self.get_plot_limits()        
             plt.ylim(tmp[0])
@@ -207,10 +213,13 @@ class Tracker:
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(data_subset['Minutes'], data_subset['Ypos_mm'], label=self.name)
+            ax.plot(data_subset['Minutes'], data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), label=self.name)
             ax.set_xlabel('Minutes')
             ax.set_ylabel('Position (mm)')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+            if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+                title = title + " (Y Coordinate Fipped)"
+            ax.set_title(title)
             ax.legend()      
             tmp = self.get_plot_limits()        
             ax.set_ylim(tmp[1])
@@ -223,10 +232,13 @@ class Tracker:
         else:
             data_subset = self.get_data_subset(range_minutes)
             plt.figure(figsize=(10, 6))        
-            plt.plot(data_subset['Minutes'], data_subset['Ypos_mm'], label='Y Position (mm)')
+            plt.plot(data_subset['Minutes'], data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), label='Y Position (mm)')
             plt.xlabel('Minutes')
             plt.ylabel('Position (mm)')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'            
+            if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+                title = title + " (Y Coordinate Fipped)"
+            plt.title(title)
             plt.legend()
             tmp = self.get_plot_limits()
             plt.ylim(tmp[1])
@@ -236,11 +248,18 @@ class Tracker:
     def plot_xy(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(data_subset['Xpos_mm'], data_subset['Ypos_mm'], c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
+        scatter = plt.scatter(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
         plt.colorbar(scatter, label='Minutes')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Y Position (mm)')
-        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+        if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X and Y Coordinates Fipped)"
+        elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+                title = title + " (Y Coordinate Fipped)"
+        elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+        plt.title(title)
         tmp = self.get_plot_limits()
         plt.xlim(tmp[0])
         plt.ylim(tmp[1])
@@ -252,15 +271,24 @@ class Tracker:
 
         plt.show()
 
-    def plot_xy_animated(self, range_minutes=[0, 0], interval = .1):
-        data_subset = self.get_data_subset(range_minutes)
+    def plot_xy_animated(self, range_minutes=[0, 0], interval = .1, tail_size = 100000000):
+        x_locations = self.get_x_positions(range_minutes)
+        y_locations = self.get_y_positions(range_minutes)        
+        minutes = self.get_minutes(range_minutes)
 
         fig, ax = plt.subplots(figsize=(10, 6))
-        scatter = ax.scatter([], [], c=[], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
+        scatter = ax.scatter([], [], c=[], cmap='viridis', vmin=minutes.min(), vmax=minutes.max())
         colorbar = plt.colorbar(scatter, ax=ax, label='Minutes')
         ax.set_xlabel('X Position (mm)')
         ax.set_ylabel('Y Position (mm)')
-        ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+        if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X and Y Coordinates Fipped)"
+        elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+                title = title + " (Y Coordinate Fipped)"
+        elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+        ax.set_title(title)
         xlims, ylims = self.get_plot_limits()
         ax.set_xlim(xlims)
         ax.set_ylim(ylims)
@@ -279,18 +307,34 @@ class Tracker:
             return scatter,time_text
 
         def update(frame):
-            current_data = data_subset.iloc[:frame + 1]            
-            scatter.set_offsets(np.c_[current_data['Xpos_mm'], current_data['Ypos_mm']])
-            scatter.set_array(current_data['Minutes'])
-            time_text.set_text(f"Minutes: {current_data['Minutes'].iloc[-1]:.2f}")
+            if(frame < (tail_size+1)):                
+                current_x_locations = x_locations[:frame + 1]
+                current_y_locations = y_locations[:frame + 1]
+                current_minutes = minutes[:frame + 1]            
+            else:            
+                current_x_locations = x_locations[(frame-tail_size):(frame + 1)]
+                current_y_locations = y_locations[(frame-tail_size):(frame + 1)]
+                current_minutes = minutes[(frame-tail_size):(frame + 1)].reset_index(drop=True)            
+            scatter.set_offsets(np.c_[current_x_locations, current_y_locations])
+            scatter.set_array(current_minutes)
+          
+            time_text.set_text(f"Minutes: {current_minutes[len(current_minutes)-1]:.2f}")
             return scatter, time_text
 
-        ani = FuncAnimation(fig, update, frames=len(data_subset), init_func=init, blit=True, repeat=False, interval=interval)
+        ani = FuncAnimation(fig, update, frames=len(x_locations), init_func=init, blit=True, repeat=False, interval=interval)
         plt.show()
 
     def get_x_positions(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)        
         return data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])
+
+    def get_minutes(self, range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)        
+        return data_subset['Minutes']
+
+    def get_y_positions(self, range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)        
+        return data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])
 
     def get_treatment(self):
         return self.tracking_region_design['Treatment'].iloc[0]

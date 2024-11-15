@@ -171,21 +171,23 @@ class Arena:
 
     def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
         if(one_plot):
-            fig, ax = plt.subplots(figsize=(10, 6))
-        
-            # Generate a colormap
-            colormap = plt.cm.get_cmap('tab10', len(self.trackers))
+            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
+                fig, ax = plt.subplots(figsize=(10, 6))
             
-            for idx, (key, tracker) in enumerate(self.trackers.items()):
-                if(tracker.get_treatment()=="Chrimson"):
-                    # Assuming tracker has a method to get x-positions within the specified range
-                    x_positions = tracker.get_x_positions(range_minutes)
-                    ax.plot(x_positions, label=key, color=colormap(idx))
-            
-            ax.set_xlabel('Minutes')
-            ax.set_ylabel('X Position')
-            ax.set_title("Chrimson Females")            
-            plt.show()            
+                # Generate a colormap
+                colormap = plt.cm.get_cmap('tab10', len(self.trackers))
+                
+                for idx, (key, tracker) in enumerate(self.trackers.items()):
+                    if(tracker.get_treatment()==treatment):
+                        # Assuming tracker has a method to get x-positions within the specified range
+                        x_positions = tracker.get_x_positions(range_minutes)
+                        ax.plot(x_positions, label=key, color=colormap(idx),alpha=0.7)
+                
+                ax.set_xlabel('Minutes')
+                ax.set_ylabel('X Position')
+                title = treatment + " (Axis flips applied if specified)"
+                ax.set_title(title)            
+                plt.show()            
         else:            
             if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
                 for key, tracker in self.trackers.items():
@@ -193,6 +195,35 @@ class Arena:
             elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
                 for key, tracker in self.trackers.items():
                     tracker.plot_x(range_minutes)
+            else:
+                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+
+    def plot_trackers_y(self,range_minutes=(0,0),one_plot=False):
+        if(one_plot):
+            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
+                fig, ax = plt.subplots(figsize=(10, 6))
+            
+                # Generate a colormap
+                colormap = plt.cm.get_cmap('tab10', len(self.trackers))
+                
+                for idx, (key, tracker) in enumerate(self.trackers.items()):
+                    if(tracker.get_treatment()==treatment):
+                        # Assuming tracker has a method to get x-positions within the specified range
+                        y_positions = tracker.get_y_positions(range_minutes)
+                        ax.plot(y_positions, label=key, color=colormap(idx),alpha=0.7)
+                
+                ax.set_xlabel('Minutes')
+                ax.set_ylabel('Y Position')
+                title = treatment + " (Axis flips applied if specified)"
+                ax.set_title(title)            
+                plt.show()            
+        else:            
+            if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+                for key, tracker in self.trackers.items():
+                    tracker.plot_y(range_minutes)
+            elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+                for key, tracker in self.trackers.items():
+                    tracker.plot_y(range_minutes)
             else:
                 raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
 
@@ -493,9 +524,9 @@ if __name__ == "__main__":
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
     #print(arena.summarize_facet(cutoffs=(10)))
-    arena.plot_trackers_x(range_minutes=(0,0),one_plot=True)
+    #arena.plot_trackers_y(range_minutes=(0,0),one_plot=True)
         
-    #print(arena.get_tracker("T_0_0").plot_percentages(range_minutes=(10,30)))
+    print(arena.get_tracker("T_1_0").plot_xy_animated(range_minutes=(10,15),tail_size=1000))
     #arena.plot_pi(range_minutes=(0,0))
     #arena.plot_transitions_facet()
     #arena.get_tracker("T_1_0").get_x_positions((10,20))
