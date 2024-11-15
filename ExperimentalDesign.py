@@ -63,7 +63,7 @@ class ExperimentalDesign:
 
             self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment',"XLocationMultiplier","YLocationMultiplier"])                          
             self.counting_regions=counting_regions            
-        except:
+        except:            
             self.tracking_regions = None
             self.counting_regions = None
 
@@ -82,9 +82,9 @@ class ExperimentalDesign:
         return None
 
     def verify_experimental_design(self):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
             pass
-        elif(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             if(self.experimental_design==False):                                
                 raise ValueError("No experimental design file found for TwoChoiceTracker.")
             elif(len(self.counting_regions.keys())!=2):                                

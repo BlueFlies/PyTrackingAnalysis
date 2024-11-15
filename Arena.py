@@ -32,9 +32,9 @@ class Arena:
         self.tracking_regions =  roi[(roi['Type']=='Tracking')].reset_index(drop=True)
         self.counting_regions =  roi[(roi['Type']=='Counting')].reset_index(drop=True)
      
-    def get_experimental_design(self):
-        try:
-            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)            
+    def get_experimental_design(self):        
+        try:            
+            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)                           
         except:            
             self.experimental_design = None
 
@@ -46,19 +46,25 @@ class Arena:
         # Concatenate all DataFrames into a single DataFrame
         rd = pd.concat(dataframes, ignore_index=True)
         return rd
+    
     def create_trackers(self):
         rawdata = self.read_all_data()
         tmp_trackers = {}
-        grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
-        for (region,object_id), group in grouped_data:
-            if(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
-                tracker = Tracker.Tracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
-            elif(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
-                tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
-            else:
-                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be an instance of TrackingType enum.")
-            tmp_trackers[f'{region}_{object_id}'] = tracker 
-        self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
+        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
+            grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
+            for (region,object_id), group in grouped_data:
+                if(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
+                    tracker = Tracker.Tracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
+                    tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                else:
+                    raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an instance of TrackingType enum.")
+                tmp_trackers[f'{region}_{object_id}'] = tracker 
+            self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
+        elif(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
+            pass
+        else:
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be an instance of TrackingClass enum.") 
 
 
 #endregion ########### Initialization Functions ############
@@ -121,53 +127,53 @@ class Arena:
 
 #region ########### User Plotting Functions ############
     def plot_pi(self, range_minutes=(0,0)):      
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_pi_twochoicetracker(range_minutes)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_pi_facet(self,cutoffs=(10,70)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_pi_facet_twochoicetracker(cutoffs)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_percentage(self, range_minutes=(0,0)):      
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_percentage_twochoicetracker(range_minutes)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")  
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")  
     def plot_percentage_facet(self,cutoffs=(10,70)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_percentage_facet_twochoicetracker(cutoffs)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_totaldistance(self, range_minutes=(0,0)):      
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_totaldistance_generaltracker(range_minutes)
-        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
             self.plot_totaldistance_generaltracker(range_minutes)
         else:
             pass
     def plot_totaldistance_facet(self,cutoffs=(10,70)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_totaldistance_facet_generaltracker(cutoffs)
-        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
             self.plot_totaldistance_facet_generaltracker(cutoffs)
         else:
             pass
 
     def plot_trackers_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_percentages(window_size_min,step_size_min,range_minutes,show_light)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     
     def plot_trackers_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_pis(window_size_min,step_size_min,range_minutes,show_light)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
     def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
         if(one_plot):
@@ -189,14 +195,14 @@ class Arena:
                 ax.set_title(title)            
                 plt.show()            
         else:            
-            if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
                 for key, tracker in self.trackers.items():
                     tracker.plot_x(range_minutes)
-            elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+            elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
                 for key, tracker in self.trackers.items():
                     tracker.plot_x(range_minutes)
             else:
-                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+                raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
     def plot_trackers_y(self,range_minutes=(0,0),one_plot=False):
         if(one_plot):
@@ -218,36 +224,36 @@ class Arena:
                 ax.set_title(title)            
                 plt.show()            
         else:            
-            if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+            if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
                 for key, tracker in self.trackers.items():
                     tracker.plot_y(range_minutes)
-            elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+            elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
                 for key, tracker in self.trackers.items():
                     tracker.plot_y(range_minutes)
             else:
-                raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+                raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
     def plot_trackers_xy(self,range_minutes=(0,0)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_xy(range_minutes)
-        elif(self.parameters.tracking_type==Parameters.TrackingType.TRACKER):         
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
             for key, tracker in self.trackers.items():
                 tracker.plot_xy(range_minutes)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     
     def plot_transitions(self,range_minutes=(0,0)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_transitions_twochoicetracker(range_minutes)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
         
     def plot_transitions_facet(self,cutoffs=(10,70)):
-        if(self.parameters.tracking_type==Parameters.TrackingType.TWOCHOICETRACKER):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_transitions_facet_twochoicetracker(cutoffs)
         else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.tracking_type}. Must be a TwoChoiceTracker.")
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     
 #endregion ########### User Plotting Functions ############
 
@@ -517,16 +523,16 @@ if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)       
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
     arena = Arena('MaxIRSetup',p,"./Data/")
     #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    #print(arena.summarize_facet(cutoffs=(10)))
+    print(arena.summarize_facet(cutoffs=(10)))
     #arena.plot_trackers_y(range_minutes=(0,0),one_plot=True)
         
-    print(arena.get_tracker("T_1_0").plot_xy_animated(range_minutes=(10,15),tail_size=1000))
+    #print(arena.get_tracker("T_1_0").plot_xy_animated(range_minutes=(10,15),tail_size=1000))
     #arena.plot_pi(range_minutes=(0,0))
     #arena.plot_transitions_facet()
     #arena.get_tracker("T_1_0").get_x_positions((10,20))

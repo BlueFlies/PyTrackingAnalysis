@@ -15,12 +15,12 @@ class Tracker:
         self.rawdata = rawdata        
         self.rawdata.reset_index(drop=True, inplace=True)
         self.parameters =parameters        
-
+        
         ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
         ## will likely be used in all stats like functions that combine replicates within a treatment group.        
-        if(exp_design is not None):                      
+        if(exp_design is not None):                              
             self.tracking_region_design = exp_design.get_tracking_region(self.tracking_region_id)
-            self.counting_regions_design = exp_design.counting_regions            
+            self.counting_regions_design = exp_design.counting_regions                     
         else:
             self.tracking_region_design = None
             self.counting_regions_design = None

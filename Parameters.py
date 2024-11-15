@@ -12,7 +12,25 @@ class TrackingType(Enum):
     TWOCHOICECOUNTER = 7
     PAIRWISEINTERACTIONCOUNTER = 8
 
+class TrackingClass(Enum):
+    TRACKING=1
+    COUNTING=2
 
+class TrackingTypeDetails:
+    def __init__(self, tracking_type=TrackingType.TRACKER):
+        self.tracking_type = tracking_type
+        if(tracking_type==TrackingType.TRACKER or tracking_type==TrackingType.TWOCHOICETRACKER or tracking_type==TrackingType.XCHOICETRACKER or tracking_type==TrackingType.DDROPTRACKER or tracking_type==TrackingType.PAIRWISEINTERACTIONTRACKER or tracking_type==TrackingType.CENTROPHOBISMTRACKER):
+            self.tracking_class = TrackingClass.TRACKING
+        elif(tracking_type==TrackingType.COUNTER or tracking_type==TrackingType.TWOCHOICECOUNTER or tracking_type==TrackingType.PAIRWISEINTERACTIONCOUNTER):
+            self.tracking_class = TrackingClass.COUNTING
+        else:  
+            raise ValueError(f"Invalid tracking type: {tracking_type}. Must be an instance of TrackingType enum.")
+        
+    def get_tracking_type(self):
+        return self.tracking_type  
+    def get_tracking_class(self):
+        return self.tracking_class
+            
 class Parameters:
     def __init__(self, tracking_type=TrackingType.TRACKER,fps=0,mm_per_pixel=0.1, speed_window_seconds=1, micromove_speed_mm_sec = [0.2,2],walking_speed_mm_sec=2, sleep_threshold_min=5):
         self.fps = fps
@@ -21,12 +39,16 @@ class Parameters:
         self.micro_move_speed_mm_sec = micromove_speed_mm_sec
         self.walking_speed_mm_sec = walking_speed_mm_sec
         self.sleep_threshold_min = sleep_threshold_min
-        self.tracking_type = tracking_type
+        self.tracking_details = TrackingTypeDetails(tracking_type)
         
     def set_tracking_type(self, tracking_type):
-        if not isinstance(tracking_type, TrackingType):
-            raise ValueError(f"Invalid tracking type: {tracking_type}. Must be an instance of TrackingType enum.")
-        self.tracking_type = tracking_type
+        self.tracking_details = TrackingTypeDetails(tracking_type)
+        
+    def get_tracking_type(self):
+        return self.tracking_details.get_tracking_type()
+
+    def get_tracking_class(self):
+        return self.tracking_details.get_tracking_class()
 
     def set_small_arena_values(self,tracking_type):
         self.fps=0
@@ -85,5 +107,13 @@ class Parameters:
         self.set_tracking_type(tracking_type)
 
     def __str__(self):
-        return f"tracking_type: {self.tracking_type}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}"
+        return f"tracking_type: {self.tracking_details.get_tracking_type()}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}"
         
+        
+if __name__ == "__main__":
+    p=Parameters()
+    p.set_tracking_type(TrackingType.TWOCHOICECOUNTER)
+    print(p.get_tracking_class())
+    print(p.get_tracking_type())
+    
+    
