@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import Tracker 
+import Counter
 import TwoChoiceTracker
+import TwoChoiceCounter
 import Parameters
 import ExperimentalDesign
 import glob
@@ -61,8 +63,17 @@ class Arena:
                     raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an instance of TrackingType enum.")
                 tmp_trackers[f'{region}_{object_id}'] = tracker 
             self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
-        elif(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
-            pass
+        elif(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING):
+            grouped_data = rawdata.groupby('TrackingRegion')
+            for region, group in grouped_data:
+                if(self.parameters.get_tracking_type()==Parameters.TrackingType.COUNTER):
+                    counter = Counter.Counter(region,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER):
+                    counter = TwoChoiceCounter.TwoChoiceCounter(region,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                else:
+                    raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an instance of TrackingType enum.")
+                tmp_trackers[f'{region}'] = counter 
+            self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
         else:
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be an instance of TrackingClass enum.") 
 
@@ -521,15 +532,20 @@ class Arena:
 
 if __name__ == "__main__":
     p=Parameters.Parameters()
-    #p.set_small_arena_values(Parameters.TrackingType.TWOCHOICETRACKER)
+    p.set_small_arena_values(Parameters.TrackingType.TWOCHOICECOUNTER)
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
-    arena = Arena('MaxIRSetup',p,"./Data/")
+    #p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
+    arena = Arena('Red1Template',p,"./Data/")
+    #arena.first_tracker().plot_cumulative_percentage(range_minutes=(0,0),show_light=True)
+
+    arena.first_tracker().plot_percentages()
+    #arena.first_tracker().plot_x()
     #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    print(arena.summarize_facet(cutoffs=(10)))
+    #print(arena.summarize())
+    #print(arena.summarize_facet(cutoffs=(10)))
     #arena.plot_trackers_y(range_minutes=(0,0),one_plot=True)
         
     #print(arena.get_tracker("T_1_0").plot_xy_animated(range_minutes=(10,15),tail_size=1000))

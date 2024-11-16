@@ -233,63 +233,29 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.grid(True)
             plt.show()
             
-    def plot_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(show_light):
-            data = self.get_time_dependent_pi(window_size_min,step_size_min,range_minutes)
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(data['EndMin'], data['PI'], marker='o', linestyle='-',label=self.name)
-            ax.set_xlabel('Minutes')
-            ax.set_ylabel('PI')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
-            ax.legend()      
-            ax.set_ylim([-1,1])
-            ax.grid(True)
-            
-            for i in range(len(data) - 1):
-              if data['Indicator'].iloc[i]>0:
-                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.01)
-            
-            plt.show()
-        else:    
-            data = self.get_time_dependent_pi(window_size_min,step_size_min,range_minutes)
-            plt.figure(figsize=(10, 6))
-            plt.plot(data['EndMin'], data['PI'], marker='o', linestyle='-',label=self.name)
-            plt.xlabel('Minutes')
-            plt.ylabel('PI')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
-            plt.legend()      
-            plt.ylim([-1,1])
-            plt.grid(True)
-            plt.show()
-    
+    def plot_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        data = self.get_time_dependent_pi(window_size_min,step_size_min,range_minutes)
+        plt.figure(figsize=(10, 6))
+        plt.plot(data['EndMin'], data['PI'], marker='o', linestyle='-',label=self.name)
+        plt.xlabel('Minutes')
+        plt.ylabel('PI')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.legend()      
+        plt.ylim([-1,1])
+        plt.grid(True)
+        plt.show()
+
     def plot_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(show_light):
-            data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
-            ax.set_xlabel('Minutes')
-            ax.set_ylabel('Percentage')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
-            ax.legend()      
-            ax.set_ylim([-0.05,1.05])
-            ax.grid(True)
-            
-            for i in range(len(data) - 1):
-              if data['Indicator'].iloc[i]>0:
-                ax.axvspan(data['Minutes'].iloc[i], data['Minutes'].iloc[i + 1], color='red', alpha=0.01)
-            
-            plt.show()
-        else:    
-            data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
-            plt.figure(figsize=(10, 6))
-            plt.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
-            plt.xlabel('Minutes')
-            plt.ylabel('Percentage')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
-            plt.legend()      
-            plt.ylim([-0.05,1.05])
-            plt.grid(True)
-            plt.show()
+        data = self.get_time_dependent_percentage(window_size_min,step_size_min,range_minutes)
+        plt.figure(figsize=(10, 6))
+        plt.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
+        plt.xlabel('Minutes')
+        plt.ylabel('Percentage')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.legend()      
+        plt.ylim([-0.05,1.05])
+        plt.grid(True)
+        plt.show()
     
     def summarize(self, range_minutes=(0,0)):        
         tmp = Tracker.Tracker.summarize(self, range_minutes)
