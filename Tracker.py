@@ -339,6 +339,9 @@ class Tracker:
     def get_treatment(self):
         return self.tracking_region_design['Treatment'].iloc[0]
 
+    def get_tracking_region_id(self):
+        return self.tracking_region_id
+
     def __str__(self):
         #return f"a={self.rawdata['CountingRegion']}"
         #return f"Tracker(name={self.name}, fps={self.parameters.fps}, head=\n{self.rawdata.head()},tail=\n{self.rawdata.tail()})"

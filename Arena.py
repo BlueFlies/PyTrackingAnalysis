@@ -4,6 +4,7 @@ import Tracker
 import Counter
 import TwoChoiceTracker
 import TwoChoiceCounter
+import PairwiseInteractionTracker
 import Parameters
 import ExperimentalDesign
 import glob
@@ -13,17 +14,18 @@ import matplotlib.pyplot as plt
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from collections import OrderedDict
 from scipy.stats import ttest_ind
+import time
 
 class Arena:
 
 #region ########### Initialization Functions ############
-    def __init__(self, exp_name, parameters, data_path='./'):        
+    def __init__(self, exp_name, parameters, data_path='./', force_preprocessing=False):        
         self.parameters = parameters
         self.experiment_name = exp_name   
         self.data_path = data_path      
         self.get_experiment_file_info()
         self.get_experimental_design()
-        self.create_trackers()   
+        self.create_trackers(force_preprocessing)   
         self.computed_summaries={}     
 
     def get_experiment_file_info(self):
@@ -49,8 +51,8 @@ class Arena:
         rd = pd.concat(dataframes, ignore_index=True)
         return rd
     
-    def create_trackers(self):
-        rawdata = self.read_all_data()
+    def create_trackers(self, force_preprocessing):
+        rawdata = self.check_for_preprocessing(self.read_all_data(),force_preprocessing)
         tmp_trackers = {}
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
             grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
@@ -59,6 +61,8 @@ class Arena:
                     tracker = Tracker.Tracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
                 elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
                     tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                elif(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):                    
+                    tracker = PairwiseInteractionTracker.PairwiseInteractionTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
                 else:
                     raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an instance of TrackingType enum.")
                 tmp_trackers[f'{region}_{object_id}'] = tracker 
@@ -75,9 +79,48 @@ class Arena:
                 tmp_trackers[f'{region}'] = counter 
             self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
         else:
-            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be an instance of TrackingClass enum.") 
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be an instance of TrackingClass enum.")
+        self.check_for_postprocessing(rawdata) 
 
+    def check_for_postprocessing(self,rawdata):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):             
+            for key, tracker in self.trackers.items():
+                for key2, tracker2 in self.trackers.items():
+                    if(key!=key2 and tracker.get_tracking_region_id()==tracker2.get_tracking_region_id()):
+                        tracker.set_neighbor(tracker2)
+        
+    def check_for_preprocessing(self,rawdata, force_preprocessing=False):
+        ## For now we will disable this.  It should be only used if the post-processing fails
+        ## because the data for partner trackers does not line up.
+        if ((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and force_preprocessing):             
+            if 'ClosestNeighbor' not in rawdata.columns:
+                rawdata=self.calculate_distances_for_pairwise_tracker(rawdata)
+        return rawdata
+    
+    def calculate_distances_for_pairwise_tracker(self,rawdata):
+        ## This works but it's pretty slow.
+        # Group the data by 'TrackingRegion', 'ObjectID', and 'Frame'
+        print("Calculating pairwise distances will take a while...")
+        grouped_data = rawdata.groupby(['Frame', 'TrackingRegion'])
+        
+        distances = []
+        
+        for (frame, region), group in grouped_data:
+            if len(group) == 2:
+                x1, y1 = group.iloc[0][['X', 'Y']]
+                x2, y2 = group.iloc[1][['X', 'Y']]
+                distance = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+                distances.extend([distance, distance])  # Add the distance for both observations
+            elif group['NObjhects'].sum() == 2:
+                distance = 0
+                distances.extend([distance, distance])  # Add the distance for both observations
+            else:
+                print("Yuck")
+                distances.extend([np.nan] * len(group))  # Add NaN for groups that don't have exactly 2 observations
 
+        rawdata['CalcDistance'] = distances
+        return rawdata
+        
 #endregion ########### Initialization Functions ############
     
     
@@ -532,20 +575,22 @@ class Arena:
 
 if __name__ == "__main__":
     p=Parameters.Parameters()
-    p.set_small_arena_values(Parameters.TrackingType.TWOCHOICECOUNTER)
+    #p.set_small_arena_values(Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER)
+    p.set_pairwise_interaction_values_arena_max([2,4,8])
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     #p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
-    arena = Arena('Red1Template',p,"./Data/")
+    arena = Arena('MaxxxPWI_FLIR',p,"./Data/")
+    #print(arena.first_tracker().rawdata[['ClosestNeighbor','IsNeighborValid']].head(30))
     #arena.first_tracker().plot_cumulative_percentage(range_minutes=(0,0),show_light=True)
 
-    arena.first_tracker().plot_percentages()
+    #print(arena.summarize())
     #arena.first_tracker().plot_x()
     #arena.run_pairwise_comparisons_facet(cutoffs=(10,70))
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
     #print(arena.summarize())
-    #print(arena.summarize_facet(cutoffs=(10)))
+    print(arena.summarize_facet(cutoffs=(10)))
     #arena.plot_trackers_y(range_minutes=(0,0),one_plot=True)
         
     #print(arena.get_tracker("T_1_0").plot_xy_animated(range_minutes=(10,15),tail_size=1000))
