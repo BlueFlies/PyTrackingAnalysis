@@ -73,6 +73,17 @@ class PairwiseInteractionTracker(Tracker.Tracker):
             results.append(data[f'Interaction_{dist}'].sum()) 
         return results
     
+    def get_percent_frames_interacting(self, range_minutes=(0,0)):
+        data = self.get_interaction_subset(range_minutes)
+        results =[]
+        for dist in self.parameters.interaction_distance_mm:
+            results.append(data[f'Interaction_{dist}'].sum()) 
+        total_valid_frames = self.get_total_frames_with_valid_neighbor(range_minutes)
+        if(total_valid_frames==0):
+            perc_results = [0]*len(results)
+        else:
+            perc_results=[x/total_valid_frames for x in results]
+        return perc_results
     def get_total_frames_with_valid_neighbor(self, range_minutes=(0,0)):
         data = self.get_data_subset(range_minutes)
         return data['IsNeighborValid'].sum()
@@ -111,3 +122,62 @@ class PairwiseInteractionTracker(Tracker.Tracker):
             pd.Series({'ValidFrames': total_valid_frames}),frames_interacting_series,percent_frames_interacting_series])
 
         return result
+    
+    def get_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        data_subset = self.get_interaction_subset(range_minutes)
+        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        interactions =[]
+
+        for end in range(earliest_min, latest_min + 1, step_size_min):
+            start = end - window_size_min
+            tmp = [start,end,self.get_percent_frames_interacting([start,end])]
+            tmp2=[item for sublist in tmp for item in (sublist if isinstance(sublist, list) else [sublist])]
+            interactions.append(tmp2)
+            
+        result = [f'PercentInteractions_{dist}' for dist in self.parameters.interaction_distance_mm]
+        result.insert(0,'EndMin')
+        result.insert(0,'StartMin')
+        return pd.DataFrame(interactions, columns=result)
+    
+    def get_time_dependent_distances(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)
+        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        results =[]
+        for end in range(earliest_min, latest_min + 1, step_size_min):
+            start = end - window_size_min
+            tmp = self.get_data_subset([start,end])
+            results.append([start,end,tmp['ClosestNeighbor_mm'].mean(),tmp['ClosestNeighbor_mm'].median()])
+        return pd.DataFrame(results, columns=['StartMin','EndMin','MeanDistance','MedianDistance'])
+    
+    def plot_time_dependent_distances(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        data = self.get_time_dependent_distances(window_size_min,step_size_min,range_minutes)
+        plt.figure(figsize=(10, 6))
+      
+        for column in data.columns:
+            if column not in ['StartMin', 'EndMin']:
+                plt.plot(data['EndMin'], data[column], marker='o', linestyle='-', label=column)
+      
+        plt.xlabel('Minutes')
+        plt.ylabel('Neighbor Distances (mm)')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.legend()      
+        plt.grid(True)
+        plt.show()
+    
+    def plot_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        data = self.get_time_dependent_interactions(window_size_min,step_size_min,range_minutes)
+        plt.figure(figsize=(10, 6))
+      
+        for column in data.columns:
+            if column not in ['StartMin', 'EndMin']:
+                plt.plot(data['EndMin'], data[column], marker='o', linestyle='-', label=column)
+      
+        plt.xlabel('Minutes')
+        plt.ylabel('Fraction Time Interacting')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.legend()      
+        plt.ylim([-0.1,1])
+        plt.grid(True)
+        plt.show()

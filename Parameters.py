@@ -134,7 +134,7 @@ class Parameters:
             raise ValueError(f"Invalid interaction_distances: {interaction_distances}. Must be a list of integers.")
 
     def __str__(self):
-        return f"tracking_type: {self.tracking_details.get_tracking_type()}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}"
+        return f"tracking_type: {self.tracking_details.get_tracking_type()}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}\ninteraction_distances: {self.interaction_distance_mm}"
         
         
 if __name__ == "__main__":
