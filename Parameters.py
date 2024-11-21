@@ -78,7 +78,7 @@ class Parameters:
         self.sleep_threshold_min = 5
         self.set_tracking_type(tracking_type)
 
-    def set(self, tracking_type=None, fps=None, mm_per_pixel=None, speed_window_seconds=None, micromove_speed_mm_sec=None, walking_speed_mm_sec=None, sleep_threshold_min=None):
+    def set(self, tracking_type=None, fps=None, mm_per_pixel=None, speed_window_seconds=None, micromove_speed_mm_sec=None, walking_speed_mm_sec=None, sleep_threshold_min=None,interaction_distances=None):
         if tracking_type is not None:
             self.set_tracking_type(tracking_type)
         if fps is not None:
@@ -93,11 +93,16 @@ class Parameters:
             self.walking_speed_mm_sec = walking_speed_mm_sec
         if sleep_threshold_min is not None:
             self.sleep_threshold_min = sleep_threshold_min
+        if interaction_distances is not None:
+            if(isinstance(interaction_distances, list)):
+                self.interaction_distance_mm = interaction_distances
+            else:
+                raise ValueError(f"Invalid interaction_distances: {interaction_distances}. Must be a list of integers.")
     
     def print(self):
         print(self.__str__())
 
-    def set_obscura_vales(self,tracking_type):
+    def set_obscura_values(self,tracking_type):
         self.fps=0
         self.mm_per_pixel=0.131
         self.speed_window_seconds=1

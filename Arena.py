@@ -242,14 +242,16 @@ class Arena:
             pass
 
     def plot_trackers_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
+        if((self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER) or \
+            (self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER)):
             for key, tracker in self.trackers.items():
                 tracker.plot_percentages(window_size_min,step_size_min,range_minutes,show_light)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     
     def plot_trackers_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
+        if((self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER) or \
+            (self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER)):
             for key, tracker in self.trackers.items():
                 tracker.plot_pis(window_size_min,step_size_min,range_minutes,show_light)
         else:
