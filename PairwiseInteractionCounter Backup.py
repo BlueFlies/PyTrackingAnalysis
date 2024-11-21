@@ -1,63 +1,40 @@
 import pandas as pd
 import numpy as np 
-import Tracker
+import Counter
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-class PairwiseInteractionTracker(Tracker.Tracker):
-    def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
-        ## All of the relevant parameters are defined in the parent class.
-        super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)     
-        ## Set the index as Frame because we subtract neighbors and they must line up.
-        #print(self.rawdata['Frame'])
-        #self.rawdata.set_index('Frame', inplace=True)
-        
-    def set_neighbor(self,neighbor_tracker):
-        self.neighbor_tracker = neighbor_tracker
-        
-        if 'ClosestNeighbor' not in self.rawdata.columns:           
-            self.set_neighbor_distance()
-        
-        self.set_neighbor_quality_and_distance_mm()
-        self.update_neighbor_interactions()
-           
-    def set_neighbor_distance(self):
-        ## Check to make sure the short cut will work.
-        ## It will only if each row of each tracker has the same frame number.
-        ## This might not actually be needed because vector operations are done based on 
-        ## index, which I set to frame during initialization.
-        #if(sum(self.rawdata['Frame'] - self.neighbor_tracker.rawdata['Frame'])!=0):
-        #    raise ValueError(f"Frame mismatch between trackers.")
-    
-        ## This is the distance between the two trackers at the current time point.
-        x1 = self.rawdata['X']
-        y1 = self.rawdata['Y']
-        x2 = self.neighbor_tracker.rawdata['X']
-        y2 = self.neighbor_tracker.rawdata['Y']
-        distance = np.sqrt((x1-x2)**2+(y1-y2)**2) 
-        self.rawdata['ClosestNeighbor']=distance
-
-    ## This function is called in Arena post processing because it needs access
-    ## to other trackers.       
-    def set_neighbor_quality_and_distance_mm(self):
+class PairwiseInteractionCounter(Counter.Counter):
+    def __init__(self, tracking_region_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
+         super().__init__(tracking_region_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)   
+         self.set_quality_and_distance_mm()
+         self.update_interaction_data() 
+      
+    def set_quality_and_distance_mm(self):
         ## This will be a column that is true if the quality of the data is high for both trackers.
         ## This will be used to filter out bad data.
          ## Create a boolean column flagging measures that may not be valid.
         ## If at least one of the two was not found.
         ## Values are High, Low, Indiscrenable, and Not Found.  I don't know whether Low is ever used.
-        quality = (self.rawdata['DataQuality']=="High") & (self.neighbor_tracker.rawdata['DataQuality']=="High")
-        one_blob = (self.rawdata['NObjects'] + self.neighbor_tracker.rawdata['NObjects']) == 2
-        neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1) | (self.neighbor_tracker.rawdata['ClosestNeighbor'] == -1) 
-        null_observations = (self.rawdata['ClosestNeighbor'].isnull()) | (self.neighbor_tracker.rawdata['ClosestNeighbor'].isnull())    
-           
+        quality = (self.rawdata['DataQuality']=="High")
+        one_blob = (self.rawdata['NObjects'] == 2)
+        neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1)
+        null_observations = (self.rawdata['ClosestNeighbor'].isnull())   
+        
         final_quality = (quality | one_blob) & ((~neg_one_distance) | (~null_observations))
         
         self.rawdata['IsNeighborValid'] = final_quality 
         
         self.rawdata['ClosestNeighbor_mm'] = self.rawdata['ClosestNeighbor']
         self.rawdata.loc[~self.rawdata['IsNeighborValid'], 'ClosestNeighbor_mm'] = np.nan
-        self.rawdata['ClosestNeighbor_mm'] *= self.parameters.mm_per_pixel
-
+        self.rawdata['ClosestNeighbor_mm'] *= self.parameters.mm_per_pixel  
+        
+    def update_interaction_data(self):
+        self.interaction_data = self.rawdata.loc[:,['Minutes','Indicator','ClosestNeighbor_mm','IsNeighborValid']]
+        for dist in self.parameters.interaction_distance_mm:
+            self.interaction_data[f'Interaction_{dist}'] = (self.interaction_data['ClosestNeighbor_mm'] < dist) & (self.interaction_data['IsNeighborValid'])    
+      
+ 
     def get_interaction_subset(self, range_minutes):
         if(len(range_minutes)!=2):            
             raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
@@ -96,17 +73,9 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     def get_median_neighbor_distance(self, range_minutes=(0,0)):
         data = self.get_data_subset(range_minutes)
         return data['ClosestNeighbor_mm'].median()
-
-    def is_partner(self, tracker):
-        return self.tracking_region_id == tracker.tracking_region_id
     
-    def update_neighbor_interactions(self):
-        self.interaction_data = self.rawdata.loc[:,['Minutes','Indicator','ClosestNeighbor_mm','IsNeighborValid']]
-        for dist in self.parameters.interaction_distance_mm:
-            self.interaction_data[f'Interaction_{dist}'] = (self.interaction_data['ClosestNeighbor_mm'] < dist) & (self.interaction_data['IsNeighborValid'])    
-      
     def summarize(self, range_minutes=(0,0)):        
-        tmp = Tracker.Tracker.summarize(self, range_minutes)
+        tmp = Counter.Counter.summarize(self, range_minutes)
         mean_neighbor_distance = self.get_mean_neighbor_distance(range_minutes)
         median_neighbor_distance = self.get_median_neighbor_distance(range_minutes)
         frames_interacting = self.get_frames_interacting(range_minutes)

@@ -13,7 +13,8 @@ class Tracker:
         ## Contact the two identifying features into a unique name for the tracking blob.
         self.name = f'{tracking_region_id}_{object_id}'
         self.rawdata = rawdata        
-        self.rawdata.reset_index(drop=True, inplace=True)
+        #self.rawdata.reset_index(drop=True, inplace=True)
+        self.rawdata.set_index('Frame', inplace=True)
         self.parameters =parameters        
         
         ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
@@ -52,21 +53,21 @@ class Tracker:
         self.rawdata['Ypos_mm'] = self.rawdata['RelY']*self.parameters.mm_per_pixel
         deltax = self.rawdata['Xpos_mm'].diff() 
         deltay = self.rawdata['Ypos_mm'].diff()
-        deltax[0]=0
-        deltay[0]=0
+        deltax.iat[0]=0
+        deltay.iat[0]=0
         self.rawdata['Dist_mm'] = (deltax**2 + deltay**2)**0.5
         self.rawdata['DeltaSec'] = self.rawdata['Minutes'].copy().diff() * 60
-        self.rawdata.loc[0,'DeltaSec']=0
+        self.rawdata['DeltaSec'].iloc[0]=0
         window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
         if(window_size<=1):            
             self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
         else:
             self.rawdata['DistWindow_mm']  = self.rawdata['Dist_mm'].rolling(window=window_size).sum()
-            self.rawdata.loc[0,'DistWindow_mm']=0
+            self.rawdata['DistWindow_mm'].iat[0]=0
             self.rawdata['DeltaSecWindow'] = self.rawdata['DeltaSec'].rolling(window=window_size).sum()
-            self.rawdata.loc[0,'DeltaSecWindow']=0
+            self.rawdata['DeltaSecWindow'].iat[0]=0
             self.rawdata['Speed_mm_sec']  = self.rawdata['DistWindow_mm']/self.rawdata['DeltaSecWindow']
-            self.rawdata.loc[0,'Speed_mm_sec']=0
+            self.rawdata['Speed_mm_sec'].iat[0]=0
 
         self.rawdata['IsWalking'] = self.rawdata['Speed_mm_sec'] > self.parameters.walking_speed_mm_sec
         self.rawdata['IsMicroMove'] = (self.rawdata['Speed_mm_sec'] > self.parameters.micro_move_speed_mm_sec[0]) & (self.rawdata['Speed_mm_sec'] < self.parameters.micro_move_speed_mm_sec[1])
@@ -129,14 +130,14 @@ class Tracker:
         total_distance = data_subset['Dist_mm'].sum()
         lastrow = data_subset.shape[0]-1        
         obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
-        start_minutes = data_subset.at[0,'Minutes']
-        end_minutes = data_subset.at[lastrow,'Minutes']
+        start_minutes = data_subset['Minutes'].iat[0]
+        end_minutes = data_subset['Minutes'].iat[lastrow]
         total_distance_min = total_distance/obs_minutes
 
         if(self.tracking_region_design is not None):
-            treatment = self.tracking_region_design['Treatment'].iloc[0]
+            treatment = self.tracking_region_design['Treatment'].iat[0]
 
-        total_distance_dtrack = (data_subset.at[lastrow,'TotalDistance'] - data_subset.at[0,'TotalDistance'])*self.parameters.mm_per_pixel
+        total_distance_dtrack = (data_subset['TotalDistance'].iat[0] - data_subset['TotalDistance'].iat[0])*self.parameters.mm_per_pixel
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
         result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
         result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
