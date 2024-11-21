@@ -13,8 +13,10 @@ class Tracker:
         ## Contact the two identifying features into a unique name for the tracking blob.
         self.name = f'{tracking_region_id}_{object_id}'
         self.rawdata = rawdata        
-        #self.rawdata.reset_index(drop=True, inplace=True)
+        ## We are setting the index to Frame so that operations between trackers always line up with the Frame.
+        ## Them make sure we are in ascending Frame order, which should be true anyway, but just to be sure.
         self.rawdata.set_index('Frame', inplace=True)
+        self.rawdata = self.rawdata.sort_index()
         self.parameters =parameters        
         
         ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
@@ -57,15 +59,15 @@ class Tracker:
         deltay.iat[0]=0
         self.rawdata['Dist_mm'] = (deltax**2 + deltay**2)**0.5
         self.rawdata['DeltaSec'] = self.rawdata['Minutes'].copy().diff() * 60
-        self.rawdata['DeltaSec'].iloc[0]=0
+        self.rawdata.loc[self.rawdata.index[0],'DeltaSec']=0
         window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
         if(window_size<=1):            
             self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
         else:
             self.rawdata['DistWindow_mm']  = self.rawdata['Dist_mm'].rolling(window=window_size).sum()
-            self.rawdata['DistWindow_mm'].iat[0]=0
+            self.rawdata.loc[self.rawdata.index[0],'DistWindow_mm']=0
             self.rawdata['DeltaSecWindow'] = self.rawdata['DeltaSec'].rolling(window=window_size).sum()
-            self.rawdata['DeltaSecWindow'].iat[0]=0
+            self.rawdata.loc[self.rawdata.index[0],'DeltaSecWindow']=0
             self.rawdata['Speed_mm_sec']  = self.rawdata['DistWindow_mm']/self.rawdata['DeltaSecWindow']
             self.rawdata['Speed_mm_sec'].iat[0]=0
 
@@ -129,7 +131,7 @@ class Tracker:
         avg_speed = data_subset['Speed_mm_sec'].mean()
         total_distance = data_subset['Dist_mm'].sum()
         lastrow = data_subset.shape[0]-1        
-        obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
+        obs_minutes = data_subset['Minutes'].iat[lastrow] - data_subset['Minutes'].iat[0]
         start_minutes = data_subset['Minutes'].iat[0]
         end_minutes = data_subset['Minutes'].iat[lastrow]
         total_distance_min = total_distance/obs_minutes

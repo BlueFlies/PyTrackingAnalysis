@@ -48,8 +48,8 @@ class TwoChoiceTracker(Tracker.Tracker):
 
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
-        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iat[-1])        
         pis =[]
 
         for end in range(earliest_min, latest_min + 1, step_size_min):
@@ -60,8 +60,8 @@ class TwoChoiceTracker(Tracker.Tracker):
     
     def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
-        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iat[-1])        
         pis =[]
 
         for end in range(earliest_min, latest_min + 1, step_size_min):
@@ -165,7 +165,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         
         ax.set_xlabel('Minutes')
         ax.set_ylabel('Percentage')
-        ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
         ax.legend()
         ax.set_ylim([-0.05, 1.05])
         ax.grid(True)
@@ -184,14 +184,14 @@ class TwoChoiceTracker(Tracker.Tracker):
             ax.plot(data_subset['Minutes'], data_subset['CumulativePI'], label=self.name)
             ax.set_xlabel('Minutes')
             ax.set_ylabel('Cumulative PI')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
             ax.legend()      
             ax.set_ylim([-1,1])
             ax.grid(True)
 
             for i in range(len(data_subset) - 1):
-              if data_subset['Indicator'].iloc[i]>0:
-                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.01)
+              if data_subset['Indicator'].iat[i]>0:
+                ax.axvspan(data_subset['Minutes'].iat[i], data_subset['Minutes'].iat[i + 1], color='red', alpha=0.01)
             plt.show()
         else:
             data_subset = self.get_cumulative_pi(range_minutes)            
@@ -199,7 +199,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.plot(data_subset['Minutes'], data_subset['CumulativePI'], label=self.name)
             plt.xlabel('Minutes')
             plt.ylabel('Cumulative PI')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
             plt.legend()      
             plt.ylim([-1,1])
             plt.grid(True)
@@ -212,14 +212,14 @@ class TwoChoiceTracker(Tracker.Tracker):
             ax.plot(data_subset['Minutes'], data_subset['CumulativePercentage'], label=self.name)
             ax.set_xlabel('Minutes')
             ax.set_ylabel('Cumulative Percentage')
-            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
             ax.legend()      
             ax.set_ylim([-0.05,1.05])
             ax.grid(True)
 
             for i in range(len(data_subset) - 1):
-              if data_subset['Indicator'].iloc[i]>0:
-                ax.axvspan(data_subset['Minutes'].iloc[i], data_subset['Minutes'].iloc[i + 1], color='red', alpha=0.01)
+              if data_subset['Indicator'].iat[i]>0:
+                ax.axvspan(data_subset['Minutes'].iat[i], data_subset['Minutes'].iat[i + 1], color='red', alpha=0.01)
             plt.show()
         else:
             data_subset = self.get_cumulative_percentage(range_minutes)            
@@ -227,7 +227,7 @@ class TwoChoiceTracker(Tracker.Tracker):
             plt.plot(data_subset['Minutes'], data_subset['CumulativePercentage'], label=self.name)
             plt.xlabel('Minutes')
             plt.ylabel('Cumulative Percentage')
-            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+            plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
             plt.legend()      
             plt.ylim([-0.05,1.05])
             plt.grid(True)
@@ -239,7 +239,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         plt.plot(data['EndMin'], data['PI'], marker='o', linestyle='-',label=self.name)
         plt.xlabel('Minutes')
         plt.ylabel('PI')
-        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
         plt.legend()      
         plt.ylim([-1,1])
         plt.grid(True)
@@ -251,7 +251,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         plt.plot(data['EndMin'], data['Percentage'], marker='o', linestyle='-',label=self.name)
         plt.xlabel('Minutes')
         plt.ylabel('Percentage')
-        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
         plt.legend()      
         plt.ylim([-0.05,1.05])
         plt.grid(True)

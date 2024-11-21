@@ -274,15 +274,9 @@ class Arena:
                 title = treatment + " (Axis flips applied if specified)"
                 ax.set_title(title)            
                 plt.show()            
-        else:            
-            if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-                for key, tracker in self.trackers.items():
-                    tracker.plot_x(range_minutes)
-            elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
-                for key, tracker in self.trackers.items():
-                    tracker.plot_x(range_minutes)
-            else:
-                raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
+        else:                     
+            for key, tracker in self.trackers.items():
+                tracker.plot_x(range_minutes)            
 
     def plot_trackers_y(self,range_minutes=(0,0),one_plot=False):
         if(one_plot):
@@ -304,30 +298,15 @@ class Arena:
                 ax.set_title(title)            
                 plt.show()            
         else:            
-            if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-                for key, tracker in self.trackers.items():
-                    tracker.plot_y(range_minutes)
-            elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
-                for key, tracker in self.trackers.items():
-                    tracker.plot_y(range_minutes)
-            else:
-                raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
-
+            for key, tracker in self.trackers.items():
+                tracker.plot_y(range_minutes)
+            
     def plot_trackers_xy(self,range_minutes=(0,0)):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-            for key, tracker in self.trackers.items():
+        for key, tracker in self.trackers.items():
                 tracker.plot_xy(range_minutes)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):         
-            for key, tracker in self.trackers.items():
-                tracker.plot_xy(range_minutes)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):         
-            for key, tracker in self.trackers.items():
-                tracker.plot_xy(range_minutes)
-        else:
-            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
-    
+     
     def plot_trackers_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+        if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             last_region = None
             for key, tracker in self.trackers.items():
                 if(tracker.tracking_region_id!=last_region):
@@ -343,13 +322,13 @@ class Arena:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
   
     def plot_interactions(self,range_minutes=(0,0)):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+        if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             self.plot_interactions_pairwiseinteractiontracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
       
     def plot_interactions_facet(self,cutoffs=(10,70)):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+        if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             self.plot_interactions_facet_pairwiseinteractiontracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
@@ -689,6 +668,7 @@ if __name__ == "__main__":
     #print(arena.first_tracker().rawdata[['ClosestNeighbor','IsNeighborValid']].head(30))
     #arena.first_tracker().plot_cumulative_percentage(range_minutes=(0,0),show_light=True)
     #print(arena.summarize(remove_partners=True))
+    arena.plot_trackers_x()
     #arena.summarize_facet(cutoffs=(10,70),remove_partners=True)
     #arena.plot_trackers_time_dependent_interactions()
     #print(arena.first_tracker().plot_time_dependent_distances())
@@ -696,7 +676,7 @@ if __name__ == "__main__":
     #arena.plot_percentage_facet(cutoffs=(10,70))
     #arena.plot_pi_facet((10,70))
     #print(arena.plot_percentage_facet())
-    print(arena.summarize(write_to_csvfile=True))   
+    #print(arena.summarize(write_to_csvfile=True))   
     #print(arena.summarize_facet(cutoffs=(10)))
     #arena.plot_trackers_y(range_minutes=(0,0),one_plot=True)
         

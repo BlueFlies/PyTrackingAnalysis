@@ -12,6 +12,7 @@ class Counter:
         ## Contact the two identifying features into a unique name for the tracking blob.
         self.name = f'{tracking_region_id}'
         self.rawdata = rawdata        
+        ## Unlike trackers, we can't index by frame because there are likely several observations per frame, one for each blob.
         self.rawdata.reset_index(drop=True, inplace=True)
         self.parameters =parameters        
         #print(tracking_region_id)
@@ -61,19 +62,26 @@ class Counter:
         data_subset.reset_index(drop=True, inplace=True)
         return data_subset
 
+    def get_y_positions(self, range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)        
+        return data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])
+    def get_x_positions(self, range_minutes=(0,0)):
+        data_subset = self.get_data_subset(range_minutes)        
+        return data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])
+
     def plot_xy(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
+        scatter = plt.scatter(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iat[0]), data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iat[0]), c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
         plt.colorbar(scatter, label='Minutes')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Y Position (mm)')
-        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
-        if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
+        if((int)(self.tracking_region_design['YLocationMultiplier'].iat[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iat[0])==-1):
                 title = title + " (X and Y Coordinates Fipped)"
-        elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+        elif((int)(self.tracking_region_design['YLocationMultiplier'].iat[0])==-1):
                 title = title + " (Y Coordinate Fipped)"
-        elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+        elif((int)(self.tracking_region_design['XLocationMultiplier'].iat[0])==-1):
                 title = title + " (X Coordinate Fipped)"
         plt.title(title)
         tmp = self.get_plot_limits()
@@ -94,8 +102,8 @@ class Counter:
         plt.hist(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), bins=30, edgecolor='black')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Frequency')
-        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
-        if((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
+        if((int)(self.tracking_region_design['XLocationMultiplier'].iat[0])==-1):
                 title = title + " (X Coordinate Fipped)"
         plt.title(title)
         tmp = self.get_plot_limits()
@@ -108,11 +116,11 @@ class Counter:
         data_subset = self.get_data_subset(range_minutes)
         
         plt.figure(figsize=(10, 6))
-        plt.hist(data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), bins=30, edgecolor='black')
+        plt.hist(data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iat[0]), bins=30, edgecolor='black')
         plt.xlabel('Y Position (mm)')
         plt.ylabel('Frequency')
-        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
-        if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
+        if((int)(self.tracking_region_design['YLocationMultiplier'].iat[0])==-1):
                 title = title + " (Y Coordinate Fipped)"
         plt.title(title)
         
@@ -130,7 +138,7 @@ class Counter:
         end_minutes = data_subset.at[lastrow,'Minutes']
      
         if(self.tracking_region_design is not None):
-            treatment = self.tracking_region_design['Treatment'].iloc[0]
+            treatment = self.tracking_region_design['Treatment'].iat[0]
 
         result = pd.Series([treatment, self.name,self.tracking_region_id,obs_minutes,start_minutes,end_minutes])
         result.index = ['Treatment','Name','TrackingRegion','ObsMinutes','StartMinutes','EndMinutes']

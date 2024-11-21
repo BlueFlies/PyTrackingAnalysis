@@ -8,10 +8,7 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
         ## All of the relevant parameters are defined in the parent class.
         super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)     
-        ## Set the index as Frame because we subtract neighbors and they must line up.
-        #print(self.rawdata['Frame'])
-        #self.rawdata.set_index('Frame', inplace=True)
-        
+
     def set_neighbor(self,neighbor_tracker):
         self.neighbor_tracker = neighbor_tracker
         
@@ -126,8 +123,8 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     
     def get_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_interaction_subset(range_minutes)
-        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iat[-1])        
         interactions =[]
 
         for end in range(earliest_min, latest_min + 1, step_size_min):
@@ -143,8 +140,8 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     
     def get_time_dependent_distances(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
-        earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iloc[-1])        
+        earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
+        latest_min = round(data_subset['Minutes'].iat[-1])        
         results =[]
         for end in range(earliest_min, latest_min + 1, step_size_min):
             start = end - window_size_min
@@ -162,7 +159,7 @@ class PairwiseInteractionTracker(Tracker.Tracker):
       
         plt.xlabel('Minutes')
         plt.ylabel('Neighbor Distances (mm)')
-        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
         plt.legend()      
         plt.grid(True)
         plt.show()
@@ -177,7 +174,7 @@ class PairwiseInteractionTracker(Tracker.Tracker):
       
         plt.xlabel('Minutes')
         plt.ylabel('Fraction Time Interacting')
-        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
+        plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})')
         plt.legend()      
         plt.ylim([-0.1,1])
         plt.grid(True)
