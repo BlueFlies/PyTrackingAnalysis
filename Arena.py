@@ -3,6 +3,7 @@ import pandas as pd
 import Tracker 
 import Counter
 import TwoChoiceTracker
+import XChoiceTracker
 import TwoChoiceCounter
 import PairwiseInteractionTracker
 import PairwiseInteractionCounter
@@ -64,6 +65,8 @@ class Arena:
                     tracker = TwoChoiceTracker.TwoChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
                 elif(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):                    
                     tracker = PairwiseInteractionTracker.PairwiseInteractionTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
+                elif(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
+                    tracker = XChoiceTracker.XChoiceTracker(region,object_id,self.tracking_regions,self.counting_regions,self.parameters,self.experimental_design,group)
                 else:
                     raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an instance of TrackingType enum.")
                 tmp_trackers[f'{region}_{object_id}'] = tracker 
@@ -222,6 +225,16 @@ class Arena:
             self.plot_percentage_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
+    def plot_adjusted_x_position(self,range_minutes=(0,0)):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
+            self.plot_adj_x_pos_xchoicetracker(range_minutes)
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
+    def plot_adjusted_x_position_facet(self,cutoffs=(10,70)):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
+            self.plot_adj_x_pos_facet_xchoicetracker(cutoffs)
+        else:
+            raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
     def plot_totaldistance(self, range_minutes=(0,0)):      
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_totaldistance_generaltracker(range_minutes)
@@ -257,7 +270,15 @@ class Arena:
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
+    def plot_trackers_x_hist(self,range_minutes=(0,0)):
+        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
+        for key, tracker in self.trackers.items():
+            tracker.plot_x_hist(range_minutes)            
+
     def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
+        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         if(one_plot):
             for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
                 fig, ax = plt.subplots(figsize=(10, 6))
@@ -281,6 +302,9 @@ class Arena:
                 tracker.plot_x(range_minutes)            
 
     def plot_trackers_y(self,range_minutes=(0,0),one_plot=False):
+        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
+        
         if(one_plot):
             for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
                 fig, ax = plt.subplots(figsize=(10, 6))
@@ -307,6 +331,11 @@ class Arena:
         for key, tracker in self.trackers.items():
                 tracker.plot_xy(range_minutes)
      
+    def plot_trackers_x_hist(self,bins=30,range_minutes=(0,0)):
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
+            for key, tracker in self.trackers.items():
+                tracker.plot_x_hist(bins=bins,range_minutes=range_minutes)
+      
     def plot_trackers_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             last_region = None
@@ -469,6 +498,52 @@ class Arena:
         tmp = list(self.experimental_design.counting_regions.keys())        
         ax.text(-0.4,1,tmp[0])
         ax.text(-0.4,-1,tmp[1])
+        plt.show()
+    
+    def plot_adjusted_x_position_facet(self, cutoffs=(10,70)):   
+        # Create a new column for the minute ranges
+        the_data = self.summarize_facet(cutoffs)
+
+        def custom_plot(data, **kwargs):
+            p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', hue='TotalXDistance_mm', data=data, jitter=True, **kwargs)
+            means = data.groupby('Treatment', sort=False)['AvgAdjX_mm'].mean()
+            ax = plt.gca()
+            x_coords = ax.get_xticks()
+            counter=0
+            for i, y in means.items():
+                p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+                counter+=1
+            ntreatments = data['Treatment'].nunique()
+            plt.xlim(-.5,ntreatments-1+0.5)
+
+        # Create the FacetGrid
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
+        g.map_dataframe(custom_plot)
+        # Add titles and labels
+        g.set_titles(col_template="Facet Range (min): {col_name}")
+        g.set_axis_labels('Treatment', 'Avg Adjusted X Position')
+        
+        plt.show()
+         
+    def plot_adj_x_pos_xchoicetracker(self, range_minutes=(0,0)):
+        summary_data = self.summarize(range_minutes)
+        plt.figure(figsize=(10, 6))
+        p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', data=summary_data, jitter=True,  hue='TotalXDistance_mm')
+        tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        plt.title(tmp)
+        plt.xlabel('Treatment')
+        plt.ylabel('Avg Adjusted X Position')
+        ntreatments = summary_data['Treatment'].nunique()
+        plt.xlim(-.5,ntreatments-1+0.5)
+
+        df_mean = summary_data.groupby('Treatment', sort=False)['AvgAdjX_mm'].mean()
+        ax = plt.gca()
+        x_coords = ax.get_xticks()
+        counter=0
+        for i, y in df_mean.items():
+            p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+            counter+=1
         plt.show()
         
     def plot_interactions_pairwiseinteractiontracker(self, range_minutes=(0,0)):
@@ -663,14 +738,16 @@ class Arena:
 if __name__ == "__main__":
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER)
-    p.set_pairwise_interactioncounter_values_arena_max([2,4,8])
+    #p.set_pairwise_interactioncounter_values_arena_max([2,4,8])
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    #p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
+    p.set_arena_max_values(Parameters.TrackingType.XCHOICETRACKER)         
     arena = Arena('MaxxxPWI_FLIR',p,"./Data/")
     #print(arena.first_tracker().rawdata[['ClosestNeighbor','IsNeighborValid']].head(30))
     #arena.first_tracker().plot_cumulative_percentage(range_minutes=(0,0),show_light=True)
-    #print(arena.summarize(remove_partners=True))
-    arena.plot_trackers_x()
+    #print(arena.summarize_facet(cutoffs=(10,15)))
+    arena.run_pairwise_comparisons_facet(metric="VarAdjX_mm",cutoffs=(10,15))
+    arena.plot_adjusted_x_position_facet(cutoffs=(10,15))
+    #arena.plot_trackers_x()
     #arena.summarize_facet(cutoffs=(10,70),remove_partners=True)
     #arena.plot_trackers_time_dependent_interactions()
     #print(arena.first_tracker().plot_time_dependent_distances())

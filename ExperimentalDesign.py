@@ -82,14 +82,14 @@ class ExperimentalDesign:
         return None
 
     def verify_experimental_design(self):
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
-            pass
+        if(self.experimental_design==False):                                
+            raise ValueError("An experimental design file is required for all experiments.")
         elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-            if(self.experimental_design==False):                                
-                raise ValueError("No experimental design file found for TwoChoiceTracker.")
-            elif(len(self.counting_regions.keys())!=2):                                
+            if(len(self.counting_regions.keys())!=2):                                
                 raise ValueError(f"Invalid design file for TwoChoiceTracker. Must have exactly two unique counting region characteristics.")
-            pass
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER):
+            if(len(self.counting_regions.keys())!=2):                                
+                raise ValueError(f"Invalid design file for TwoChoiceCounter. Must have exactly two unique counting region characteristics.")        
         else:
             pass
             

@@ -186,6 +186,22 @@ class Tracker:
             plt.grid(True)
             plt.show()
 
+    def plot_x_hist(self, bins=30, range_minutes=(0, 0)):
+        data_subset = self.get_data_subset(range_minutes)
+        
+        plt.figure(figsize=(10, 6))
+        plt.hist(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), bins=bins, edgecolor='black')
+        plt.xlabel('X Position (mm)')
+        plt.ylabel('Frequency')
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
+        if((int)(self.tracking_region_design['XLocationMultiplier'].iat[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+        plt.title(title)
+        tmp = self.get_plot_limits()
+        plt.xlim(tmp[0])
+        plt.grid(True)
+        plt.show()
+
     def plot_total_distance(self, range_minutes=(0,0), show_light=False):
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            

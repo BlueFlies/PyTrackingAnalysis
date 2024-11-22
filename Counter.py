@@ -95,11 +95,11 @@ class Counter:
 
         plt.show()
         
-    def plot_x(self, range_minutes=(0, 0)):
+    def plot_x(self, bins=30, range_minutes=(0, 0)):
         data_subset = self.get_data_subset(range_minutes)
         
         plt.figure(figsize=(10, 6))
-        plt.hist(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), bins=30, edgecolor='black')
+        plt.hist(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), bins=bins, edgecolor='black')
         plt.xlabel('X Position (mm)')
         plt.ylabel('Frequency')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
@@ -111,12 +111,12 @@ class Counter:
         plt.grid(True)
         plt.show()
         
-    def plot_y(self, range_minutes=(0, 0)):
+    def plot_y(self, bins=30,range_minutes=(0, 0)):
         
         data_subset = self.get_data_subset(range_minutes)
         
         plt.figure(figsize=(10, 6))
-        plt.hist(data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iat[0]), bins=30, edgecolor='black')
+        plt.hist(data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iat[0]), bins=bins, edgecolor='black')
         plt.xlabel('Y Position (mm)')
         plt.ylabel('Frequency')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
