@@ -7,6 +7,19 @@ import time
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
+        """
+        Initialize the Tracker object.
+        Generally not called by the user.
+
+        Parameters:
+        tracking_region_id (str): Identifier for the tracking region.
+        object_id (str): Identifier for the object being tracked.
+        tracking_regions (DataFrame): DataFrame containing tracking region information.
+        counting_regions (DataFrame): DataFrame containing counting region information.
+        parameters (object): Parameters for the tracking analysis.
+        exp_design (object): Experimental design information.
+        rawdata (DataFrame): Raw data for the tracking.
+        """
         ## These are the key identifiers for the tracker.  They are defined by the data file.
         self.tracking_region_id = tracking_region_id
         self.object_id = object_id
@@ -37,6 +50,10 @@ class Tracker:
         self.calculate_speeds_and_feeds()
 
     def calculate_minutes(self):
+        """
+        Calculate the minutes based on either the actual time between frames or the frames per second (fps) parameter.
+        Generally not called by the user.
+        """
         if(self.parameters.fps==-1):
             fulltime = pd.to_datetime(self.rawdata['Time'])+pd.to_timedelta(self.rawdata['Millisec'],unit='ms')
             timediff = fulltime.diff().dt.total_seconds().copy()
@@ -51,6 +68,10 @@ class Tracker:
         return
 
     def calculate_speeds_and_feeds(self):
+        """
+        Calculate the speeds and feeds for the tracked object.
+        Generally not called by the user.
+        """
         self.rawdata['Xpos_mm'] = self.rawdata['RelX']*self.parameters.mm_per_pixel
         self.rawdata['Ypos_mm'] = self.rawdata['RelY']*self.parameters.mm_per_pixel
         deltax = self.rawdata['Xpos_mm'].diff() 
@@ -82,6 +103,11 @@ class Tracker:
         
     ## This is definitely beta code at the moment. But it may be working reasonably well. It requires a good value for the lower bound of micro move speed.
     def calculate_sleeping(self):
+        """
+        Calculate the sleeping periods for the tracked object.
+        This is a beta feature and may not work as expected.
+        Generally not called by the user.
+        """
         self.rawdata['IsSleeping'] = False
         runs = self.calculate_run_boundaries() 
         for i,run in runs.iterrows():
@@ -90,6 +116,12 @@ class Tracker:
                 self.rawdata.loc[run['start']:run['end'],'IsSleeping'] = True
 
     def calculate_run_boundaries(self):
+        """
+        Calculate the run boundaries for the tracked object.
+        Generally not called by the user.
+        Returns:
+        DataFrame: DataFrame containing the start, end, and duration of each run.
+        """
         # Ensure the series is boolean
         series=self.rawdata['IsResting'].copy()
     
@@ -112,6 +144,15 @@ class Tracker:
         return run_boundaries
 
     def get_data_subset(self, range_minutes):
+        """
+        Get a subset of the raw data within the specified range of minutes.
+
+        Parameters:
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+
+        Returns:
+        DataFrame: Subset of the raw data within the specified range.
+        """
         if(len(range_minutes)!=2):
             raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
         if(sum(range_minutes)==0):
@@ -121,6 +162,15 @@ class Tracker:
         return data_subset
 
     def summarize(self, range_minutes=(0,0)):
+        """
+        Summarize the tracking data within the specified range of minutes.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+
+        Returns:
+        Series: Summary statistics of the tracking data.
+        """
         data_subset = self.get_data_subset(range_minutes)
         
         perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
@@ -146,11 +196,24 @@ class Tracker:
         return result
 
     def get_plot_limits(self):
+        """
+        Get the plot limits for the tracking region.
+        Generally not called by user.
+        Returns:
+        tuple: Tuple containing the x and y limits for the plot.
+        """
         xlims=(self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel)/(2.0)
         ylims=(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(-2.0),(self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel)/(2.0)
         return xlims,ylims
         
     def plot_x(self, range_minutes=(0,0), show_light=False):
+        """
+        Plot the X position of the tracked object over time.
+
+        Parameters:
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        show_light (bool): Whether to show light indicators on the plot.
+        """
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -187,6 +250,13 @@ class Tracker:
             plt.show()
 
     def plot_x_hist(self, bins=30, range_minutes=(0, 0)):
+        """
+        Plot a histogram of the X positions of the tracked object.
+
+        Parameters (opotional):
+        bins (int): Number of bins for the histogram.
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        """
         data_subset = self.get_data_subset(range_minutes)
         
         plt.figure(figsize=(10, 6))
@@ -203,6 +273,13 @@ class Tracker:
         plt.show()
 
     def plot_total_distance(self, range_minutes=(0,0), show_light=False):
+        """
+        Plot the total distance traveled by the tracked object over time.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        show_light (bool): Whether to show light indicators on the plot.
+        """
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -229,6 +306,13 @@ class Tracker:
             plt.show()
 
     def plot_y(self, range_minutes=(0,0), show_light=False):
+        """
+        Plot the Y position of the tracked object over time.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        show_light (bool): Whether to show light indicators on the plot.
+        """
         if(show_light):
             data_subset = self.get_data_subset(range_minutes)            
             fig, ax = plt.subplots(figsize=(10, 6))
@@ -265,6 +349,12 @@ class Tracker:
             plt.show()
 
     def plot_xy(self, range_minutes=(0,0)):
+        """
+        Plot the XY positions of the tracked object.
+
+        Parameters:
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        """
         data_subset = self.get_data_subset(range_minutes)
         plt.figure(figsize=(10, 6))
         scatter = plt.scatter(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), c=data_subset['Minutes'], cmap='viridis', vmin=data_subset['Minutes'].min(), vmax=data_subset['Minutes'].max())
@@ -290,7 +380,15 @@ class Tracker:
 
         plt.show()
 
-    def plot_xy_animated(self, range_minutes=[0, 0], interval = .1, tail_size = 100000000):
+    def plot_xy_animated(self, range_minutes=(0, 0), interval = .1, tail_size = 100000000):
+        """
+        Plot an animated scatter plot of the XY positions of the tracked object.
+
+        Parameters:
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        interval (float): Interval between frames in the animation.
+        tail_size (int): Number of points to show in the tail of the animation.
+        """
         x_locations = self.get_x_positions(range_minutes)
         y_locations = self.get_y_positions(range_minutes)        
         minutes = self.get_minutes(range_minutes)
@@ -344,24 +442,69 @@ class Tracker:
         plt.show()
 
     def get_x_positions(self, range_minutes=(0,0)):
+        """
+        Get the X positions of the tracked object within the specified range of minutes.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+
+        Returns:
+        Series: X positions of the tracked object.
+        """
         data_subset = self.get_data_subset(range_minutes)        
         return data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])
 
     def get_minutes(self, range_minutes=(0,0)):
+        """
+        Get the minutes within the specified range of minutes.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+
+        Returns:
+        Series: Minutes within the specified range.
+        """
         data_subset = self.get_data_subset(range_minutes)        
         return data_subset['Minutes']
 
     def get_y_positions(self, range_minutes=(0,0)):
+        """
+        Get the Y positions of the tracked object within the specified range of minutes.
+
+        Parameters (optional):
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+
+        Returns:
+        Series: Y positions of the tracked object.
+        """
         data_subset = self.get_data_subset(range_minutes)        
         return data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])
 
     def get_treatment(self):
+        """
+        Get the treatment information for the tracking region.
+
+        Returns:
+        str: Treatment information.
+        """
         return self.tracking_region_design['Treatment'].iloc[0]
 
     def get_tracking_region_id(self):
+        """
+        Get the tracking region ID.
+
+        Returns:
+        str: Tracking region ID.
+        """
         return self.tracking_region_id
 
     def __str__(self):
+        """
+        Return a string representation of key Tracker object information.
+
+        Returns:
+        str: String representation of the Tracker object.
+        """
         #return f"a={self.rawdata['CountingRegion']}"
         #return f"Tracker(name={self.name}, fps={self.parameters.fps}, head=\n{self.rawdata.head()},tail=\n{self.rawdata.tail()})"
         tmp = self.summarize()
