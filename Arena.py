@@ -19,9 +19,21 @@ from scipy.stats import ttest_ind
 import time
 
 class Arena:
+    """
+    Class representing an experimental arena for tracking and analyzing data.
+    """
 
 #region ########### Initialization Functions ############
     def __init__(self, exp_name, parameters, data_path='./', force_preprocessing=False):        
+        """
+        Initialize the Arena object.
+
+        Parameters:
+        exp_name (str): Name of the experiment. Should coirrespond to sthe main filename of the xlsx experiment file.
+        parameters (Parameters): Parameters object containing experiment settings.
+        data_path (str): Path to the data files.
+        force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
+        """
         self.parameters = parameters
         self.experiment_name = exp_name   
         self.data_path = data_path      
@@ -31,6 +43,10 @@ class Arena:
         self.computed_summaries={}     
 
     def get_experiment_file_info(self):
+        """
+        Retrieve experiment file information from an Excel file.
+        Generally not called by the user.
+        """
         file_name = self.data_path + self.experiment_name + '.xlsx'
         sheet_name = "ROI"
         
@@ -39,12 +55,23 @@ class Arena:
         self.counting_regions =  roi[(roi['Type']=='Counting')].reset_index(drop=True)
      
     def get_experimental_design(self):        
+        """
+        Retrieve the experimental design.
+        Generally not called by the user.
+        """
         try:            
             self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)                           
         except:            
             self.experimental_design = None
 
     def read_all_data(self):
+        """
+        Read all data from CSV files.
+        Generally not called by the user.
+        
+        Returns:
+        DataFrame: Concatenated DataFrame containing all data.
+        """
         csv_files = natsorted(glob.glob(self.data_path+self.experiment_name + "_Data_*.csv"))
         #Read each CSV file into a DataFrame and store them in a list
         dataframes = [pd.read_csv(file,keep_default_na=False,na_values=['NaN']) for file in csv_files]
@@ -54,6 +81,12 @@ class Arena:
         return rd
     
     def create_trackers(self, force_preprocessing):
+        """
+        Create trackers based on the experimental parameters.
+
+        Parameters:
+        force_preprocessing (bool): Flag to force preprocessing of data.
+        """
         rawdata = self.check_for_preprocessing(self.read_all_data(),force_preprocessing)
         tmp_trackers = {}
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
@@ -89,6 +122,12 @@ class Arena:
         self.check_for_postprocessing(rawdata) 
 
     def check_for_postprocessing(self,rawdata):
+        """
+        Check for postprocessing requirements.
+
+        Parameters:
+        rawdata (DataFrame): Raw data to be processed.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):             
             for key, tracker in self.trackers.items():
                 for key2, tracker2 in self.trackers.items():
@@ -96,6 +135,16 @@ class Arena:
                         tracker.set_neighbor(tracker2)
         
     def check_for_preprocessing(self,rawdata, force_preprocessing=False):
+        """
+        Check for preprocessing requirements.
+
+        Parameters:
+        rawdata (DataFrame): Raw data to be processed.
+        force_preprocessing (bool): Flag to force preprocessing of data.
+
+        Returns:
+        DataFrame: Processed raw data.
+        """
         ## For now we will disable this.  It should be only used if the post-processing fails
         ## because the data for partner trackers does not line up.
         if ((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and force_preprocessing):             
@@ -107,6 +156,17 @@ class Arena:
         return rawdata
     
     def calculate_distances_for_pairwise_tracker(self,rawdata):
+        """
+        Calculate distances for pairwise interaction tracker.
+        This is a somewhat slow function that churns through de novo calculates of neighbor distances.
+        It can be forced by force_preprocessing=True in the constructor.
+        Generally not called by the user.
+        Parameters:
+        rawdata (DataFrame): Raw data to be processed.
+
+        Returns:
+        DataFrame: Processed raw data with distances.
+        """
         ## This works but it's pretty slow.
         # Group the data by 'TrackingRegion', 'ObjectID', and 'Frame'
         print("Calculating pairwise distances will take awhile...")
@@ -143,16 +203,43 @@ class Arena:
 #region ########### Access Functions ############
     
     def first_tracker(self):
+        """
+        Get the first tracker in the list in the arena.
+
+        Returns:
+        Tracker: The first tracker object.
+        """
         tmp = list(self.trackers.keys())
         return self.trackers[tmp[0]]
 
     def get_tracker(self, key):
+        """
+        Get a tracker by key.
+
+        Parameters:
+        key (str): Key of the tracker.
+
+        Returns:
+        Tracker: The tracker object.
+        """
         return self.trackers.get(key,None)
 
 #endregion ########### Access Functions ############
 
 #region ########### Basic Computation Functions ############
     def summarize_facet(self,cutoffs=(10,70),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
+        """
+        Summarize data in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        copy_to_clipboard (bool): Flag to copy results to clipboard.
+        write_to_csvfile (bool): Flag to write results to CSV file.
+        remove_partners (bool): Flag to remove partners from the summary. This is relevant for pairwise data where pairs may have identical values (e.g., interaction percentage).
+
+        Returns:
+        DataFrame: Summarized data.
+        """
         if(isinstance(cutoffs, tuple)):
             cutoffs = list(cutoffs)
         elif(isinstance(cutoffs, int)):
@@ -174,6 +261,18 @@ class Arena:
         return all_summaries
 
     def summarize(self,range_minutes=(0,0),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
+        """
+        Summarize data.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to summarize.
+        copy_to_clipboard (bool): Flag to copy results to clipboard.
+        write_to_csvfile (bool): Flag to write results to CSV file.
+        remove_partners (bool): Flag to remove partners from the summary.This is relevant for pairwise data where pairs may have identical values (e.g., interaction percentage).
+
+        Returns:
+        DataFrame: Summarized data.
+        """
         ## Remember when returning partners we don't take shortcuts to avoid confustion.
         if(remove_partners==False):
             if(range_minutes in self.computed_summaries):
@@ -206,36 +305,78 @@ class Arena:
 
 #region ########### User Plotting Functions ############
     def plot_pi(self, range_minutes=(0,0)):      
+        """
+        Plot preference index (PI).
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_pi_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_pi_facet(self,cutoffs=(10,70)):
+        """
+        Plot PI in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_pi_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_percentage(self, range_minutes=(0,0)):      
+        """
+        Plot choice percentage.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_percentage_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")  
     def plot_percentage_facet(self,cutoffs=(10,70)):
+        """
+        Plot choice percentage in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_percentage_facet_twochoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_adjusted_x_position(self,range_minutes=(0,0)):
+        """
+        Plot adjusted X position (adjusted for polarity as defined in the experimental design).
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
             self.plot_adj_x_pos_xchoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
     def plot_adjusted_x_position_facet(self,cutoffs=(10,70)):
+        """
+        Plot adjusted X position (adjusted for polarity in the experimental design file) in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
             self.plot_adj_x_pos_facet_xchoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
     def plot_totaldistance(self, range_minutes=(0,0)):      
+        """
+        Plot total distance moved (mm).
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_totaldistance_generaltracker(range_minutes)
         elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
@@ -245,6 +386,12 @@ class Arena:
         else:
             pass
     def plot_totaldistance_facet(self,cutoffs=(10,70)):
+        """
+        Plot total distance moved (mm) in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_totaldistance_facet_generaltracker(cutoffs)
         elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
@@ -255,6 +402,15 @@ class Arena:
             pass
 
     def plot_trackers_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
+        """
+        Plot cumulative and time-dependent choice percentages on the same plot and for each tracker individually.
+
+        Parameters:
+        window_size_min (int): Window size in minutes for time dependent analysis.
+        step_size_min (int): Step size in minutes for time dependent analysis.
+        range_minutes (tuple): Range of minutes to plot.
+        show_light (bool): Flag to show light.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER) or \
             (self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER)):
             for key, tracker in self.trackers.items():
@@ -263,6 +419,15 @@ class Arena:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     
     def plot_trackers_pis(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
+        """
+        Plot trackers' cumulative and time-dependent preference indices (PIs) on the same plot and for each tracker individually.
+
+        Parameters:
+        window_size_min (int): Window size in minutes for time dependent analysis.
+        step_size_min (int): Step size in minutes for time dependent analysis.
+        range_minutes (tuple): Range of minutes to plot.
+        show_light (bool): Flag to show light.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER) or \
             (self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER)):
             for key, tracker in self.trackers.items():
@@ -271,12 +436,25 @@ class Arena:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
     def plot_trackers_x_hist(self,range_minutes=(0,0)):
+        """
+        Plot histogram of each tracker's X positions.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         for key, tracker in self.trackers.items():
             tracker.plot_x_hist(range_minutes)            
 
     def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
+        """
+        Plot each tracker's X positions. This function automatically adjusts the X positions based on the experimental design file.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        one_plot (bool): Flag to plot all trackers in one plot.
+        """
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         if(one_plot):
@@ -302,6 +480,13 @@ class Arena:
                 tracker.plot_x(range_minutes)            
 
     def plot_trackers_y(self,range_minutes=(0,0),one_plot=False):
+        """
+        Plot trackers' Y positions. This function automatically adjusts the Y positions based on the experimental design file.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        one_plot (bool): Flag to plot all trackers in one plot.
+        """
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         
@@ -328,15 +513,36 @@ class Arena:
                 tracker.plot_y(range_minutes)
             
     def plot_trackers_xy(self,range_minutes=(0,0)):
+        """
+        Plot trackers' XY positions. This function automatically adjusts the X and Y positions based on the experimental design file.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         for key, tracker in self.trackers.items():
                 tracker.plot_xy(range_minutes)
      
     def plot_trackers_x_hist(self,bins=30,range_minutes=(0,0)):
+        """
+        Plot histogram of trackers' X positions. This function automatically adjusts the X positions based on the experimental design file.
+
+        Parameters:
+        bins (int): Number of bins for the histogram.
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
             for key, tracker in self.trackers.items():
                 tracker.plot_x_hist(bins=bins,range_minutes=range_minutes)
       
     def plot_trackers_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
+        """
+        Plot time-dependent interactions of trackers.
+
+        Parameters:
+        window_size_min (int): Window size in minutes.
+        step_size_min (int): Step size in minutes.
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             last_region = None
             for key, tracker in self.trackers.items():
@@ -347,24 +553,48 @@ class Arena:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a PairwiseInteractionTracker.")
    
     def plot_transitions(self,range_minutes=(0,0)):
+        """
+        Plot transitions.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_transitions_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
   
     def plot_interactions(self,range_minutes=(0,0)):
+        """
+        Plot interactions.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             self.plot_interactions_pairwiseinteractiontracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
       
     def plot_interactions_facet(self,cutoffs=(10,70)):
+        """
+        Plot interactions in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) or (self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
             self.plot_interactions_facet_pairwiseinteractiontracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
         
     def plot_transitions_facet(self,cutoffs=(10,70)):
+        """
+        Plot transitions in facets.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_transitions_facet_twochoicetracker(cutoffs)
         else:
@@ -375,6 +605,12 @@ class Arena:
 
 #region ########### Backend Plotting ############
     def plot_pi_twochoicetracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot PI for TwoChoiceTracker.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True,  hue='Transitions')
@@ -400,6 +636,13 @@ class Arena:
         plt.show()
     
     def plot_transitions_twochoicetracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot transitions for TwoChoiceTracker.
+        Generally not called by the user.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='TransitionsPerMin', data=summary_data, jitter=True,  hue='FinalPI')
@@ -421,6 +664,12 @@ class Arena:
         plt.show()
 
     def plot_pi_facet_twochoicetracker(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot PI in facets for TwoChoiceTracker.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -451,6 +700,13 @@ class Arena:
         plt.show()
 
     def plot_transitions_facet_twochoicetracker(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot transitions in facets for TwoChoiceTracker.
+        Generally not called by the user.   
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -477,6 +733,12 @@ class Arena:
         plt.show()
 
     def plot_percentage_twochoicetracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot percentage for TwoChoiceTracker.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPercentage', data=summary_data, jitter=True,  hue='Transitions')
@@ -501,6 +763,13 @@ class Arena:
         plt.show()
     
     def plot_adjusted_x_position_facet(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot adjusted X position in facets.
+        Generally not called by the user.
+        
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -527,6 +796,13 @@ class Arena:
         plt.show()
          
     def plot_adj_x_pos_xchoicetracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot adjusted X position for XChoiceTracker.
+        Generally not called by the user.
+        
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', data=summary_data, jitter=True,  hue='TotalXDistance_mm')
@@ -547,6 +823,13 @@ class Arena:
         plt.show()
         
     def plot_interactions_pairwiseinteractiontracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot interactions for PairwiseInteractionTracker.
+        Generally not called by the user.
+        
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes, remove_partners=True)
         print(summary_data )
         ## Remember we need to ensure only one of the pair is included.
@@ -571,6 +854,13 @@ class Arena:
             plt.show()
 
     def plot_interactions_facet_pairwiseinteractiontracker(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot interactions in facets for PairwiseInteractionTracker.
+        Generally not called by the user.
+        
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs,remove_partners=True)
         def custom_plot(data, colname, **kwargs):
@@ -600,6 +890,13 @@ class Arena:
             plt.show()
 
     def plot_percentage_facet_twochoicetracker(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot percentage in facets for TwoChoiceTracker.
+        Generally not called by the user.
+        
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -630,6 +927,13 @@ class Arena:
         plt.show()
 
     def plot_totaldistance_generaltracker(self, range_minutes=(0,0)):
+        """
+        Backend function to plot total distance for general tracker.
+        Generally not called by the user.
+        
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='TotalDistancePerMin', data=summary_data, jitter=True)
@@ -651,6 +955,13 @@ class Arena:
         plt.show()
 
     def plot_totaldistance_facet_generaltracker(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot total distance in facets for general tracker.
+        Generally not called by the user.
+        
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
 
@@ -680,6 +991,14 @@ class Arena:
 
 #region ########### Statistical Functions ############
     def run_pairwise_comparisons(self, metric='FinalPI', range_minutes=(0,0)):
+        """
+        Run pairwise comparisons for a given metric.
+        Generally not called by the user.
+        
+        Parameters:
+        metric (str): Metric to compare.
+        range_minutes (tuple): Range of minutes to compare.
+        """
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and ("Interacting" in metric)):
             remove_partners=True
         summary = self.summarize(range_minutes, remove_partners=remove_partners)
@@ -707,6 +1026,15 @@ class Arena:
             print(tukey)
     
     def run_pairwise_comparisons_facet(self, metric='FinalPI', cutoffs=(10,70), remove_partners=False):
+        """
+        Run pairwise comparisons in facets for a given metric.
+        Generally not called by the user.
+        
+        Parameters:
+        metric (str): Metric to compare.
+        cutoffs (tuple): Cutoff values for facets.
+        remove_partners (bool): Flag to remove partners from the comparison.
+        """
         summary = self.summarize_facet(cutoffs, remove_partners=remove_partners)
         if 'Treatment' not in summary.columns:
             raise ValueError("The summary data does not contain a 'Treatment' column.")
@@ -736,6 +1064,9 @@ class Arena:
 
 
 if __name__ == "__main__":
+    """
+    Main function to test the Arena class.
+    """
     p=Parameters.Parameters()
     #p.set_small_arena_values(Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER)
     #p.set_pairwise_interactioncounter_values_arena_max([2,4,8])
