@@ -29,7 +29,7 @@ class Arena:
         Initialize the Arena object.
 
         Parameters:
-        exp_name (str): Name of the experiment. Should coirrespond to sthe main filename of the xlsx experiment file.
+        exp_name (str): Name of the experiment. Should correspond to the main filename of the xlsx experiment file.
         parameters (Parameters): Parameters object containing experiment settings.
         data_path (str): Path to the data files.
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
@@ -45,7 +45,10 @@ class Arena:
     def get_experiment_file_info(self):
         """
         Retrieve experiment file information from an Excel file.
+
         Generally not called by the user.
+
+        :meta private:
         """
         file_name = self.data_path + self.experiment_name + '.xlsx'
         sheet_name = "ROI"
@@ -58,6 +61,8 @@ class Arena:
         """
         Retrieve the experimental design.
         Generally not called by the user.
+        
+        :meta private:
         """
         try:            
             self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)                           
@@ -71,6 +76,8 @@ class Arena:
         
         Returns:
         DataFrame: Concatenated DataFrame containing all data.
+
+        :meta private:
         """
         csv_files = natsorted(glob.glob(self.data_path+self.experiment_name + "_Data_*.csv"))
         #Read each CSV file into a DataFrame and store them in a list
@@ -86,6 +93,8 @@ class Arena:
 
         Parameters:
         force_preprocessing (bool): Flag to force preprocessing of data.
+
+        :meta private:
         """
         rawdata = self.check_for_preprocessing(self.read_all_data(),force_preprocessing)
         tmp_trackers = {}
@@ -127,6 +136,8 @@ class Arena:
 
         Parameters:
         rawdata (DataFrame): Raw data to be processed.
+
+        :meta private:
         """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):             
             for key, tracker in self.trackers.items():
@@ -144,6 +155,8 @@ class Arena:
 
         Returns:
         DataFrame: Processed raw data.
+
+        :meta private: 
         """
         ## For now we will disable this.  It should be only used if the post-processing fails
         ## because the data for partner trackers does not line up.
@@ -166,6 +179,8 @@ class Arena:
 
         Returns:
         DataFrame: Processed raw data with distances.
+
+        :meta private: 
         """
         ## This works but it's pretty slow.
         # Group the data by 'TrackingRegion', 'ObjectID', and 'Frame'
@@ -1062,7 +1077,10 @@ class Arena:
             
 #endregion ########### Statistical Functions ############        
 
+#region ########### QC Functions ############
 
+
+#endregion ########### QC Functions ############    
 if __name__ == "__main__":
     """
     Main function to test the Arena class.

@@ -267,3 +267,8 @@ class TwoChoiceTracker(Tracker.Tracker):
         result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),pd.Series({"FinalPercentage" : final_perc}),counts,pd.Series({'Transitions': transitions}),pd.Series({'TransitionsPerMin': transitions_min})])
 
         return result
+    
+    #region ########### QC Functions ############
+    
+
+    #endregion ########### QC Functions ############  
