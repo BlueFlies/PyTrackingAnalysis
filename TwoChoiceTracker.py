@@ -105,7 +105,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
         
         trts = []
-        for key, value in self.counting_regions_design.items():
+        for key, value in self.counting_regions_design.items():        
             trts.append(self.rawdata["CountingRegion"].isin(value))
             
         pi = trts[0].astype(int) - trts[1].astype(int)

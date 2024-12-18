@@ -142,6 +142,32 @@ class Tracker:
         run_boundaries['IsSleeping'] = (run_boundaries['DurationMin']>=self.parameters.sleep_threshold_min) & run_boundaries['value']==True
         
         return run_boundaries
+    
+    def get_data_quality(self, range_minutes=(0,0)):
+        """
+        Calculate the percentages of rows with each value in the DataQuality column.
+
+        Returns:
+        DataFrame: DataFrame containing the DataQuality values and their corresponding percentages.
+        """
+        data_subset = self.get_data_subset(range_minutes)
+        perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
+        perc_notfound = (data_subset['DataQuality']=='NotFound').sum()/len(data_subset)
+        perc_indiscernable = (data_subset['DataQuality']=='Indiscernible').sum()/len(data_subset)
+        lastrow = data_subset.shape[0]-1      
+        start_minutes = data_subset['Minutes'].iat[0]
+        end_minutes = data_subset['Minutes'].iat[lastrow]
+        
+        # Create a DataFrame with the results
+        df_percentages = pd.DataFrame({
+            'HighQuality': [perc_highquality],
+            'NotFound': [perc_notfound],
+            'Indiscernible': [perc_indiscernable],
+            'StartMinutes': [start_minutes],
+            'EndMinutes': [end_minutes]
+        })
+
+        return df_percentages
 
     def get_data_subset(self, range_minutes):
         """
@@ -185,14 +211,16 @@ class Tracker:
         start_minutes = data_subset['Minutes'].iat[0]
         end_minutes = data_subset['Minutes'].iat[lastrow]
         total_distance_min = total_distance/obs_minutes
+        
+        perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
 
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iat[0]
 
         total_distance_dtrack = (data_subset['TotalDistance'].iat[0] - data_subset['TotalDistance'].iat[0])*self.parameters.mm_per_pixel
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,start_minutes,end_minutes])
-        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','StartMinutes','EndMinutes']
+        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,perc_highquality,start_minutes,end_minutes])
+        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','PercHighQuality','StartMinutes','EndMinutes']
         return result
 
     def get_plot_limits(self):

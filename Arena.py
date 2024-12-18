@@ -17,14 +17,16 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from collections import OrderedDict
 from scipy.stats import ttest_ind
 import time
+import os
+
 
 class Arena:
     """
     Class representing an experimental arena for tracking and analyzing data.
     """
-
+    
 #region ########### Initialization Functions ############
-    def __init__(self, exp_name, parameters, data_path='./', force_preprocessing=False):        
+    def __init__(self, parameters, exp_name='', data_path='./', force_preprocessing=False):        
         """
         Initialize the Arena object.
 
@@ -34,6 +36,11 @@ class Arena:
         data_path (str): Path to the data files.
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
         """
+        
+        if(exp_name==''):
+            xlsx_files = glob.glob(os.path.join(data_path, '*.xlsx'))
+            exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]            
+        
         self.parameters = parameters
         self.experiment_name = exp_name   
         self.data_path = data_path      
@@ -274,6 +281,57 @@ class Arena:
         if(write_to_csvfile==True):            
             all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary_Facet.csv",index=False)      
         return all_summaries
+    
+    
+    def print_short_data_quality_report(self,cutoff=0.9,range_minutes=(0,0)):
+        """
+        Print a short data quality report.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to summarize.
+
+        Returns:
+        DataFrame: Short data quality report.
+        """
+        data_quality = self.get_data_quality(range_minutes)                
+        print(data_quality)
+        
+        warning_data=data_quality[(data_quality['HighQuality']<cutoff)]
+        if(len(warning_data)>0):
+            print("****************************************************")
+            print(f"Warning: Some data quality falls below {cutoff}!")
+            print(warning_data)
+            print("****************************************************")            
+        else:
+            print("****************************************************")
+            print(f"All data quality is above {cutoff}.")            
+            print("****************************************************")            
+            
+    
+    def get_data_quality(self,range_minutes=(0,0)):
+        """
+        Print data quality.
+
+        Generally not called by the user.
+        
+        :meta private:
+        """
+        
+        combined_results = []
+
+        for key, tracker in self.trackers.items():
+            data_quality = tracker.get_data_quality(range_minutes)
+            data_quality['Tracker'] = key  # Add a column to identify the tracker
+            combined_results.append(data_quality)
+
+        # Concatenate all results into a single DataFrame
+        combined_df = pd.concat(combined_results, ignore_index=True)
+
+        # Move the last column to the first position
+        last_column = combined_df.pop(combined_df.columns[-1])
+        combined_df.insert(0, last_column.name, last_column)
+
+        return combined_df        
 
     def summarize(self,range_minutes=(0,0),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
         """
@@ -1089,13 +1147,15 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER)
     #p.set_pairwise_interactioncounter_values_arena_max([2,4,8])
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.XCHOICETRACKER)         
-    arena = Arena('MaxxxPWI_FLIR',p,"./Data/")
+    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
+    arena = Arena(p,data_path="./Data/")
+    arena.print_short_data_quality_report()
+    #print(arena.get_data_quality())
     #print(arena.first_tracker().rawdata[['ClosestNeighbor','IsNeighborValid']].head(30))
     #arena.first_tracker().plot_cumulative_percentage(range_minutes=(0,0),show_light=True)
     #print(arena.summarize_facet(cutoffs=(10,15)))
-    arena.run_pairwise_comparisons_facet(metric="VarAdjX_mm",cutoffs=(10,15))
-    arena.plot_adjusted_x_position_facet(cutoffs=(10,15))
+    #arena.run_pairwise_comparisons_facet(metric="VarAdjX_mm",cutoffs=(10,15))
+    #arena.plot_adjusted_x_position_facet(cutoffs=(10,15))
     #arena.plot_trackers_x()
     #arena.summarize_facet(cutoffs=(10,70),remove_partners=True)
     #arena.plot_trackers_time_dependent_interactions()

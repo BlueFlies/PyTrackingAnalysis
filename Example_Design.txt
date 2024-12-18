@@ -1,0 +1,43 @@
+[Tracking Regions]
+# TrackingRegion, Treatment, X Polarity, Y Polarity
+T_0,Control,-1,1
+T_1,Chrimson,-1,1
+T_2,Control,-1,1
+T_3,Chrimson,-1,1
+T_4,Control,-1,1
+T_5,Chrimson,-1,1
+T_6,Control,-1,1
+T_7,Chrimson,-1,1
+T_8,Control,-1,1
+T_9,Chrimson,-1,1
+T_10,Control,-1,1
+T_11,Chrimson,-1,1
+T_12,Control,-1,1
+T_13,Chrimson,-1,1
+T_14,Control,-1,1
+T_15,Chrimson,-1,1
+T_16,Control,-1,1
+T_17,Chrimson,-1,1
+T_18,Control,1,1
+T_19,Chrimson,1,1
+T_20,Control,1,1
+T_21,Chrimson,1,1
+T_22,Control,1,1
+T_23,Chrimson,1,1
+T_24,Control,1,1
+T_25,Chrimson,1,1
+T_26,Control,1,1
+T_27,Chrimson,1,1
+T_28,Control,1,1
+T_29,Chrimson,1,1
+T_30,Control,1,1
+T_31,Chrimson,1,1
+T_32,Control,1,1
+T_33,Chrimson,1,1
+T_34,Control,1,1
+T_35,Chrimson,1,1
+
+[Counting Regions]
+# Characteristic: counting regions as list 
+Light: Light, Lt, L
+NoLight: NoLight, NL, N
