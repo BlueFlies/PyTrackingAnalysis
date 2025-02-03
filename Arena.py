@@ -1083,9 +1083,8 @@ class Arena:
         # Perform pairwise t-tests
         treatments = summary['Treatment'].unique()
 
-        print(treatments)
         if(len(treatments)<2):
-            raise ValueError("There must be at least two treatments to compare.")
+            print("There must be at least two treatments to compare.")
         elif(len(treatments)==2):
             group1 = summary[summary['Treatment'] == treatments[0]][metric]
             group2 = summary[summary['Treatment'] == treatments[1]][metric]
@@ -1118,7 +1117,7 @@ class Arena:
             subset = summary[summary['FacetRange'] == frange]
             treatments = subset['Treatment'].unique()
             if(len(treatments)<2):
-                raise ValueError("There must be at least two treatments to compare.")
+                print("There must be at least two treatments to compare.")
             elif(len(treatments)==2):
                 group1 = subset[subset['Treatment'] == treatments[0]][metric]
                 group2 = subset[subset['Treatment'] == treatments[1]][metric]
