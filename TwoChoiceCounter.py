@@ -55,7 +55,12 @@ class TwoChoiceCounter(Counter.Counter):
         self.pi_data.insert(1, "Percentage", perc)
         self.pi_data.insert(1, "PI", pi)      
         return
-   
+    
+    def get_counting_region_counts(self,range_minutes=(0,0)):
+        data_subset = self.get_pi_subset(range_minutes)               
+        keys = list(self.counting_regions_design.keys())
+        return data_subset.loc[:,keys[0]:keys[1]].sum()
+
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min

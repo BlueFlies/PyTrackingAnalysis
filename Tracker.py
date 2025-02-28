@@ -80,7 +80,7 @@ class Tracker:
         deltay.iat[0]=0
         self.rawdata['Dist_mm'] = (deltax**2 + deltay**2)**0.5
         self.rawdata['DeltaSec'] = self.rawdata['Minutes'].copy().diff() * 60
-        self.rawdata.loc[self.rawdata.index[0],'DeltaSec']=0
+        self.rawdata.loc[self.rawdata.index[0],'DeltaSec']=0       
         window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
         if(window_size<=1):            
             self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']

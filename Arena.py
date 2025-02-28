@@ -397,6 +397,8 @@ class Arena:
         """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_pi_facet_twochoicetracker(cutoffs)
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER):
+            self.plot_pi_facet_twochoicecounter(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_percentage(self, range_minutes=(0,0)):      
@@ -419,6 +421,8 @@ class Arena:
         """
         if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
             self.plot_percentage_facet_twochoicetracker(cutoffs)
+        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER):
+            self.plot_percentage_facet_twochoicecounter(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
     def plot_adjusted_x_position(self,range_minutes=(0,0)):
@@ -707,6 +711,37 @@ class Arena:
         ax.text(-0.4,1,tmp[0])
         ax.text(-0.4,-1,tmp[1])
         plt.show()
+
+    def plot_pi_twochoicecounter(self, range_minutes=(0,0)):
+        """
+        Backend function to plot PI for TwoChoiceTracker.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
+        summary_data = self.summarize(range_minutes)
+        plt.figure(figsize=(10, 6))
+        p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True)
+        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        plt.title(tmp)
+        plt.xlabel('Treatment')
+        plt.ylabel('PI')
+        plt.ylim(-1.1,1.1)
+        ntreatments = summary_data['Treatment'].nunique()
+        plt.xlim(-.5,ntreatments-1+0.5)
+
+        df_mean = summary_data.groupby('Treatment', sort=False)['FinalPI'].mean()
+        ax = plt.gca()
+        x_coords = ax.get_xticks()
+        counter=0
+        for i, y in df_mean.items():
+            p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+            counter+=1
+        
+        tmp = list(self.experimental_design.counting_regions.keys())        
+        ax.text(-0.4,1,tmp[0])
+        ax.text(-0.4,-1,tmp[1])
+        plt.show()
     
     def plot_transitions_twochoicetracker(self, range_minutes=(0,0)):
         """
@@ -772,6 +807,43 @@ class Arena:
         
         plt.show()
 
+    def plot_pi_facet_twochoicecounter(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot PI in facets for TwoChoiceCounter.
+
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
+        # Create a new column for the minute ranges
+        the_data = self.summarize_facet(cutoffs)
+
+        def custom_plot(data, **kwargs):
+            p=sns.stripplot(x='Treatment', y='FinalPI', data=data, jitter=True, **kwargs)
+            means = data.groupby('Treatment', sort=False)['FinalPI'].mean()
+            ax = plt.gca()
+            x_coords = ax.get_xticks()
+            counter=0
+            for i, y in means.items():
+                p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+                counter+=1
+            ntreatments = data['Treatment'].nunique()
+            tmp = list(self.experimental_design.counting_regions.keys())        
+            ax.text(-0.4,1,tmp[0])
+            ax.text(-0.4,-1,tmp[1])
+            plt.xlim(-.5,ntreatments-1+0.5)
+
+        # Create the FacetGrid
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
+        g.map_dataframe(custom_plot)
+        # Add titles and labels
+        g.set_titles(col_template="Facet Range (min): {col_name}")
+        g.set_axis_labels('Treatment', 'PI')
+        g.set(ylim=(-1.1, 1.1))
+        
+        plt.show()
+
+
     def plot_transitions_facet_twochoicetracker(self, cutoffs=(10,70)):   
         """
         Backend function to plot transitions in facets for TwoChoiceTracker.
@@ -815,6 +887,36 @@ class Arena:
         summary_data = self.summarize(range_minutes)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPercentage', data=summary_data, jitter=True,  hue='Transitions')
+        tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        plt.title(tmp)
+        plt.xlabel('Treatment')
+        plt.ylabel('Percentage')
+        plt.ylim(-0.05,1.05)
+        ntreatments = summary_data['Treatment'].nunique()
+        plt.xlim(-.5,ntreatments-1+0.5)
+
+        df_mean = summary_data.groupby('Treatment', sort=False)['FinalPercentage'].mean()
+        ax = plt.gca()
+        x_coords = ax.get_xticks()
+        counter=0
+        for i, y in df_mean.items():
+            p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+            counter+=1
+        tmp = list(self.experimental_design.counting_regions.keys())        
+        ax.text(-0.4,1,tmp[0])
+        ax.text(-0.4,-1,tmp[1])
+        plt.show()
+
+    def plot_percentage_twochoicecounter(self, range_minutes=(0,0)):
+        """
+        Backend function to plot percentage for TwoChoiceTracker.
+
+        Parameters:
+        range_minutes (tuple): Range of minutes to plot.
+        """
+        summary_data = self.summarize(range_minutes)
+        plt.figure(figsize=(10, 6))
+        p=sns.stripplot(x='Treatment', y='FinalPercentage', data=summary_data, jitter=True)
         tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
         plt.title(tmp)
         plt.xlabel('Treatment')
@@ -999,6 +1101,44 @@ class Arena:
         
         plt.show()
 
+    def plot_percentage_facet_twochoicecounter(self, cutoffs=(10,70)):   
+        """
+        Backend function to plot percentage in facets for TwoChoiceTracker.
+        Generally not called by the user.
+        
+        Parameters:
+        cutoffs (tuple): Cutoff values for facets.
+        """
+        # Create a new column for the minute ranges
+        the_data = self.summarize_facet(cutoffs)
+
+        def custom_plot(data, **kwargs):
+            p=sns.stripplot(x='Treatment', y='FinalPercentage', data=data, jitter=True, **kwargs)
+            means = data.groupby('Treatment', sort=False)['FinalPercentage'].mean()
+            ax = plt.gca()
+            x_coords = ax.get_xticks()
+            counter=0
+            for i, y in means.items():
+                p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
+                counter+=1
+            ntreatments = data['Treatment'].nunique()
+            tmp = list(self.experimental_design.counting_regions.keys())        
+            ax.text(-0.4,1,tmp[0])
+            ax.text(-0.4,0,tmp[1])
+            plt.xlim(-.5,ntreatments-1+0.5)
+
+        # Create the FacetGrid
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
+        g.map_dataframe(custom_plot)
+        # Add titles and labels
+        g.set_titles(col_template="Facet Range (min): {col_name}")
+        g.set_axis_labels('Treatment', 'Percentage')
+        g.set(ylim=(-.05, 1.05))
+        
+        plt.show()
+
+
     def plot_totaldistance_generaltracker(self, range_minutes=(0,0)):
         """
         Backend function to plot total distance for general tracker.
@@ -1146,7 +1286,7 @@ if __name__ == "__main__":
     #p.set_small_arena_values(Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER)
     #p.set_pairwise_interactioncounter_values_arena_max([2,4,8])
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
-    p.set_arena_max_values(Parameters.TrackingType.TWOCHOICETRACKER)         
+    p.set_colloseum_values(Parameters.TrackingType.TWOCHOICETRACKER)         
     arena = Arena(p,data_path="./Data/")
     arena.print_short_data_quality_report()
     #print(arena.get_data_quality())

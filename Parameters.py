@@ -69,6 +69,15 @@ class Parameters:
         self.sleep_threshold_min = 5
         self.set_tracking_type(tracking_type)
 
+    def set_colloseum_values(self,tracking_type):
+        self.fps=0
+        self.mm_per_pixel=0.145
+        self.speed_window_seconds=1
+        self.micro_move_speed_mm_sec = [0.2,2]
+        self.walking_speed_mm_sec = 2
+        self.sleep_threshold_min = 5
+        self.set_tracking_type(tracking_type)
+
     def set_movie_values(self,tracking_type, fps, mm_per_pixel):
         self.fps=fps
         self.mm_per_pixel=mm_per_pixel

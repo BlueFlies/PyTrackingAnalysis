@@ -1,0 +1,18 @@
+[Tracking Regions]
+# TrackingRegion, Treatment, Flip X (1/no or -1/yes), Flip Y (1/no or -1/yes)
+L1,Control,1,1
+L2,Control,1,1
+L3,Control,1,1
+L4,Control,1,1
+L5,Control,1,1
+L6,Control,1,1
+R1,Experimental,1,1
+R2,Experimental,1,1
+R3,Experimental,1,1 
+R4,Experimental,1,1
+R5,Experimental,1,1
+R6,Experimental,1,1
+
+[Counting Regions]
+# Characteristic: Counting Regions 
+None: None
