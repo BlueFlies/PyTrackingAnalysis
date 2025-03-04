@@ -94,6 +94,18 @@ class Arena:
         rd = pd.concat(dataframes, ignore_index=True)
         return rd
     
+    def delete_tracker(self,region, object_id):
+        """
+        Delete a tracker.
+
+        Parameters:
+        tracker_id (str): ID of the tracker to delete.
+
+        :meta private:
+        """
+        self.trackers.pop(f'{region}_{object_id}')
+        
+    
     def create_trackers(self, force_preprocessing):
         """
         Create trackers based on the experimental parameters.
@@ -1288,6 +1300,7 @@ if __name__ == "__main__":
     #p.set_movie_values(Parameters.TrackingType.TWOCHOICETRACKER, 10, 0.056)
     p.set_colloseum_values(Parameters.TrackingType.TWOCHOICETRACKER)         
     arena = Arena(p,data_path="./Data/")
+    arena.delete_tracker("T_23","0")
     arena.print_short_data_quality_report()
     #print(arena.get_data_quality())
     #print(arena.first_tracker().rawdata[['ClosestNeighbor','IsNeighborValid']].head(30))
