@@ -1,0 +1,26 @@
+[Tracking Regions]
+# TrackingRegion, Treatment, X Polarity, Y Polarity
+# Flip Y polarity based on where the lights are.
+T_0,Control,1,1
+T_1,Chrimson,1,1
+T_2,Control,1,1
+T_3,Chrimson,1,1
+T_4,Control,1,1
+T_5,Chrimson,1,1
+T_6,Control,1,1
+T_7,Chrimson,1,1
+T_8,Control,1,1
+T_9,Chrimson,1,1
+T_10,Control,1,1
+T_11,Chrimson,1,1
+T_12,Control,1,1
+T_13,Chrimson,1,1
+T_14,Control,1,1
+T_15,Chrimson,1,1
+T_16,Chrimson,1,1
+T_17,Chrimson,1,1
+
+[Counting Regions]
+# Characteristic: counting regions as list 
+Light: Light, Lt, L
+NoLight: NoLight, NL, N
