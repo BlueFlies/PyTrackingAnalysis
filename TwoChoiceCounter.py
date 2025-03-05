@@ -46,7 +46,7 @@ class TwoChoiceCounter(Counter.Counter):
         self.pi_data = self.sum_counts_assign_treatments()
         
         trts =[]
-        for key, value in self.counting_regions_design.items():
+        for key, value in self.counting_regions_design.items():            
             trts.append(self.pi_data[key])
         
         pi = (trts[0].astype(int) - trts[1].astype(int))/(trts[0].astype(int) + trts[1].astype(int))
@@ -109,16 +109,21 @@ class TwoChoiceCounter(Counter.Counter):
         pivot_table.columns.name = None
         avg_indicator = self.rawdata.groupby('Minutes')['Indicator'].mean().reset_index()
         pivot_table['Indicator'] = avg_indicator['Indicator']
+        
         for key, value in self.counting_regions_design.items():
+            found=False # This is to cover in case counting regions are never visited.
             for column in pivot_table.columns:
                 if column in value:
+                    found=True
                     if(column==key):
                         pivot_table["tmp"] = pivot_table[column]
                         newname = column +"_CountingRegion"
                         pivot_table.rename(columns={column: newname}, inplace=True)
                         pivot_table.rename(columns={"tmp": key}, inplace=True)
                     else:
-                        pivot_table[key] = pivot_table[column]
+                        pivot_table[key] = pivot_table[column]        
+            if(not found):
+                pivot_table[key] = 0
         return pivot_table
     
     def plot_cumulative_pi(self, range_minutes=(0,0),show_light=False):
