@@ -71,7 +71,7 @@ class Parameters:
 
     def set_colloseum_values(self,tracking_type):
         self.fps=0
-        self.mm_per_pixel=0.145
+        self.mm_per_pixel=0.1106
         self.speed_window_seconds=1
         self.micro_move_speed_mm_sec = [0.2,2]
         self.walking_speed_mm_sec = 2
