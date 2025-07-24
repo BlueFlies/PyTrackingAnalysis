@@ -161,7 +161,37 @@ class Parameters:
 
     def __str__(self):
         return f"tracking_type: {self.tracking_details.get_tracking_type()}\nfps: {self.fps}\nmm_per_pixel: {self.mm_per_pixel}\nspeed_window_seconds: {self.speed_window_seconds}\nmicromove_speed_mm_sec: {self.micro_move_speed_mm_sec}\nwalking_speed_mm_sec: {self.walking_speed_mm_sec}\nsleep_threshold_min: {self.sleep_threshold_min}\ninteraction_distances: {self.interaction_distance_mm}"
-   
+
+
+    def set_pairwise_interactioncounter_values_colloseum(self, interaction_distances):
+        self.fps=0
+        self.mm_per_pixel=0.1106
+        self.speed_window_seconds=1
+        self.micro_move_speed_mm_sec = [0.2,2]
+        self.walking_speed_mm_sec = 2
+        self.sleep_threshold_min = 5
+        self.set_tracking_type(TrackingType.PAIRWISEINTERACTIONCOUNTER)
+        if(isinstance(interaction_distances, list)):
+            self.interaction_distance_mm = interaction_distances
+        else:
+            raise ValueError(f"Invalid interaction_distances: {interaction_distances}. Must be a list of integers.")
+
+
+
+    def set_pairwise_interaction_values_colloseum(self, interaction_distances):
+        self.fps=0
+        self.mm_per_pixel=0.1106
+        self.speed_window_seconds=1
+        self.micro_move_speed_mm_sec = [0.2,2]
+        self.walking_speed_mm_sec = 2
+        self.sleep_threshold_min = 5
+        self.set_tracking_type(TrackingType.PAIRWISEINTERACTIONTRACKER)
+        if(isinstance(interaction_distances, list)):
+            self.interaction_distance_mm = interaction_distances
+        else:
+            raise ValueError(f"Invalid interaction_distances: {interaction_distances}. Must be a list of integers.")
+
+
     def set_pairwise_interaction_values_arena_max(self, interaction_distances):
         self.fps=0
         self.mm_per_pixel=0.145

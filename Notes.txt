@@ -1,4 +1,0 @@
-To create the environment from the yml file in this directory.
-
-conda env create -n PyTrackingAnalysis -f=\path\to\base.yml 
-

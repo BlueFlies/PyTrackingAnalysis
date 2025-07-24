@@ -8,7 +8,9 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
         ## All of the relevant parameters are defined in the parent class.
         super().__init__(tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata)     
-
+        if(self.rawdata.index.duplicated().any()):                 
+            raise ValueError(f"Duplicated frames in {self.name}.")
+        
     def set_neighbor(self,neighbor_tracker):
         self.neighbor_tracker = neighbor_tracker
         
@@ -47,8 +49,7 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1) | (self.neighbor_tracker.rawdata['ClosestNeighbor'] == -1) 
         null_observations = (self.rawdata['ClosestNeighbor'].isnull()) | (self.neighbor_tracker.rawdata['ClosestNeighbor'].isnull())    
            
-        final_quality = (quality | one_blob) & ((~neg_one_distance) | (~null_observations))
-        
+        final_quality = (quality | one_blob) & ((~neg_one_distance) | (~null_observations))        
         self.rawdata['IsNeighborValid'] = final_quality 
         
         self.rawdata['ClosestNeighbor_mm'] = self.rawdata['ClosestNeighbor']
