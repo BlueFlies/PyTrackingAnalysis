@@ -557,7 +557,8 @@ class Arena:
                     if(tracker.get_treatment()==treatment):
                         # Assuming tracker has a method to get x-positions within the specified range
                         x_positions = tracker.get_x_positions(range_minutes)
-                        ax.plot(x_positions, label=key, color=colormap(idx),alpha=0.7)
+                        minutes = tracker.get_minutes(range_minutes)
+                        ax.plot(minutes,x_positions, label=key, color=colormap(idx),alpha=0.7)
                 
                 ax.set_xlabel('Minutes')
                 ax.set_ylabel('X Position')
@@ -880,7 +881,7 @@ class Arena:
             plt.xlim(-.5,ntreatments-1+0.5)
             
         # Create the FacetGrid
-        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4,sharey=False)
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
@@ -1203,7 +1204,7 @@ class Arena:
             plt.xlim(-.5,ntreatments-1+0.5)
 
         # Create the FacetGrid
-        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4)
+        g = sns.FacetGrid(the_data, col='FacetRange', col_wrap=3, height=4, sharey=False)
         #g.map(sns.stripplot, 'Treatment', 'FinalPI', 'Transitions', jitter=True)
         g.map_dataframe(custom_plot)
         # Add titles and labels
