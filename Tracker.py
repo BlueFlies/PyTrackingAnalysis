@@ -198,7 +198,6 @@ class Tracker:
         Series: Summary statistics of the tracking data.
         """
         data_subset = self.get_data_subset(range_minutes)
-        
         perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
         perc_walking = data_subset['IsWalking'].sum()/len(data_subset)
         perc_micro = data_subset['IsMicroMove'].sum()/len(data_subset)

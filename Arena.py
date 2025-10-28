@@ -18,7 +18,7 @@ from collections import OrderedDict
 from scipy.stats import ttest_ind
 import time
 import os
-
+import random
 
 class Arena:
     """
@@ -258,6 +258,19 @@ class Arena:
         """
         return self.trackers.get(key,None)
 
+    def get_random_tracker(arena):
+        """
+        Returns a random tracker from the arena's trackers.
+        Assumes arena.trackers is a dict or list of tracker objects.
+        """
+        # If trackers is a dict, get the values as a list
+        if isinstance(arena.trackers, dict):
+            trackers = list(arena.trackers.values())
+        else:
+            trackers = list(arena.trackers)
+        if not trackers:
+            return None  # or raise an Exception if preferred
+        return random.choice(trackers)
 #endregion ########### Access Functions ############
 
 #region ########### Basic Computation Functions ############

@@ -180,3 +180,36 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         plt.ylim([-0.1,1])
         plt.grid(True)
         plt.show()
+
+
+    def plot_xy(self, range_minutes=(0,0)):
+        """
+        Plot the XY positions of the tracked object.
+
+        Parameters:
+        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        """
+        data_subset = self.get_data_subset(range_minutes)
+        plt.figure(figsize=(10, 6))
+        scatter = plt.scatter(data_subset['Xpos_mm']*(int)(self.tracking_region_design['XLocationMultiplier'].iloc[0]), data_subset['Ypos_mm']*(int)(self.tracking_region_design['YLocationMultiplier'].iloc[0]), c=data_subset['ClosestNeighbor_mm'], cmap='viridis', vmin=data_subset['ClosestNeighbor_mm'].min(), vmax=data_subset['ClosestNeighbor_mm'].max())
+        plt.colorbar(scatter, label='Closest Neighbor')
+        plt.xlabel('X Position (mm)')
+        plt.ylabel('Y Position (mm)')
+        title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
+        if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X and Y Coordinates Fipped)"
+        elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
+                title = title + " (Y Coordinate Fipped)"
+        elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
+                title = title + " (X Coordinate Fipped)"
+        plt.title(title)
+        tmp = self.get_plot_limits()
+        plt.xlim(tmp[0])
+        plt.ylim(tmp[1])
+        plt.grid(True)
+
+        if(self.tracking_region_roi['Shape'].values[0]=='Ellipse'):
+            ellipse = patches.Ellipse((0, 0), width=self.tracking_region_roi['Width'].values[0]*self.parameters.mm_per_pixel, height=self.tracking_region_roi['Height'].values[0]*self.parameters.mm_per_pixel, edgecolor='gray', facecolor='none', linewidth=1)            
+            plt.gca().add_patch(ellipse)
+
+        plt.show()
