@@ -1238,6 +1238,7 @@ class Arena:
         metric (str): Metric to compare.
         range_minutes (tuple): Range of minutes to compare.
         """
+        remove_partners = False
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and ("Interacting" in metric)):
             remove_partners=True
         summary = self.summarize(range_minutes, remove_partners=remove_partners)
@@ -1252,14 +1253,22 @@ class Arena:
         if(len(treatments)<2):
             print("There must be at least two treatments to compare.")
         elif(len(treatments)==2):
-            group1 = summary[summary['Treatment'] == treatments[0]][metric]
-            group2 = summary[summary['Treatment'] == treatments[1]][metric]
+            group1 = pd.to_numeric(summary[summary['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
+            group2 = pd.to_numeric(summary[summary['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
+            if len(group1) == 0 or len(group2) == 0:
+                print(f"Warning: Insufficient numeric data for {metric} comparison. Skipping.")
+                return
             t_stat, p_value = ttest_ind(group1, group2)
             print("############# T-Test #############")
             print(f"Column = {metric}, Range Minutes = ({range_minutes[0]:.2f} , {range_minutes[1]:.2f}) ")
             print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
         else:
-            tukey = pairwise_tukeyhsd(endog=summary[metric], groups=summary['Treatment'], alpha=0.05)            
+            metric_numeric = pd.to_numeric(summary[metric], errors='coerce')
+            valid_mask = metric_numeric.notna()
+            if valid_mask.sum() == 0:
+                print(f"Warning: No valid numeric data for {metric} comparison. Skipping.")
+                return
+            tukey = pairwise_tukeyhsd(endog=metric_numeric[valid_mask], groups=summary['Treatment'][valid_mask], alpha=0.05)            
             print(f"Column = {metric}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
             print(tukey)
     
@@ -1285,15 +1294,25 @@ class Arena:
             if(len(treatments)<2):
                 print("There must be at least two treatments to compare.")
             elif(len(treatments)==2):
-                group1 = subset[subset['Treatment'] == treatments[0]][metric]
-                group2 = subset[subset['Treatment'] == treatments[1]][metric]
+                group1 = pd.to_numeric(subset[subset['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
+                group2 = pd.to_numeric(subset[subset['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
+                if len(group1) == 0 or len(group2) == 0:
+                    print(f"Warning: Insufficient numeric data for {metric} in facet {frange}. Skipping.")
+                    print("\n")
+                    continue
                 t_stat, p_value = ttest_ind(group1, group2)
                 print("############# T-Test #############")
                 print(f"Column = {metric}, Range Minutes = ({frange[0]:.2f} , {frange[1]:.2f}) ")
                 print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
                 print("\n")
             else:              
-                tukey = pairwise_tukeyhsd(endog=subset[metric], groups=subset['Treatment'], alpha=0.05)
+                metric_numeric = pd.to_numeric(subset[metric], errors='coerce')
+                valid_mask = metric_numeric.notna()
+                if valid_mask.sum() == 0:
+                    print(f"Warning: No valid numeric data for {metric} in facet {frange}. Skipping.")
+                    print("\n")
+                    continue
+                tukey = pairwise_tukeyhsd(endog=metric_numeric[valid_mask], groups=subset['Treatment'][valid_mask], alpha=0.05)
                 print(f"Column = {metric}, Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
                 print(tukey)
                 print("\n")

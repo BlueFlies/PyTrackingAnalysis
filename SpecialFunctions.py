@@ -1,0 +1,257 @@
+from Arena import Arena
+from Parameters import Parameters, TrackingType
+import pandas as pd
+def analyze_rle_data(arena: Arena, change_none_to_light=True, min_duration_frames=1, range_minutes=(0,0)):
+        """
+        Analyze RLE (Run Length Encoding) data for all TwoChoiceTrackers in the arena.
+        
+        This function iterates over all TwoChoiceTracker instances, calls the rle() function
+        for each, and analyzes the run length data for each of the two treatments.
+        
+        Parameters:
+        range_minutes (tuple): Range of minutes to analyze. Default (0,0) means analyze all data.
+        
+        Returns:
+        DataFrame: Combined results containing:
+            - Tracker: Tracker identifier
+            - Treatment: Treatment group
+            - Treatment1_Name: Name of first treatment
+            - Treatment2_Name: Name of second treatment
+            - Treatment1_Rows: Number of RLE rows for treatment 1
+            - Treatment2_Rows: Number of RLE rows for treatment 2
+            - Treatment1_MeanLength: Mean length of runs for treatment 1
+            - Treatment2_MeanLength: Mean length of runs for treatment 2
+        """
+        if arena.parameters.get_tracking_type() != TrackingType.TWOCHOICETRACKER:
+            raise ValueError(f"Invalid tracking type: {arena.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
+        
+        results = []
+        
+        for key, tracker in arena.trackers.items():
+            # Get RLE data for this tracker
+            rle_data = tracker.rle(range_minutes)
+
+            if change_none_to_light:
+            # Change "None" values in the 'values' column to "Light"
+                rle_data['values'] = rle_data['values'].replace("None", "Light")
+
+                # Combine adjacent rows if they have the same value in the 'values' column
+                # We'll use a run-length encoding style approach
+                changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
+                combined = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+                rle_data = combined
+
+            if min_duration_frames>1:
+            # Delete rows with lengths < min_duration_frames
+                rle_data = rle_data[rle_data['lengths'] >= min_duration_frames].reset_index(drop=True)
+
+                # Combine adjacent rows again if they have the same value in the 'values' column
+                if len(rle_data) > 0:
+                    changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
+                    rle_data = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+
+            # Get treatment information
+            treatment = tracker.tracking_region_design['Treatment'].iloc[0] if tracker.tracking_region_design is not None else "Unknown"
+            
+            # Get counting region names (the two treatments)
+            counting_region_names = list(tracker.counting_regions_design.keys()) if tracker.counting_regions_design is not None else ["Treatment1", "Treatment2"]
+            treatment1_name = counting_region_names[0] if len(counting_region_names) > 0 else "Treatment1"
+            treatment2_name = counting_region_names[1] if len(counting_region_names) > 1 else "Treatment2"
+            
+            # Filter out "None" values from RLE data
+            rle_data_filtered = rle_data[rle_data['values'] != "None"]
+            
+            # Analyze data for each treatment
+            treatment1_data = rle_data_filtered[rle_data_filtered['values'] == treatment1_name]
+            treatment2_data = rle_data_filtered[rle_data_filtered['values'] == treatment2_name]
+            
+            # Calculate statistics: rows, mean and median lengths for each treatment
+            treatment1_rows = len(treatment1_data)
+            treatment2_rows = len(treatment2_data)
+            treatment1_mean_length = treatment1_data['lengths'].mean() if treatment1_rows > 0 else 0
+            treatment2_mean_length = treatment2_data['lengths'].mean() if treatment2_rows > 0 else 0
+            treatment1_median_length = treatment1_data['lengths'].median() if treatment1_rows > 0 else 0
+            treatment2_median_length = treatment2_data['lengths'].median() if treatment2_rows > 0 else 0
+            
+            # Store results
+            result = {
+                'Tracker': key,
+                'Treatment': treatment,
+                'Treatment1_Name': treatment1_name,
+                'Treatment2_Name': treatment2_name,
+                'Treatment1_Rows': treatment1_rows,
+                'Treatment2_Rows': treatment2_rows,
+                'Treatment1_MeanLength': treatment1_mean_length,
+                'Treatment2_MeanLength': treatment2_mean_length,
+                'Treatment1_MedianLength': treatment1_median_length,
+                'Treatment2_MedianLength': treatment2_median_length,
+                "Treatment1_Lengths": treatment1_data['lengths'].tolist(),
+                "Treatment2_Lengths": treatment2_data['lengths'].tolist()
+            }            
+            
+            results.append(result)
+        
+        # Convert to DataFrame
+        results_df = pd.DataFrame(results)
+        
+        return results_df
+
+def  analyze_rle_data_facet(arena: Arena,cutoffs=(10,70),change_none_to_light=True, min_duration_frames=1, write_to_csvfile=False):
+
+        if(isinstance(cutoffs, tuple)):
+            cutoffs = list(cutoffs)
+        elif(isinstance(cutoffs, int)):
+            cutoffs = [cutoffs]
+        else:
+            raise ValueError("Invalid cutoffs. Must be a tuple or asingle integer")
+        cutoffs.insert(0,0)
+        cutoffs.append(float('inf'))
+        results = []
+
+        for i in range(len(cutoffs)-1):
+            tmp = analyze_rle_data(arena, change_none_to_light=change_none_to_light, min_duration_frames=min_duration_frames, range_minutes=tuple([cutoffs[i],cutoffs[i+1]]))
+            tmp['FacetRange']=[tuple([cutoffs[i],cutoffs[i+1]])]*len(tmp)
+            results.append(tmp)
+        all_results = pd.concat(results, ignore_index=True)        
+        if(write_to_csvfile==True):            
+            all_results.to_csv(f"./Data/EventDuration_Summary_Facet.csv",index=False)      
+        return all_results
+
+
+#region ########### Distance and Time Analysis Functions ############
+def analyze_distance_by_light(arena:Arena, range_minutes=(0,0)):
+    """
+    Analyze distance moved and time spent in light vs no light regions for all trackers.
+    
+    For each tracker, this function subsets rows based on whether the CountingRegion 
+    column values belong to the "Light" or "NoLight" groups (as defined in 
+    counting_regions_design), then sums the "Dist_mm" and "DeltaSec" columns.
+    
+    Parameters:
+    range_minutes (tuple): Range of minutes to analyze. Default (0,0) means analyze all data.
+    
+    Returns:
+    DataFrame: Combined results containing:
+        - Tracker: Tracker identifier
+        - Treatment: Treatment group
+        - Light_Distance_mm: Total distance moved in light regions (mm)
+        - NoLight_Distance_mm: Total distance moved in no light regions (mm)
+        - Light_Time_sec: Total time spent in light regions (seconds)
+        - NoLight_Time_sec: Total time spent in no light regions (seconds)
+        - Light_Distance_mm_sec: Light distance divided by time (mm/sec)
+        - NoLight_Distance_mm_sec: No light distance divided by time (mm/sec)
+    """
+    results = []
+    
+    for key, tracker in arena.trackers.items():
+        # Get data subset for the specified time range
+        data_subset = tracker.get_data_subset(range_minutes)
+        
+        # Get treatment information
+        treatment = tracker.tracking_region_design['Treatment'].iloc[0] if tracker.tracking_region_design is not None else "Unknown"
+        
+        # Get counting region design to determine Light vs NoLight groups
+        if tracker.counting_regions_design is None:
+            # If no counting regions design, skip this tracker or use default
+            continue
+        
+        # Find which group names correspond to Light and NoLight
+        # The counting_regions_design is a dict like {'Light': ['Light', 'Lt', 'L'], 'NoLight': ['NoLight', 'NL', 'N']}
+        light_group_name = None
+        nolight_group_name = None
+        
+        for group_name in tracker.counting_regions_design.keys():
+            group_name_lower = group_name.lower()
+            if 'light' in group_name_lower and 'no' not in group_name_lower:
+                light_group_name = group_name
+            elif 'nolight' in group_name_lower or ('no' in group_name_lower and 'light' in group_name_lower):
+                nolight_group_name = group_name
+        
+        # If we can't find the groups by name, use the first two groups
+        if light_group_name is None or nolight_group_name is None:
+            group_names = list(tracker.counting_regions_design.keys())
+            if len(group_names) >= 2:
+                light_group_name = group_names[0]
+                nolight_group_name = group_names[1]
+            else:
+                # Skip this tracker if we can't determine the groups
+                continue
+        
+        # Get the list of CountingRegion values for each group
+        light_values = tracker.counting_regions_design[light_group_name]
+        nolight_values = tracker.counting_regions_design[nolight_group_name]
+        
+        # Check if CountingRegion column exists
+        if 'CountingRegion' not in data_subset.columns:
+            # Skip this tracker if CountingRegion column doesn't exist
+            continue
+        
+        # Subset rows for light and no light regions
+        light_data = data_subset[data_subset['CountingRegion'].isin(light_values)]
+        nolight_data = data_subset[data_subset['CountingRegion'].isin(nolight_values)]
+        
+        # Sum distance and time for each region
+        light_distance = light_data['Dist_mm'].sum() if 'Dist_mm' in light_data.columns else 0
+        nolight_distance = nolight_data['Dist_mm'].sum() if 'Dist_mm' in nolight_data.columns else 0
+        light_time = light_data['DeltaSec'].sum() if 'DeltaSec' in light_data.columns else 0
+        nolight_time = nolight_data['DeltaSec'].sum() if 'DeltaSec' in nolight_data.columns else 0
+        
+        # Store results
+        result = {
+            'Tracker': key,
+            'Treatment': treatment,
+            'Light_Distance_mm': light_distance,
+            'NoLight_Distance_mm': nolight_distance,
+            'Light_Time_sec': light_time,
+            'NoLight_Time_sec': nolight_time
+        }
+        
+        results.append(result)
+    
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+
+    # Add Light_Distance_mm_sec and NoLight_Distance_mm_sec columns
+    # Handle division by zero by filling with np.nan
+    import numpy as np
+    results_df['Light_Distance_mm_sec'] = results_df['Light_Distance_mm'] / results_df['Light_Time_sec']
+    results_df['NoLight_Distance_mm_sec'] = results_df['NoLight_Distance_mm'] / results_df['NoLight_Time_sec']
+    results_df['Light_Distance_mm_sec'] = results_df['Light_Distance_mm_sec'].replace([np.inf, -np.inf], np.nan)
+    results_df['NoLight_Distance_mm_sec'] = results_df['NoLight_Distance_mm_sec'].replace([np.inf, -np.inf], np.nan)
+
+    return results_df
+
+    
+def analyze_distance_by_light_facet(arena:Arena, cutoffs=(10,70), copy_to_clipboard=False, write_to_csvfile=True):
+    """
+    Analyze distance moved and time spent in light vs no light regions across time facets.
+    
+    Parameters:
+    cutoffs (tuple): Cutoff values for facets.
+    copy_to_clipboard (bool): Flag to copy results to clipboard.
+    write_to_csvfile (bool): Flag to write results to CSV file.
+    
+    Returns:
+    DataFrame: Combined results with FacetRange column.
+    """
+    if(isinstance(cutoffs, tuple)):
+        cutoffs = list(cutoffs)
+    elif(isinstance(cutoffs, int)):
+        cutoffs = [cutoffs]
+    else:
+        raise ValueError("Invalid cutoffs. Must be a tuple or a single integer")
+    cutoffs.insert(0,0)
+    cutoffs.append(float('inf'))
+    results = []
+    for i in range(len(cutoffs)-1):
+        tmp = analyze_distance_by_light(arena, range_minutes=tuple([cutoffs[i],cutoffs[i+1]]))
+        tmp['FacetRange']=[tuple([cutoffs[i],cutoffs[i+1]])]*len(tmp)
+        results.append(tmp)
+    all_results = pd.concat(results, ignore_index=True)
+    if(copy_to_clipboard):            
+        all_results.to_clipboard(index=False)
+    if(write_to_csvfile==True):            
+        all_results.to_csv(f"./Data/DistanceByLight_Facet.csv",index=False)      
+    return all_results
+
+#endregion ########### Distance and Time Analysis Functions ############
