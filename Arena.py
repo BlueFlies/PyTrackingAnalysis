@@ -300,11 +300,11 @@ class Arena:
             tmp = self.summarize(range_minutes=tuple([cutoffs[i],cutoffs[i+1]]),remove_partners=remove_partners)
             tmp['FacetRange']=[tuple([cutoffs[i],cutoffs[i+1]])]*len(tmp)
             results.append(tmp)
-        all_summaries = pd.concat(results, ignore_index=True)
+        all_summaries = pd.concat(results, ignore_index=True)        
         if(copy_to_clipboard):            
-            all_summaries.to_clipboard(index=False)
-        if(write_to_csvfile==True):            
-            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary_Facet.csv",index=False)      
+            all_summaries.to_clipboard(index=False, na_rep='NA')
+        if(write_to_csvfile==True):                        
+            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary_Facet_NA.csv",index=False, na_rep='NA')      
         return all_summaries
     
     
@@ -394,9 +394,9 @@ class Arena:
    
         ## Note that for the this function to work in linux, you need to install xclip or xsel (verified with xclip)
         if(copy_to_clipboard):            
-            all_summaries.to_clipboard(index=False)
+            all_summaries.to_clipboard(index=False, na_rep='NA')
         if(write_to_csvfile==True):            
-            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary.csv",index=False) 
+            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary.csv",index=False, na_rep='NA') 
         return all_summaries
     
 #endregion ########### Basic Computation Functions ############

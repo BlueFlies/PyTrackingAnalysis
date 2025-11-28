@@ -259,11 +259,25 @@ class TwoChoiceTracker(Tracker.Tracker):
     
     def summarize(self, range_minutes=(0,0)):        
         tmp = Tracker.Tracker.summarize(self, range_minutes)
-        final_pi = self.get_final_pi(range_minutes)
-        final_perc = self.get_final_percentage(range_minutes)
-        counts = self.get_counting_region_counts(range_minutes)
-        transitions = self.get_transitions(range_minutes)
-        transitions_min=transitions/tmp['ObsMinutes']
+        try:
+            final_pi = self.get_final_pi(range_minutes)
+        except:
+            final_pi = pd.NA
+        try:
+            final_perc = self.get_final_percentage(range_minutes)
+        except:
+            final_perc = pd.NA
+        try:
+            transitions = self.get_transitions(range_minutes)
+            transitions_min=transitions/tmp['ObsMinutes']
+        except:
+            transitions = pd.NA
+            transitions_min=pd.NA
+        try:
+            counts = self.get_counting_region_counts(range_minutes)
+        except:
+            counts = pd.NA
+      
         result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),pd.Series({"FinalPercentage" : final_perc}),counts,pd.Series({'Transitions': transitions}),pd.Series({'TransitionsPerMin': transitions_min})])
 
         return result

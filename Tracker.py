@@ -198,25 +198,39 @@ class Tracker:
         Series: Summary statistics of the tracking data.
         """
         data_subset = self.get_data_subset(range_minutes)
-        perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
-        perc_walking = data_subset['IsWalking'].sum()/len(data_subset)
-        perc_micro = data_subset['IsMicroMove'].sum()/len(data_subset)
-        perc_resting = data_subset['IsResting'].sum()/len(data_subset)
+        if(len(data_subset)!=0):            
+            perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
+            perc_walking = data_subset['IsWalking'].sum()/len(data_subset)
+            perc_micro = data_subset['IsMicroMove'].sum()/len(data_subset)
+            perc_resting = data_subset['IsResting'].sum()/len(data_subset)
 
-        avg_speed = data_subset['Speed_mm_sec'].mean()
-        total_distance = data_subset['Dist_mm'].sum()
-        lastrow = data_subset.shape[0]-1        
-        obs_minutes = data_subset['Minutes'].iat[lastrow] - data_subset['Minutes'].iat[0]
-        start_minutes = data_subset['Minutes'].iat[0]
-        end_minutes = data_subset['Minutes'].iat[lastrow]
-        total_distance_min = total_distance/obs_minutes
-        
-        perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
+            avg_speed = data_subset['Speed_mm_sec'].mean()
+            total_distance = data_subset['Dist_mm'].sum()
+            lastrow = data_subset.shape[0]-1        
+            obs_minutes = data_subset['Minutes'].iat[lastrow] - data_subset['Minutes'].iat[0]
+            start_minutes = data_subset['Minutes'].iat[0]
+            end_minutes = data_subset['Minutes'].iat[lastrow]
+            total_distance_min = total_distance/obs_minutes
+            
+            perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
+            total_distance_dtrack = (data_subset['TotalDistance'].iat[0] - data_subset['TotalDistance'].iat[0])*self.parameters.mm_per_pixel
+        else:
+            perc_sleeping = pd.NA
+            perc_walking = pd.NA
+            perc_micro = pd.NA
+            perc_resting = pd.NA
+            avg_speed = pd.NA
+            total_distance = pd.NA
+            obs_minutes = pd.NA
+            start_minutes = pd.NA
+            end_minutes = pd.NA
+            total_distance_min = pd.NA
+            perc_highquality = pd.NA
+            total_distance_dtrack = pd.NA
 
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iat[0]
 
-        total_distance_dtrack = (data_subset['TotalDistance'].iat[0] - data_subset['TotalDistance'].iat[0])*self.parameters.mm_per_pixel
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
         result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,perc_highquality,start_minutes,end_minutes])
         result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','PercHighQuality','StartMinutes','EndMinutes']
