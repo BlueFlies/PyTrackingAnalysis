@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(/home/scott/.local/bin/uv add:*)",
+      "Bash(/home/scott/GithubLocal/PyTrackingAnalysis/.venv/bin/python3:*)",
+      "Bash(.venv/bin/python3:*)",
+      "Bash(ls:*)",
+      "Read(//home/scott/GithubLocal/PyTrackingAnalysis/**)"
+    ]
+  }
+}

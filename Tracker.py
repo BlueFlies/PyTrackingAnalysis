@@ -213,7 +213,6 @@ class Tracker:
             total_distance_min = total_distance/obs_minutes
             
             perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
-            total_distance_dtrack = (data_subset['TotalDistance'].iat[0] - data_subset['TotalDistance'].iat[0])*self.parameters.mm_per_pixel
         else:
             perc_sleeping = pd.NA
             perc_walking = pd.NA
@@ -226,7 +225,6 @@ class Tracker:
             end_minutes = pd.NA
             total_distance_min = pd.NA
             perc_highquality = pd.NA
-            total_distance_dtrack = pd.NA
 
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iat[0]
@@ -263,7 +261,7 @@ class Tracker:
             ax.set_ylabel('Position (mm)')
             title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
             if((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
             ax.set_title(title)
             ax.legend()      
             tmp = self.get_plot_limits()        
@@ -282,7 +280,7 @@ class Tracker:
             plt.ylabel('Position (mm)')
             title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
             if((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
             plt.title(title)
             plt.legend()
             tmp = self.get_plot_limits()        
@@ -306,7 +304,7 @@ class Tracker:
         plt.ylabel('Frequency')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iat[0]})'
         if((int)(self.tracking_region_design['XLocationMultiplier'].iat[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
         plt.title(title)
         tmp = self.get_plot_limits()
         plt.xlim(tmp[0])
@@ -362,7 +360,7 @@ class Tracker:
             ax.set_ylabel('Position (mm)')
             title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
             if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
-                title = title + " (Y Coordinate Fipped)"
+                title = title + " (Y Coordinate Flipped)"
             ax.set_title(title)
             ax.legend()      
             tmp = self.get_plot_limits()        
@@ -381,7 +379,7 @@ class Tracker:
             plt.ylabel('Position (mm)')
             title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'            
             if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
-                title = title + " (Y Coordinate Fipped)"
+                title = title + " (Y Coordinate Flipped)"
             plt.title(title)
             plt.legend()
             tmp = self.get_plot_limits()
@@ -404,11 +402,11 @@ class Tracker:
         plt.ylabel('Y Position (mm)')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
         if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X and Y Coordinates Fipped)"
+                title = title + " (X and Y Coordinates Flipped)"
         elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
-                title = title + " (Y Coordinate Fipped)"
+                title = title + " (Y Coordinate Flipped)"
         elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
         plt.title(title)
         tmp = self.get_plot_limits()
         plt.xlim(tmp[0])
@@ -441,11 +439,11 @@ class Tracker:
         ax.set_ylabel('Y Position (mm)')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
         if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X and Y Coordinates Fipped)"
+                title = title + " (X and Y Coordinates Flipped)"
         elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
-                title = title + " (Y Coordinate Fipped)"
+                title = title + " (Y Coordinate Flipped)"
         elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
         ax.set_title(title)
         xlims, ylims = self.get_plot_limits()
         ax.set_xlim(xlims)
@@ -549,5 +547,8 @@ class Tracker:
         #return f"a={self.rawdata['CountingRegion']}"
         #return f"Tracker(name={self.name}, fps={self.parameters.fps}, head=\n{self.rawdata.head()},tail=\n{self.rawdata.tail()})"
         tmp = self.summarize()
-        tmp_str = (f"Name: {tmp['Name']}, ObsMin: {tmp['ObsMinutes']:.2f}, TotalDist: {tmp['TotalDistance']:.2f}, TotalDist2: {tmp['TotalDistanceDTrack']:.2f}, Sleeping: {tmp['PercSleeping']:.2f}, Walking: {tmp['PercWalking']:.2f}, Micro: {tmp['PercMicro']:.2f}, Resting: {tmp['PercResting']:.2f}, AvgSpeed: {tmp['AvgSpeed']:.2f}, StartMin: {tmp['StartMinutes']:.2f}, EndMin: {tmp['EndMinutes']:.2f}")
+        tmp_str = (f"Name: {tmp['Name']}, ObsMin: {tmp['ObsMinutes']:.2f}, TotalDist: {tmp['TotalDistance']:.2f}, "
+                   f"Sleeping: {tmp['PercSleeping']:.2f}, Walking: {tmp['PercWalking']:.2f}, "
+                   f"Micro: {tmp['PercMicro']:.2f}, Resting: {tmp['PercResting']:.2f}, "
+                   f"AvgSpeed: {tmp['AvgSpeed']:.2f}, StartMin: {tmp['StartMinutes']:.2f}, EndMin: {tmp['EndMinutes']:.2f}")
         return tmp_str

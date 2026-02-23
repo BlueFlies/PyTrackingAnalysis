@@ -1,6 +1,7 @@
+import logging
 import numpy as np
 import pandas as pd
-import Tracker 
+import Tracker
 import Counter
 import TwoChoiceTracker
 import XChoiceTracker
@@ -20,13 +21,15 @@ import time
 import os
 import random
 
+logger = logging.getLogger(__name__)
+
 class Arena:
     """
     Class representing an experimental arena for tracking and analyzing data.
     """
     
 #region ########### Initialization Functions ############
-    def __init__(self, parameters, exp_name='', data_path='./', force_preprocessing=False):        
+    def __init__(self, parameters, exp_name='', data_path='./', force_preprocessing=False, config_path=None):
         """
         Initialize the Arena object.
 
@@ -35,18 +38,20 @@ class Arena:
         parameters (Parameters): Parameters object containing experiment settings.
         data_path (str): Path to the data files.
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
+        config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in data_path directory.
         """
-        
+
         if(exp_name==''):
             xlsx_files = glob.glob(os.path.join(data_path, '*.xlsx'))
-            exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]            
-        
+            exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
+
         self.parameters = parameters
-        self.experiment_name = exp_name   
-        self.data_path = data_path      
+        self.experiment_name = exp_name
+        self.data_path = data_path
+        self.config_path = config_path
         self.get_experiment_file_info()
         self.get_experimental_design()
-        self.create_trackers(force_preprocessing)   
+        self.create_trackers(force_preprocessing)
         self.computed_summaries={}     
 
     def get_experiment_file_info(self):
@@ -71,9 +76,16 @@ class Arena:
         
         :meta private:
         """
-        try:            
-            self.experimental_design = ExperimentalDesign.ExperimentalDesign(self.data_path+self.experiment_name, self.parameters)                           
-        except:            
+        try:
+            self.experimental_design = ExperimentalDesign.ExperimentalDesign(
+                self.data_path + self.experiment_name, self.parameters,
+                config_path=self.config_path
+            )
+        except ValueError as e:
+            logger.warning(f"Experimental design validation failed: {e}")
+            self.experimental_design = None
+        except Exception as e:
+            logger.warning(f"Could not load experimental design: {e}")
             self.experimental_design = None
 
     def read_all_data(self):
@@ -963,11 +975,11 @@ class Arena:
         ax.text(-0.4,-1,tmp[1])
         plt.show()
     
-    def plot_adjusted_x_position_facet(self, cutoffs=(10,70)):   
+    def plot_adj_x_pos_facet_xchoicetracker(self, cutoffs=(10,70)):
         """
-        Backend function to plot adjusted X position in facets.
+        Backend function to plot adjusted X position in facets for XChoiceTracker.
         Generally not called by the user.
-        
+
         Parameters:
         cutoffs (tuple): Cutoff values for facets.
         """
@@ -1227,6 +1239,208 @@ class Arena:
         plt.show()
 
 #endregion ########### Backend Plotting ############
+
+#region ########### Special Analysis Functions ############
+
+    def analyze_rle_data(self, change_none_to_light=True, min_duration_frames=1, range_minutes=(0, 0)):
+        """
+        Analyze RLE (Run Length Encoding) of choice behavior for all TwoChoiceTrackers.
+
+        Parameters:
+        change_none_to_light (bool): Replace 'None' region values with the first counting region name.
+        min_duration_frames (int): Minimum run length in frames; shorter runs are removed.
+        range_minutes (tuple): Time window to analyze; (0, 0) means all data.
+
+        Returns:
+        DataFrame: Per-tracker RLE statistics including mean and median run lengths per choice.
+        """
+        from Parameters import TrackingType
+        if self.parameters.get_tracking_type() != TrackingType.TWOCHOICETRACKER:
+            raise ValueError(
+                f"Invalid tracking type: {self.parameters.get_tracking_type()}. "
+                "analyze_rle_data requires TwoChoiceTracker."
+            )
+
+        results = []
+        for key, tracker in self.trackers.items():
+            rle_data = tracker.rle(range_minutes)
+
+            if change_none_to_light:
+                first_region = list(tracker.counting_regions_design.keys())[0] if tracker.counting_regions_design else "Light"
+                rle_data['values'] = rle_data['values'].replace("None", first_region)
+                changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
+                rle_data = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+
+            if min_duration_frames > 1:
+                rle_data = rle_data[rle_data['lengths'] >= min_duration_frames].reset_index(drop=True)
+                if len(rle_data) > 0:
+                    changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
+                    rle_data = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+
+            treatment = tracker.tracking_region_design['Treatment'].iloc[0] if tracker.tracking_region_design is not None else "Unknown"
+            counting_names = list(tracker.counting_regions_design.keys()) if tracker.counting_regions_design is not None else ["Treatment1", "Treatment2"]
+            t1_name = counting_names[0] if len(counting_names) > 0 else "Treatment1"
+            t2_name = counting_names[1] if len(counting_names) > 1 else "Treatment2"
+
+            rle_filtered = rle_data[rle_data['values'] != "None"]
+            t1_data = rle_filtered[rle_filtered['values'] == t1_name]
+            t2_data = rle_filtered[rle_filtered['values'] == t2_name]
+
+            results.append({
+                'Tracker': key,
+                'Treatment': treatment,
+                'Treatment1_Name': t1_name,
+                'Treatment2_Name': t2_name,
+                'Treatment1_Rows': len(t1_data),
+                'Treatment2_Rows': len(t2_data),
+                'Treatment1_MeanLength': t1_data['lengths'].mean() if len(t1_data) > 0 else 0,
+                'Treatment2_MeanLength': t2_data['lengths'].mean() if len(t2_data) > 0 else 0,
+                'Treatment1_MedianLength': t1_data['lengths'].median() if len(t1_data) > 0 else 0,
+                'Treatment2_MedianLength': t2_data['lengths'].median() if len(t2_data) > 0 else 0,
+                'Treatment1_Lengths': t1_data['lengths'].tolist(),
+                'Treatment2_Lengths': t2_data['lengths'].tolist(),
+            })
+
+        return pd.DataFrame(results)
+
+    def analyze_rle_data_facet(self, cutoffs=(10, 70), change_none_to_light=True,
+                               min_duration_frames=1, write_to_csvfile=False):
+        """
+        Faceted version of analyze_rle_data across time windows.
+
+        Parameters:
+        cutoffs (tuple|int): Facet boundary minutes.
+        write_to_csvfile (bool): If True, saves results to the data directory.
+
+        Returns:
+        DataFrame: RLE statistics with a FacetRange column.
+        """
+        if isinstance(cutoffs, tuple):
+            cutoffs = list(cutoffs)
+        elif isinstance(cutoffs, int):
+            cutoffs = [cutoffs]
+        else:
+            raise ValueError("cutoffs must be a tuple or a single integer.")
+        cutoffs.insert(0, 0)
+        cutoffs.append(float('inf'))
+
+        results = []
+        for i in range(len(cutoffs) - 1):
+            tmp = self.analyze_rle_data(
+                change_none_to_light=change_none_to_light,
+                min_duration_frames=min_duration_frames,
+                range_minutes=(cutoffs[i], cutoffs[i + 1]),
+            )
+            tmp['FacetRange'] = [tuple([cutoffs[i], cutoffs[i + 1]])] * len(tmp)
+            results.append(tmp)
+
+        all_results = pd.concat(results, ignore_index=True)
+        if write_to_csvfile:
+            path = f"{self.data_path}{self.experiment_name}_EventDuration_Summary_Facet.csv"
+            all_results.to_csv(path, index=False)
+        return all_results
+
+    def analyze_distance_by_light(self, range_minutes=(0, 0)):
+        """
+        Analyze distance moved and time spent in each counting region (e.g. Light vs NoLight).
+
+        For each tracker the function sums Dist_mm and DeltaSec within each group of counting
+        regions as defined by the experimental design, then computes mm/sec speed for each group.
+
+        Parameters:
+        range_minutes (tuple): Time window; (0, 0) means all data.
+
+        Returns:
+        DataFrame: Per-tracker distance and time totals for each counting region group.
+        """
+        results = []
+        for key, tracker in self.trackers.items():
+            data_subset = tracker.get_data_subset(range_minutes)
+            treatment = tracker.tracking_region_design['Treatment'].iloc[0] if tracker.tracking_region_design is not None else "Unknown"
+
+            if tracker.counting_regions_design is None:
+                continue
+            if 'CountingRegion' not in data_subset.columns:
+                continue
+
+            group_names = list(tracker.counting_regions_design.keys())
+            # Heuristic: first group matching "light" (and not "no") is Light; next is NoLight.
+            light_group, nolight_group = None, None
+            for g in group_names:
+                g_lower = g.lower()
+                if 'light' in g_lower and 'no' not in g_lower:
+                    light_group = g
+                elif 'no' in g_lower and 'light' in g_lower:
+                    nolight_group = g
+            if light_group is None or nolight_group is None:
+                if len(group_names) >= 2:
+                    light_group, nolight_group = group_names[0], group_names[1]
+                else:
+                    continue
+
+            light_vals = tracker.counting_regions_design[light_group]
+            nolight_vals = tracker.counting_regions_design[nolight_group]
+
+            light_data = data_subset[data_subset['CountingRegion'].isin(light_vals)]
+            nolight_data = data_subset[data_subset['CountingRegion'].isin(nolight_vals)]
+
+            light_dist = light_data['Dist_mm'].sum() if 'Dist_mm' in light_data.columns else 0
+            nolight_dist = nolight_data['Dist_mm'].sum() if 'Dist_mm' in nolight_data.columns else 0
+            light_time = light_data['DeltaSec'].sum() if 'DeltaSec' in light_data.columns else 0
+            nolight_time = nolight_data['DeltaSec'].sum() if 'DeltaSec' in nolight_data.columns else 0
+
+            row = {
+                'Tracker': key,
+                'Treatment': treatment,
+                f'{light_group}_Distance_mm': light_dist,
+                f'{nolight_group}_Distance_mm': nolight_dist,
+                f'{light_group}_Time_sec': light_time,
+                f'{nolight_group}_Time_sec': nolight_time,
+            }
+            with np.errstate(divide='ignore', invalid='ignore'):
+                row[f'{light_group}_Distance_mm_sec'] = np.where(light_time > 0, light_dist / light_time, np.nan)
+                row[f'{nolight_group}_Distance_mm_sec'] = np.where(nolight_time > 0, nolight_dist / nolight_time, np.nan)
+            results.append(row)
+
+        return pd.DataFrame(results)
+
+    def analyze_distance_by_light_facet(self, cutoffs=(10, 70), copy_to_clipboard=False,
+                                        write_to_csvfile=False):
+        """
+        Faceted version of analyze_distance_by_light across time windows.
+
+        Parameters:
+        cutoffs (tuple|int): Facet boundary minutes.
+        copy_to_clipboard (bool): Copy result to clipboard.
+        write_to_csvfile (bool): Save result to the data directory.
+
+        Returns:
+        DataFrame: Distance/time statistics with a FacetRange column.
+        """
+        if isinstance(cutoffs, tuple):
+            cutoffs = list(cutoffs)
+        elif isinstance(cutoffs, int):
+            cutoffs = [cutoffs]
+        else:
+            raise ValueError("cutoffs must be a tuple or a single integer.")
+        cutoffs.insert(0, 0)
+        cutoffs.append(float('inf'))
+
+        results = []
+        for i in range(len(cutoffs) - 1):
+            tmp = self.analyze_distance_by_light(range_minutes=(cutoffs[i], cutoffs[i + 1]))
+            tmp['FacetRange'] = [tuple([cutoffs[i], cutoffs[i + 1]])] * len(tmp)
+            results.append(tmp)
+
+        all_results = pd.concat(results, ignore_index=True)
+        if copy_to_clipboard:
+            all_results.to_clipboard(index=False)
+        if write_to_csvfile:
+            path = f"{self.data_path}{self.experiment_name}_DistanceByLight_Facet.csv"
+            all_results.to_csv(path, index=False)
+        return all_results
+
+#endregion ########### Special Analysis Functions ############
 
 #region ########### Statistical Functions ############
     def run_pairwise_comparisons(self, metric='FinalPI', range_minutes=(0,0)):

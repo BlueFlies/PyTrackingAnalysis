@@ -1,104 +1,115 @@
+import logging
 import numpy as np
 import pandas as pd
-import Tracker 
+import Tracker
 import TwoChoiceTracker
 import Parameters
 import glob
 from natsort import natsorted
 import Arena
+import yaml
+import os
+
+logger = logging.getLogger(__name__)
 
 class ExperimentalDesign:
-    def __init__(self, exp_name, parameters):     
-        self.experiment_name = exp_name   
-        self.parameters = parameters    
-        self.experimentdesign_file_name = self.experiment_name + '_Design.txt'        
+    def __init__(self, exp_name, parameters, config_path=None):
+        self.experiment_name = exp_name
+        self.parameters = parameters
+        if config_path is not None:
+            self.tracking_config_file = config_path
+        else:
+            data_dir = os.path.dirname(exp_name)
+            if not data_dir:
+                data_dir = '.'
+            self.tracking_config_file = os.path.join(data_dir, 'tracking_config.yaml')
         self.tracking_regions = None
-        # Counting regions is a dictionary with keys as the treatments and values as all the different regions in the datafile that correspond to each.
+        # Counting regions is a dictionary with keys as the treatments and values as all the
+        # different region aliases in the datafile that correspond to each characteristic.
         self.counting_regions = None
-        try:            
-            self.read_experimental_design_file(self.experimentdesign_file_name)                      
+        try:
+            self.read_yaml_config(self.tracking_config_file)
             self.experimental_design = True
-        except:            
-            self.experimental_design = False             
-        self.verify_experimental_design()                 
-        
+        except FileNotFoundError:
+            logger.warning(f"tracking_config.yaml not found: {self.tracking_config_file}")
+            self.experimental_design = False
+        except (KeyError, ValueError) as e:
+            logger.warning(f"Failed to parse tracking config '{self.tracking_config_file}': {e}")
+            self.experimental_design = False
+        except Exception as e:
+            logger.warning(f"Unexpected error reading tracking config '{self.tracking_config_file}': {e}")
+            self.experimental_design = False
+        self.verify_experimental_design()
 
-    def read_experimental_design_file(self, file_name):
+
+    def read_yaml_config(self, file_name):
         tracking_regions = []
         counting_regions = {}
-        try:
-            with open(file_name, 'r') as file:
-                lines = file.readlines()                                          
-            for l in lines:
-                l = l.strip()         
-                if len(l)==0 or l[0]=="#":
-                    continue
-                if "[" in l and "]" in l:
-                    currentSection = l[l.index("[")+1:l.index("]")]                    
-                else:
-                    if(currentSection.lower()=="tracking regions"):
-                        thesplit = [x.strip() for x in l.split(",")]                                        
-                        if(len(thesplit)==4):    
-                            thesplit[2] = int(thesplit[2])
-                            if(thesplit[2]!=-1 and thesplit[2]!=1):
-                                thesplit[2] = 1
-                            thesplit[3] = int(thesplit[3])
-                            if(thesplit[3]!=-1 and thesplit[3]!=1):                                                           
-                                thesplit[3] = 1                        
-                            tracking_regions.append(thesplit)                                                    
-                        elif(len(thesplit)==2):                            
-                            tracking_regions.append([thesplit[0],thesplit[1],1,1])
-                    elif(currentSection.lower()=="counting regions"):
-                        thesplit = l.split(":")                                                                          
-                        if(len(thesplit)==2):   
-                            key = thesplit[0].strip()
-                            values = [x.strip() for x in thesplit[1].split(",")]                         
-                            counting_regions[key] = values
-                        else:
-                            raise ValueError("Invalid counting region format.")
-                    elif(currentSection.lower()=="run"):
-                        raise ValueError("Run section not implemented yet.")
-                    elif(currentSection.lower()=="fly"):
-                        raise ValueError("Fly section not implemented yet.")
+        with open(file_name, 'r') as file:
+            config = yaml.safe_load(file)
 
-            self.tracking_regions = pd.DataFrame(tracking_regions, columns=['RegionName','Treatment',"XLocationMultiplier","YLocationMultiplier"])                          
-            self.counting_regions=counting_regions            
-        except:            
-            self.tracking_regions = None
-            self.counting_regions = None
+        if 'tracking_regions' in config:
+            for region_name, region_data in config['tracking_regions'].items():
+                treatment = region_data.get('experimental_factors', '')
+                x_mult = int(region_data.get('x_location_multiplier', 1))
+                y_mult = int(region_data.get('y_location_multiplier', 1))
+                if x_mult not in (-1, 1):
+                    x_mult = 1
+                if y_mult not in (-1, 1):
+                    y_mult = 1
+                tracking_regions.append([region_name, treatment, x_mult, y_mult])
+
+        if 'counting_regions' in config:
+            for key, value in config['counting_regions'].items():
+                if 'alias' not in value:
+                    raise KeyError(f"counting_regions.{key} is missing the 'alias' key")
+                aliases = [x.strip() for x in value['alias'].split(',')]
+                counting_regions[key] = aliases
+
+        self.tracking_regions = pd.DataFrame(
+            tracking_regions,
+            columns=['RegionName', 'Treatment', 'XLocationMultiplier', 'YLocationMultiplier'],
+        )
+        self.counting_regions = counting_regions
 
     def get_tracking_region(self, region_name):
-        if(self.tracking_regions is None):
+        if self.tracking_regions is None:
             return None
-        return self.tracking_regions[self.tracking_regions['RegionName']==region_name]
-    
+        return self.tracking_regions[self.tracking_regions['RegionName'] == region_name]
+
     def get_counting_characteristic(self, region_name):
-        if(self.counting_regions is None):
-            return None                
-        else:
-            for key,value in self.counting_regions.items():
-                if region_name in value:
-                    return key
+        if self.counting_regions is None:
+            return None
+        for key, value in self.counting_regions.items():
+            if region_name in value:
+                return key
         return None
 
     def verify_experimental_design(self):
-        if(self.experimental_design==False):                                
+        if self.experimental_design == False:
             raise ValueError("An experimental design file is required for all experiments.")
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-            if(len(self.counting_regions.keys())!=2):                                
-                raise ValueError(f"Invalid design file for TwoChoiceTracker. Must have exactly two unique counting region characteristics.")
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICECOUNTER):
-            if(len(self.counting_regions.keys())!=2):                                
-                raise ValueError(f"Invalid design file for TwoChoiceCounter. Must have exactly two unique counting region characteristics.")        
-        else:
-            pass
-            
+        elif self.parameters.get_tracking_type() == Parameters.TrackingType.TWOCHOICETRACKER:
+            if len(self.counting_regions.keys()) != 2:
+                raise ValueError(
+                    "Invalid design file for TwoChoiceTracker. "
+                    "Must have exactly two unique counting region characteristics."
+                )
+        elif self.parameters.get_tracking_type() == Parameters.TrackingType.TWOCHOICECOUNTER:
+            if len(self.counting_regions.keys()) != 2:
+                raise ValueError(
+                    "Invalid design file for TwoChoiceCounter. "
+                    "Must have exactly two unique counting region characteristics."
+                )
+
     def __str__(self):
-        return f"Experimental Design for {self.experiment_name}:\nTracking Regions:\n{self.tracking_regions}\nCounting Regions:\n{self.counting_regions}"   
+        return (
+            f"Experimental Design for {self.experiment_name}:\n"
+            f"Tracking Regions:\n{self.tracking_regions}\n"
+            f"Counting Regions:\n{self.counting_regions}"
+        )
 
 
 if __name__ == "__main__":
-    p=Parameters.Parameters()
-    ed = ExperimentalDesign("./Data/MaxIRSetup",p)
+    p = Parameters.Parameters()
+    ed = ExperimentalDesign("./Data/MaxIRSetup", p)
     print(ed.tracking_regions)
-    #print(ed.get_tracking_region("T_1"))
