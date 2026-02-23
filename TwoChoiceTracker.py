@@ -102,6 +102,12 @@ class TwoChoiceTracker(Tracker.Tracker):
         return data_subset
 
     def calculate_pi_data(self):        
+        if self.counting_regions_design is None or not isinstance(self.counting_regions_design, dict):
+            raise ValueError(
+                "TwoChoiceTracker requires a design file with [Counting Regions]. "
+                f"Design file may be missing or failed to load for experiment. "
+                f"Tracker: {self.name}"
+            )
         self.pi_data = self.rawdata.loc[:,['Minutes','Indicator']]
         
         trts = []
