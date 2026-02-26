@@ -226,8 +226,10 @@ class Tracker:
             total_distance_min = pd.NA
             perc_highquality = pd.NA
 
-        if(self.tracking_region_design is not None):
+        if self.tracking_region_design is not None:
             treatment = self.tracking_region_design['Treatment'].iat[0]
+        else:
+            treatment = ''
 
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
         result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,perc_highquality,start_minutes,end_minutes])
@@ -320,13 +322,14 @@ class Tracker:
         show_light (bool): Whether to show light indicators on the plot.
         """
         if(show_light):
-            data_subset = self.get_data_subset(range_minutes)            
+            data_subset = self.get_data_subset(range_minutes)
+            cum_dist = data_subset['Dist_mm'].cumsum()
             fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(data_subset['Minutes'], data_subset['TotalDistance'], label=self.name)
+            ax.plot(data_subset['Minutes'], cum_dist, label=self.name)
             ax.set_xlabel('Minutes')
             ax.set_ylabel('Total Distance (mm)')
             ax.set_title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')
-            ax.legend()                 
+            ax.legend()
             ax.grid(True)
 
             for i in range(len(data_subset) - 1):
@@ -335,8 +338,9 @@ class Tracker:
             plt.show()
         else:
             data_subset = self.get_data_subset(range_minutes)
+            cum_dist = data_subset['Dist_mm'].cumsum()
             plt.figure(figsize=(10, 6))
-            plt.plot(data_subset['Minutes'], data_subset['TotalDistance'], label=self.name)
+            plt.plot(data_subset['Minutes'], cum_dist, label=self.name)
             plt.xlabel('Minutes')
             plt.ylabel('Total Distance (mm)')
             plt.title(f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})')

@@ -38,7 +38,8 @@ class Arena:
         parameters (Parameters): Parameters object containing experiment settings.
         data_path (str): Path to the data files.
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
-        config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in data_path directory.
+        config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in the
+            parent directory of data_path (i.e. the project root, one level above the data folder).
         """
 
         if(exp_name==''):
@@ -48,7 +49,12 @@ class Arena:
         self.parameters = parameters
         self.experiment_name = exp_name
         self.data_path = data_path
-        self.config_path = config_path
+
+        if config_path is None:
+            parent = os.path.dirname(os.path.normpath(data_path))
+            self.config_path = os.path.join(parent if parent else '.', 'tracking_config.yaml')
+        else:
+            self.config_path = config_path
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers(force_preprocessing)
