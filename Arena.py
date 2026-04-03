@@ -24,6 +24,10 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+def _abbrev_treatment(t):
+    """Abbreviate each comma-separated factor in a treatment string to 3 characters."""
+    return ", ".join(part.strip()[:3] for part in str(t).split(","))
+
 _RIG_MAP = {
     'small_arena':  'small_arena',
     'smallarena':   'small_arena',
@@ -47,23 +51,18 @@ class Arena:
     """
 
 #region ########### Initialization Functions ############
-    def __init__(self, force_preprocessing=False):
+    def __init__(self, exp_name, data_path, parameters, config_path=None, force_preprocessing=False):
         """
         Initialize the Arena object.
 
         Parameters:
-        force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
+        exp_name (str): Experiment name (basename of the xlsx file without extension).
+        data_path (str): Path to the directory containing the xlsx and csv files.
+        parameters (Parameters): Pre-built Parameters object.
         config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in the
             parent directory of data_path (i.e. the project root, one level above the data folder).
+        force_preprocessing (bool): Flag to force preprocessing of data.
         """
-        self.data_path = './data/'
-        self.config_path = './tracking_config.yaml'
-
-        xlsx_files = glob.glob(os.path.join(self.data_path, '*.xlsx'))
-        if not xlsx_files:
-            raise FileNotFoundError(f"No .xlsx file found in {self.data_path}")
-        self.experiment_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
-
         self.parameters = parameters
         self.experiment_name = exp_name
         self.data_path = data_path
@@ -77,6 +76,12 @@ class Arena:
         self.get_experimental_design()
         self.create_trackers(force_preprocessing)
         self.computed_summaries={}
+
+    def _abbrev_df(self, df):
+        """Return a copy of df with the Treatment column abbreviated for plot labels."""
+        out = df.copy()
+        out['Treatment'] = out['Treatment'].map(_abbrev_treatment)
+        return out
 
     def _load_config(self):
         if not os.path.isfile(self.config_path):
@@ -806,9 +811,10 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True,  hue='Transitions')
-        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]"
         plt.title(tmp)
         plt.xlabel('Treatment')
         plt.ylabel('PI')
@@ -823,8 +829,8 @@ class Arena:
         for i, y in df_mean.items():
             p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
             counter+=1
-        
-        tmp = list(self.experimental_design.counting_regions.keys())        
+
+        tmp = list(self.experimental_design.counting_regions.keys())
         ax.text(-0.4,1,tmp[0])
         ax.text(-0.4,-1,tmp[1])
         plt.show()
@@ -837,9 +843,10 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPI', data=summary_data, jitter=True)
-        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
+        tmp = f"PI Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]"
         plt.title(tmp)
         plt.xlabel('Treatment')
         plt.ylabel('PI')
@@ -854,12 +861,12 @@ class Arena:
         for i, y in df_mean.items():
             p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
             counter+=1
-        
-        tmp = list(self.experimental_design.counting_regions.keys())        
+
+        tmp = list(self.experimental_design.counting_regions.keys())
         ax.text(-0.4,1,tmp[0])
         ax.text(-0.4,-1,tmp[1])
         plt.show()
-    
+
     def plot_transitions_twochoicetracker(self, range_minutes=(0,0)):
         """
         Backend function to plot transitions for TwoChoiceTracker.
@@ -869,6 +876,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='TransitionsPerMin', data=summary_data, jitter=True,  hue='FinalPI')
         tmp = f"Transitions Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
@@ -897,6 +905,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='FinalPI', hue='Transitions', data=data, jitter=True, **kwargs)
@@ -933,6 +942,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='FinalPI', data=data, jitter=True, **kwargs)
@@ -944,7 +954,7 @@ class Arena:
                 p.hlines(y, x_coords[counter] - 0.05, x_coords[counter] + 0.05, color='red', zorder=2)
                 counter+=1
             ntreatments = data['Treatment'].nunique()
-            tmp = list(self.experimental_design.counting_regions.keys())        
+            tmp = list(self.experimental_design.counting_regions.keys())
             ax.text(-0.4,1,tmp[0])
             ax.text(-0.4,-1,tmp[1])
             plt.xlim(-.5,ntreatments-1+0.5)
@@ -957,7 +967,7 @@ class Arena:
         g.set_titles(col_template="Facet Range (min): {col_name}")
         g.set_axis_labels('Treatment', 'PI')
         g.set(ylim=(-1.1, 1.1))
-        
+
         plt.show()
 
 
@@ -971,6 +981,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='TransitionsPerMin', hue='FinalPI', data=data, jitter=True, **kwargs)
@@ -1002,6 +1013,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPercentage', data=summary_data, jitter=True,  hue='Transitions')
         tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
@@ -1032,6 +1044,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='FinalPercentage', data=summary_data, jitter=True)
         tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
@@ -1064,6 +1077,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', hue='TotalXDistance_mm', data=data, jitter=True, **kwargs)
@@ -1096,6 +1110,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', data=summary_data, jitter=True,  hue='TotalXDistance_mm')
         tmp = f"Percentage Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
@@ -1123,6 +1138,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes, remove_partners=True)
+        summary_data = self._abbrev_df(summary_data)
         print(summary_data )
         ## Remember we need to ensure only one of the pair is included.
         for dist_column in [f"PercentInteracting_{dist}" for dist in self.parameters.interaction_distance_mm]:
@@ -1155,6 +1171,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs,remove_partners=True)
+        the_data = self._abbrev_df(the_data)
         def custom_plot(data, colname, **kwargs):
                 p=sns.stripplot(x='Treatment', y=colname, data=data, jitter=True, **kwargs)
                 means = data.groupby('Treatment', sort=False)[colname].mean()
@@ -1191,6 +1208,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='FinalPercentage', hue='Transitions', data=data, jitter=True, **kwargs)
@@ -1228,6 +1246,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='FinalPercentage', data=data, jitter=True, **kwargs)
@@ -1265,6 +1284,7 @@ class Arena:
         range_minutes (tuple): Range of minutes to plot.
         """
         summary_data = self.summarize(range_minutes)
+        summary_data = self._abbrev_df(summary_data)
         plt.figure(figsize=(10, 6))
         p=sns.stripplot(x='Treatment', y='TotalDistancePerMin', data=summary_data, jitter=True)
         tmp = f"Distance Range Minutes = [{summary_data["StartMinutes"].min():.2f} , {summary_data["EndMinutes"].max():.2f}]" 
@@ -1294,6 +1314,7 @@ class Arena:
         """
         # Create a new column for the minute ranges
         the_data = self.summarize_facet(cutoffs)
+        the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
             p=sns.stripplot(x='Treatment', y='TotalDistancePerMin',data=data, jitter=True, **kwargs)

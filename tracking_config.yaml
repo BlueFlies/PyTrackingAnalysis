@@ -151,7 +151,7 @@ tracking_regions:
     x_location_multiplier: 1
     y_location_multiplier: 1
 
-# Counting regions are a dictionary with keys as the treatments and values as all the different regions in the datafile that correspond to each.
+ # Counting regions are a dictionary with keys as the treatments and values as all the different regions in the datafile that correspond to each.
 counting_regions:
   Light:
     alias: Light, LL, L

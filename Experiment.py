@@ -1,3 +1,4 @@
+import glob
 import io
 import logging
 import os
@@ -8,6 +9,9 @@ import pandas as pd
 import yaml
 import Parameters
 import Arena
+
+_RIG_MAP = Arena._RIG_MAP
+_PARAMETER_KEYS = Arena._PARAMETER_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -103,17 +107,25 @@ class Experiment:
         self.data_path     = self._find_subdir('data') + '/'
         self.analysis_path = os.path.join(self.project_directory, 'analysis') + '/'
         self.qc_path       = os.path.join(self.project_directory, 'qc') + '/'
+        self.config_path   = os.path.join(self.project_directory, 'tracking_config.yaml')
 
         # Create output directories (data/ must already exist with files in it)
         os.makedirs(self.analysis_path, exist_ok=True)
         os.makedirs(self.qc_path, exist_ok=True)
 
-        old_cwd = os.getcwd()
-        os.chdir(self.project_directory)
-        try:
-            self.arena = Arena.Arena(force_preprocessing=force_preprocessing)
-        finally:
-            os.chdir(old_cwd)
+        self.config = self._load_config()
+        self.parameters = self._build_parameters()
+
+        xlsx_files = glob.glob(os.path.join(self.data_path, '*.xlsx'))
+        if not xlsx_files:
+            raise FileNotFoundError(f"No .xlsx file found in {self.data_path}")
+        exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
+
+        self.arena = Arena.Arena(
+            exp_name, self.data_path, self.parameters,
+            config_path=self.config_path,
+            force_preprocessing=force_preprocessing,
+        )
 
         # facet_cutoffs is optional in the global: section, e.g. facet_cutoffs: [10, 70]
         global_cfg = self.config.get('global', {})
@@ -750,6 +762,227 @@ class Experiment:
         if self.parameters.get_tracking_type() == Parameters.TrackingType.TRACKER:
             self.save_tracker_grid_plots(output_dir=output_dir)
 
+    def create_report(self, cutoffs=None, qc_cutoff: float = 0.9) -> str:
+        """Generate a PDF report of the experiment to analysis_path.
+
+        The report contains:
+          1. Experiment summary text
+          2. Data quality table
+          3. Per-tracker QC position grids (tracking types only)
+          4. All analysis plots appropriate for the tracking type
+
+        Parameters
+        ----------
+        cutoffs :
+            Facet cutoffs to use for faceted plots. Defaults to ``self.facet_cutoffs``.
+        qc_cutoff :
+            High-quality threshold used to flag trackers in the QC table.
+
+        Returns
+        -------
+        str
+            Path to the saved PDF file.
+        """
+        from matplotlib.backends.backend_pdf import PdfPages
+
+        cutoffs = self._resolve_cutoffs(cutoffs)
+        exp_name = self.arena.experiment_name
+        pdf_path = os.path.join(self.analysis_path, f"{exp_name}_report.pdf")
+
+        with PdfPages(pdf_path) as pdf:
+
+            # ── Page 1: Experiment summary text ───────────────────────────
+            summary_text = self.experiment_summary(save=False)
+            lines = summary_text.splitlines()
+            lines_per_page = 90
+            for chunk_start in range(0, max(len(lines), 1), lines_per_page):
+                chunk = '\n'.join(lines[chunk_start:chunk_start + lines_per_page])
+                fig = plt.figure(figsize=(8.5, 11))
+                fig.text(0.04, 0.97, chunk,
+                         fontsize=6.5, verticalalignment='top',
+                         fontfamily='monospace', transform=fig.transFigure)
+                pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+
+            # ── Page 2: Data quality table ─────────────────────────────────
+            dq = self.arena.get_data_quality()
+            col_labels = ['Tracker', 'HighQuality', 'NotFound',
+                          'Indiscernible', 'Start (min)', 'End (min)']
+            table_rows = []
+            row_colors = []
+            for _, row in dq.iterrows():
+                ok = row['HighQuality'] >= qc_cutoff
+                table_rows.append([
+                    row['Tracker'],
+                    f"{row['HighQuality']:.1%}",
+                    f"{row['NotFound']:.1%}",
+                    f"{row['Indiscernible']:.1%}",
+                    f"{row['StartMinutes']:.1f}",
+                    f"{row['EndMinutes']:.1f}",
+                ])
+                row_colors.append(['#d4edda' if ok else '#f8d7da'] * len(col_labels))
+
+            fig, ax = plt.subplots(figsize=(11, max(3, 0.35 * len(table_rows) + 1.5)))
+            ax.axis('off')
+            tbl = ax.table(
+                cellText=table_rows,
+                colLabels=col_labels,
+                cellColours=row_colors,
+                loc='center',
+                cellLoc='center',
+            )
+            tbl.auto_set_font_size(False)
+            tbl.set_fontsize(8)
+            tbl.scale(1, 1.4)
+            n_good = int((dq['HighQuality'] >= qc_cutoff).sum())
+            ax.set_title(
+                f"Data Quality — {exp_name}   "
+                f"({n_good}/{len(dq)} trackers ≥ {qc_cutoff:.0%} high-quality)   "
+                f"green = pass, red = fail",
+                fontsize=10, pad=16,
+            )
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+
+            # ── Pages 3+: Per-tracker QC grid plots (tracking class only) ─
+            if self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING:
+                tracker_items = list(self.arena.trackers.items())
+                n = len(tracker_items)
+                if n > 0:
+                    ncols = min(4, n)
+                    nrows = -(-n // ncols)
+
+                    def _trt(tracker):
+                        if tracker.tracking_region_design is not None:
+                            return str(tracker.tracking_region_design['Treatment'].iat[0])
+                        return ''
+
+                    def _xm(tracker):
+                        if tracker.tracking_region_design is not None:
+                            return int(tracker.tracking_region_design['XLocationMultiplier'].iloc[0])
+                        return 1
+
+                    def _ym(tracker):
+                        if tracker.tracking_region_design is not None:
+                            return int(tracker.tracking_region_design['YLocationMultiplier'].iloc[0])
+                        return 1
+
+                    for plot_type, sup_x, sup_y, title_sfx in [
+                        ('x',    'Minutes', 'X Position (mm)', '— X Position'),
+                        ('y',    'Minutes', 'Y Position (mm)', '— Y Position'),
+                        ('dist', 'Minutes', 'Cumulative Distance (mm)', '— Total Distance'),
+                    ]:
+                        fig, axes = plt.subplots(
+                            nrows, ncols,
+                            figsize=(ncols * 4, nrows * 3),
+                            squeeze=False,
+                        )
+                        for idx, (key, tracker) in enumerate(tracker_items):
+                            ax = axes[idx // ncols][idx % ncols]
+                            try:
+                                data = tracker.get_data_subset((0, 0))
+                                if plot_type == 'x':
+                                    xlims, _ = tracker.get_plot_limits()
+                                    ax.plot(data['Minutes'],
+                                            data['Xpos_mm'] * _xm(tracker),
+                                            linewidth=0.8)
+                                    ax.set_ylim(xlims)
+                                elif plot_type == 'y':
+                                    _, ylims = tracker.get_plot_limits()
+                                    ax.plot(data['Minutes'],
+                                            data['Ypos_mm'] * _ym(tracker),
+                                            linewidth=0.8)
+                                    ax.set_ylim(ylims)
+                                else:
+                                    ax.plot(data['Minutes'],
+                                            data['Dist_mm'].cumsum(),
+                                            linewidth=0.8)
+                                ax.set_title(f"{key}\n{_trt(tracker)}", fontsize=7)
+                                ax.tick_params(labelsize=6)
+                            except Exception:
+                                ax.set_title(f"{key}\n(error)", fontsize=7)
+                        for idx in range(n, nrows * ncols):
+                            axes[idx // ncols][idx % ncols].set_visible(False)
+                        fig.supxlabel(sup_x, fontsize=9)
+                        fig.supylabel(sup_y, fontsize=9)
+                        fig.suptitle(f"{exp_name} {title_sfx}", fontsize=11)
+                        fig.tight_layout()
+                        pdf.savefig(fig, bbox_inches='tight')
+                        plt.close(fig)
+
+                    # XY scatter grid — rasterized to keep PDF size manageable
+                    fig, axes = plt.subplots(
+                        nrows, ncols,
+                        figsize=(ncols * 3.5, nrows * 3.5),
+                        squeeze=False,
+                    )
+                    for idx, (key, tracker) in enumerate(tracker_items):
+                        ax = axes[idx // ncols][idx % ncols]
+                        try:
+                            data = tracker.get_data_subset((0, 0))
+                            # Downsample to at most 5000 points per tracker to keep PDF renderable
+                            if len(data) > 5000:
+                                data = data.iloc[::len(data) // 5000]
+                            xlims, ylims = tracker.get_plot_limits()
+                            ax.scatter(
+                                data['Xpos_mm'] * _xm(tracker),
+                                data['Ypos_mm'] * _ym(tracker),
+                                c=data['Minutes'], cmap='viridis',
+                                vmin=data['Minutes'].min(),
+                                vmax=data['Minutes'].max(),
+                                s=2, alpha=0.5,
+                                rasterized=True,
+                            )
+                            ax.set_xlim(xlims)
+                            ax.set_ylim(ylims)
+                            ax.set_aspect('equal', adjustable='box')
+                            ax.set_title(f"{key}\n{_trt(tracker)}", fontsize=7)
+                            ax.tick_params(labelsize=6)
+                        except Exception:
+                            ax.set_title(f"{key}\n(error)", fontsize=7)
+                    for idx in range(n, nrows * ncols):
+                        axes[idx // ncols][idx % ncols].set_visible(False)
+                    fig.supxlabel('X Position (mm)', fontsize=9)
+                    fig.supylabel('Y Position (mm)', fontsize=9)
+                    fig.suptitle(f"{exp_name} — XY Position", fontsize=11)
+                    fig.tight_layout()
+                    pdf.savefig(fig, bbox_inches='tight', dpi=150)
+                    plt.close(fig)
+
+            # ── Final pages: analysis plots ────────────────────────────────
+            # Close any stray figures left open by prior sections before
+            # intercepting plt.show, so they don't pollute _add_to_pdf.
+            plt.close('all')
+
+            old_cutoffs = self.facet_cutoffs
+            if cutoffs is not None:
+                self.facet_cutoffs = cutoffs
+
+            original_show = plt.show
+
+            def _add_to_pdf():
+                fig = plt.gcf()
+                # Only save if the figure actually has axes (guards against
+                # plt.gcf() auto-creating a blank figure).
+                if fig.get_axes():
+                    pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+
+            plt.show = _add_to_pdf
+            try:
+                for method_name, kwargs in self._plot_methods():
+                    try:
+                        getattr(self.arena, method_name)(**kwargs)
+                    except Exception as e:
+                        print(f"Warning: could not generate '{method_name}': {e}")
+            finally:
+                plt.show = original_show
+                self.facet_cutoffs = old_cutoffs
+                plt.close('all')
+
+        print(f"Report saved: {pdf_path}")
+        return pdf_path
+
     def run_analysis(self, cutoffs=None, qc_cutoff: float = 0.9) -> None:
         """
         Run the complete analysis pipeline in one call.
@@ -815,6 +1048,108 @@ class Experiment:
             f"Experiment(project_directory={self.project_directory!r}, "
             f"experiment={self.arena.experiment_name!r})"
         )
+
+
+def _is_experiment_dir(path: str) -> bool:
+    """Return True if *path* looks like a valid experiment directory.
+
+    Requires:
+      - tracking_config.yaml present (case-insensitive)
+      - a subdirectory named 'data' (case-insensitive) that contains at least one .xlsx file
+    """
+    entries = {e.lower(): e for e in os.listdir(path)}
+
+    if 'tracking_config.yaml' not in entries:
+        return False
+
+    data_name = entries.get('data')
+    if data_name is None:
+        return False
+
+    data_dir = os.path.join(path, data_name)
+    if not os.path.isdir(data_dir):
+        return False
+
+    return bool(glob.glob(os.path.join(data_dir, '*.xlsx')))
+
+
+def batch_analyze(
+    parent_directory: str,
+    cutoffs=None,
+    qc_cutoff: float = 0.9,
+    force_preprocessing: bool = False,
+) -> dict:
+    """Run analysis and create a PDF report for every experiment in *parent_directory*.
+
+    Scans all immediate subdirectories of *parent_directory* for valid experiment
+    folders (those containing a ``tracking_config.yaml`` and a ``data/`` subdirectory
+    with at least one ``.xlsx`` file). Runs :meth:`Experiment.run_analysis` and
+    :meth:`Experiment.create_report` on each one.
+
+    Parameters
+    ----------
+    parent_directory :
+        Root directory to search. Only immediate subdirectories are checked
+        (non-recursive).
+    cutoffs :
+        Facet cutoffs passed through to each experiment. ``None`` uses the
+        value in each experiment's own ``tracking_config.yaml``.
+    qc_cutoff :
+        High-quality frame threshold used in the QC report (default 0.9).
+    force_preprocessing :
+        If True, forces re-computation of nearest-neighbour pre-processing.
+
+    Returns
+    -------
+    dict
+        ``{experiment_path: 'ok' | error_message}`` for every candidate directory.
+    """
+    parent_directory = os.path.abspath(parent_directory)
+    results = {}
+
+    candidates = sorted(
+        entry for entry in (
+            os.path.join(parent_directory, name)
+            for name in os.listdir(parent_directory)
+        )
+        if os.path.isdir(entry)
+    )
+
+    if not candidates:
+        print(f"No subdirectories found in {parent_directory}")
+        return results
+
+    valid = [p for p in candidates if _is_experiment_dir(p)]
+
+    if not valid:
+        print(f"No valid experiment directories found in {parent_directory}")
+        return results
+
+    print(f"Found {len(valid)} experiment(s) in {parent_directory}\n")
+
+    for i, exp_dir in enumerate(valid, 1):
+        print(f"[{i}/{len(valid)}] {exp_dir}")
+        print("=" * 60)
+        try:
+            exp = Experiment(exp_dir, force_preprocessing=force_preprocessing)
+            exp.run_analysis(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
+            exp.create_report(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
+            results[exp_dir] = 'ok'
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            print(f"  ERROR: {msg}")
+            results[exp_dir] = msg
+        print()
+
+    ok = sum(1 for v in results.values() if v == 'ok')
+    print(f"Batch complete: {ok}/{len(valid)} succeeded.")
+    if ok < len(valid):
+        print("Failed directories:")
+        for path, msg in results.items():
+            if msg != 'ok':
+                print(f"  {path}: {msg}")
+
+    return results
 
 
 if __name__ == "__main__":
