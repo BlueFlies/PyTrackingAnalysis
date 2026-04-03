@@ -3,30 +3,10 @@ import logging
 import os
 import sys
 import matplotlib.pyplot as plt
-import yaml
 import Parameters
 import Arena
 
 logger = logging.getLogger(__name__)
-
-# Maps tracking_rig values from tracking_config.yaml to normalized names
-_RIG_MAP = {
-    'small_arena':  'small_arena',
-    'smallarena':   'small_arena',
-    'arena_max':    'arena_max',
-    'arenamax':     'arena_max',
-    'colosseum':    'colosseum',
-    'colloseum':    'colosseum',
-    'obscura':      'obscura',
-    'movie':        'movie',
-}
-
-# Parameter keys that can be overridden directly in the global: section of the yaml
-_PARAMETER_KEYS = {
-    'fps', 'mm_per_pixel', 'speed_window_seconds',
-    'micromove_speed_mm_sec', 'walking_speed_mm_sec',
-    'sleep_threshold_min', 'interaction_distances',
-}
 
 # Maps TrackingType to the plot methods (and kwargs) that are relevant for it
 _TRACKING_TYPE_PLOTS = {
@@ -120,80 +100,30 @@ class Experiment:
         self.data_path     = os.path.join(self.project_directory, 'data') + '/'
         self.analysis_path = os.path.join(self.project_directory, 'analysis') + '/'
         self.qc_path       = os.path.join(self.project_directory, 'qc') + '/'
-        self.config_path   = os.path.join(self.project_directory, 'tracking_config.yaml')
 
         # Create output directories (data/ must already exist with files in it)
         os.makedirs(self.analysis_path, exist_ok=True)
         os.makedirs(self.qc_path, exist_ok=True)
 
-        self.config     = self._load_config()
-        self.parameters = self._build_parameters()
+        old_cwd = os.getcwd()
+        os.chdir(self.project_directory)
+        try:
+            self.arena = Arena.Arena(force_preprocessing=force_preprocessing)
+        finally:
+            os.chdir(old_cwd)
+
+        self.config     = self.arena.config
+        self.parameters = self.arena.parameters
+        self.experimental_design = self.arena.experimental_design
 
         # facet_cutoffs can be set in global: as a list, e.g. facet_cutoffs: [10, 70]
         global_cfg = self.config.get('global', {})
         raw_cutoffs = global_cfg.get('facet_cutoffs', [10, 70])
         self.facet_cutoffs: tuple = tuple(raw_cutoffs) if isinstance(raw_cutoffs, list) else raw_cutoffs
 
-        self.arena = Arena.Arena(
-            self.parameters,
-            data_path=self.data_path,
-            force_preprocessing=force_preprocessing,
-            config_path=self.config_path,
-        )
-        self.experimental_design = self.arena.experimental_design
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _load_config(self) -> dict:
-        if not os.path.isfile(self.config_path):
-            raise FileNotFoundError(
-                f"tracking_config.yaml not found in {self.project_directory}"
-            )
-        with open(self.config_path, 'r') as f:
-            return yaml.safe_load(f)
-
-    def _build_parameters(self) -> Parameters.Parameters:
-        """Create a Parameters object from the global: section of the yaml."""
-        global_cfg = self.config.get('global', {})
-
-        # Resolve tracking type
-        tracking_type_str = global_cfg.get('tracking_type', 'TRACKER').upper()
-        try:
-            tracking_type = Parameters.TrackingType[tracking_type_str]
-        except KeyError:
-            raise ValueError(
-                f"Unknown tracking_type '{tracking_type_str}' in tracking_config.yaml. "
-                f"Valid values: {[t.name for t in Parameters.TrackingType]}"
-            )
-
-        # Resolve rig and apply preset
-        rig_raw = global_cfg.get('tracking_rig', '').lower().replace(' ', '_').replace('-', '_')
-        rig = _RIG_MAP.get(rig_raw, rig_raw)
-
-        p = Parameters.Parameters()
-        if rig == 'small_arena':
-            p.set_small_arena_values(tracking_type)
-        elif rig == 'arena_max':
-            p.set_arena_max_values(tracking_type)
-        elif rig in ('colosseum', 'colloseum'):
-            p.set_colloseum_values(tracking_type)
-        elif rig == 'obscura':
-            p.set_obscura_values(tracking_type)
-        elif rig == 'movie':
-            fps = global_cfg.get('fps', 30)
-            mm_per_pixel = global_cfg.get('mm_per_pixel', 0.1)
-            p.set_movie_values(tracking_type, fps, mm_per_pixel)
-        else:
-            p.set_tracking_type(tracking_type)
-
-        # Apply any explicit parameter overrides present in global:
-        overrides = {k: v for k, v in global_cfg.items() if k in _PARAMETER_KEYS}
-        if overrides:
-            p.set(**overrides)
-
-        return p
 
     def _stats_metrics(self) -> list:
         """Return the metrics appropriate for pairwise comparison for this tracking type."""

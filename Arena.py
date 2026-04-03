@@ -20,39 +20,92 @@ from scipy.stats import ttest_ind
 import time
 import os
 import random
+import yaml
 
 logger = logging.getLogger(__name__)
+
+_RIG_MAP = {
+    'small_arena':  'small_arena',
+    'smallarena':   'small_arena',
+    'arena_max':    'arena_max',
+    'arenamax':     'arena_max',
+    'colosseum':    'colosseum',
+    'colloseum':    'colosseum',
+    'obscura':      'obscura',
+    'movie':        'movie',
+}
+
+_PARAMETER_KEYS = {
+    'fps', 'mm_per_pixel', 'speed_window_seconds',
+    'micromove_speed_mm_sec', 'walking_speed_mm_sec',
+    'sleep_threshold_min', 'interaction_distances',
+}
 
 class Arena:
     """
     Class representing an experimental arena for tracking and analyzing data.
     """
-    
+
 #region ########### Initialization Functions ############
-    def __init__(self, parameters, exp_name='', data_path='./', force_preprocessing=False, config_path=None):
+    def __init__(self, force_preprocessing=False):
         """
         Initialize the Arena object.
 
         Parameters:
-        exp_name (str): Name of the experiment. Should correspond to the main filename of the xlsx experiment file.
-        parameters (Parameters): Parameters object containing experiment settings.
-        data_path (str): Path to the data files.
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
-        config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in data_path directory.
         """
+        self.data_path = './data/'
+        self.config_path = './tracking_config.yaml'
 
-        if(exp_name==''):
-            xlsx_files = glob.glob(os.path.join(data_path, '*.xlsx'))
-            exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
+        xlsx_files = glob.glob(os.path.join(self.data_path, '*.xlsx'))
+        if not xlsx_files:
+            raise FileNotFoundError(f"No .xlsx file found in {self.data_path}")
+        self.experiment_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
 
-        self.parameters = parameters
-        self.experiment_name = exp_name
-        self.data_path = data_path
-        self.config_path = config_path
+        self.config = self._load_config()
+        self.parameters = self._build_parameters()
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers(force_preprocessing)
-        self.computed_summaries={}     
+        self.computed_summaries={}
+
+    def _load_config(self):
+        if not os.path.isfile(self.config_path):
+            raise FileNotFoundError(f"tracking_config.yaml not found at {self.config_path}")
+        with open(self.config_path, 'r') as f:
+            return yaml.safe_load(f)
+
+    def _build_parameters(self):
+        global_cfg = self.config.get('global', {})
+        tracking_type_str = global_cfg.get('tracking_type', 'TRACKER').upper()
+        try:
+            tracking_type = Parameters.TrackingType[tracking_type_str]
+        except KeyError:
+            raise ValueError(
+                f"Unknown tracking_type '{tracking_type_str}' in tracking_config.yaml. "
+                f"Valid values: {[t.name for t in Parameters.TrackingType]}"
+            )
+        rig_raw = global_cfg.get('tracking_rig', '').lower().replace(' ', '_').replace('-', '_')
+        rig = _RIG_MAP.get(rig_raw, rig_raw)
+        p = Parameters.Parameters()
+        if rig == 'small_arena':
+            p.set_small_arena_values(tracking_type)
+        elif rig == 'arena_max':
+            p.set_arena_max_values(tracking_type)
+        elif rig in ('colosseum', 'colloseum'):
+            p.set_colloseum_values(tracking_type)
+        elif rig == 'obscura':
+            p.set_obscura_values(tracking_type)
+        elif rig == 'movie':
+            fps = global_cfg.get('fps', 30)
+            mm_per_pixel = global_cfg.get('mm_per_pixel', 0.1)
+            p.set_movie_values(tracking_type, fps, mm_per_pixel)
+        else:
+            p.set_tracking_type(tracking_type)
+        overrides = {k: v for k, v in global_cfg.items() if k in _PARAMETER_KEYS}
+        if overrides:
+            p.set(**overrides)
+        return p
 
     def get_experiment_file_info(self):
         """
@@ -76,17 +129,10 @@ class Arena:
         
         :meta private:
         """
-        try:
-            self.experimental_design = ExperimentalDesign.ExperimentalDesign(
-                self.data_path + self.experiment_name, self.parameters,
-                config_path=self.config_path
-            )
-        except ValueError as e:
-            logger.warning(f"Experimental design validation failed: {e}")
-            self.experimental_design = None
-        except Exception as e:
-            logger.warning(f"Could not load experimental design: {e}")
-            self.experimental_design = None
+        self.experimental_design = ExperimentalDesign.ExperimentalDesign(
+            self.data_path + self.experiment_name, self.parameters,
+            config_path=self.config_path
+        )
 
     def read_all_data(self):
         """

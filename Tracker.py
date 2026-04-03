@@ -228,6 +228,8 @@ class Tracker:
 
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iat[0]
+        else:
+            treatment = pd.NA
 
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
         result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,perc_highquality,start_minutes,end_minutes])
