@@ -7,7 +7,9 @@
       "Bash(/home/scott/GithubLocal/PyTrackingAnalysis/.venv/bin/python3:*)",
       "Bash(.venv/bin/python3:*)",
       "Bash(ls:*)",
-      "Read(//home/scott/GithubLocal/PyTrackingAnalysis/**)"
+      "Read(//home/scott/GithubLocal/PyTrackingAnalysis/**)",
+      "Bash(python3 -c \":*)",
+      "Bash(jupyter nbconvert --to notebook --ClearOutputPreprocessor.enabled=True --inplace SimpleTracker.ipynb)"
     ]
   }
 }

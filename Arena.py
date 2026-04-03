@@ -53,6 +53,8 @@ class Arena:
 
         Parameters:
         force_preprocessing (bool): Flag to force preprocessing of data. Currently used to override existing nearest neighbor calculations.
+        config_path (str): Optional explicit path to tracking_config.yaml. If None, looks in the
+            parent directory of data_path (i.e. the project root, one level above the data folder).
         """
         self.data_path = './data/'
         self.config_path = './tracking_config.yaml'
@@ -62,8 +64,15 @@ class Arena:
             raise FileNotFoundError(f"No .xlsx file found in {self.data_path}")
         self.experiment_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
 
-        self.config = self._load_config()
-        self.parameters = self._build_parameters()
+        self.parameters = parameters
+        self.experiment_name = exp_name
+        self.data_path = data_path
+
+        if config_path is None:
+            parent = os.path.dirname(os.path.normpath(data_path))
+            self.config_path = os.path.join(parent if parent else '.', 'tracking_config.yaml')
+        else:
+            self.config_path = config_path
         self.get_experiment_file_info()
         self.get_experimental_design()
         self.create_trackers(force_preprocessing)
