@@ -185,6 +185,18 @@ class Arena:
         rawdata = self.check_for_preprocessing(self.read_all_data(),force_preprocessing)
         tmp_trackers = {}
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING):
+            design_path = os.path.join(self.data_path, self.experiment_name + '_Design.txt')
+            if self.parameters.get_tracking_type() == Parameters.TrackingType.TWOCHOICETRACKER:
+                if self.experimental_design is None:
+                    raise ValueError(
+                        "TwoChoiceTracker requires a design file with [Counting Regions]. "
+                        f"Expected file not found or failed to load: {os.path.abspath(design_path)}"
+                    )
+                if getattr(self.experimental_design, 'counting_regions', None) is None:
+                    raise ValueError(
+                        "Design file has no [Counting Regions] section. "
+                        f"Edit the file to add one: {os.path.abspath(design_path)}"
+                    )
             grouped_data = rawdata.groupby(['TrackingRegion','ObjectID'] )
             for (region,object_id), group in grouped_data:
                 if(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
@@ -200,6 +212,18 @@ class Arena:
                 tmp_trackers[f'{region}_{object_id}'] = tracker 
             self.trackers = OrderedDict((key, tmp_trackers[key]) for key in natsorted(tmp_trackers))
         elif(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING):
+            design_path = os.path.join(self.data_path, self.experiment_name + '_Design.txt')
+            if self.parameters.get_tracking_type() == Parameters.TrackingType.TWOCHOICECOUNTER:
+                if self.experimental_design is None:
+                    raise ValueError(
+                        "TwoChoiceCounter requires a design file with [Counting Regions]. "
+                        f"Expected file not found or failed to load: {os.path.abspath(design_path)}"
+                    )
+                if getattr(self.experimental_design, 'counting_regions', None) is None:
+                    raise ValueError(
+                        "Design file has no [Counting Regions] section. "
+                        f"Edit the file to add one: {os.path.abspath(design_path)}"
+                    )
             grouped_data = rawdata.groupby('TrackingRegion')
             for region, group in grouped_data:
                 if(self.parameters.get_tracking_type()==Parameters.TrackingType.COUNTER):
@@ -669,9 +693,9 @@ class Arena:
                 
                 for idx, (key, tracker) in enumerate(self.trackers.items()):
                     if(tracker.get_treatment()==treatment):
-                        # Assuming tracker has a method to get x-positions within the specified range
+                        minutes = tracker.get_minutes(range_minutes)
                         y_positions = tracker.get_y_positions(range_minutes)
-                        ax.plot(y_positions, label=key, color=colormap(idx),alpha=0.7)
+                        ax.plot(minutes, y_positions, label=key, color=colormap(idx),alpha=0.7)
                 
                 ax.set_xlabel('Minutes')
                 ax.set_ylabel('Y Position')
