@@ -2,8 +2,10 @@
 config_ui.py – PyQt6 UI for creating / editing tracking_config.yaml
 """
 
-import sys
+import argparse
 import os
+import sys
+
 import yaml
 
 from PyQt6.QtWidgets import (
@@ -480,7 +482,7 @@ class ConfigWindow(QMainWindow):
         if not path:
             return
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
             self._load_config(config)
             self._current_path = path
@@ -507,7 +509,7 @@ class ConfigWindow(QMainWindow):
     def _write(self, path):
         try:
             config = self._dump_config()
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
             QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
         except Exception as e:
@@ -530,21 +532,47 @@ class ConfigWindow(QMainWindow):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Tracking config editor")
+    parser.add_argument(
+        "project_dir",
+        nargs="?",
+        default=None,
+        help="Project directory containing tracking_config.yaml",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = _parse_args()
     app = QApplication(sys.argv)
     win = ConfigWindow()
 
-    # auto-load tracking_config.yaml from the script's directory if present
-    default = os.path.join(os.path.dirname(__file__), "tracking_config.yaml")
-    if os.path.exists(default):
-        try:
-            with open(default) as f:
-                config = yaml.safe_load(f)
-            win._load_config(config)
-            win._current_path = default
-            win.path_label.setText(default)
-        except Exception:
-            pass
+    # Resolve which config file to auto-load, in priority order:
+    #   1. Explicit command-line argument
+    #   2. Current working directory
+    #   3. The directory containing this script (original behaviour)
+    if args.project_dir:
+        candidates = [
+            os.path.join(os.path.abspath(args.project_dir), "tracking_config.yaml")
+        ]
+    else:
+        candidates = [
+            os.path.join(os.getcwd(), "tracking_config.yaml"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracking_config.yaml"),
+        ]
+
+    for config_path in candidates:
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    config = yaml.safe_load(f)
+                win._load_config(config)
+                win._current_path = config_path
+                win.path_label.setText(config_path)
+            except Exception:
+                pass
+            break
 
     win.show()
     sys.exit(app.exec())
