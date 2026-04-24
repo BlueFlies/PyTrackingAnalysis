@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np 
-import Tracker
+from . import Tracker
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 

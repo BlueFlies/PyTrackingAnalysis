@@ -34,7 +34,9 @@ There are three ways to drive the pipeline:
 
 | Interface | Best for |
 |-----------|----------|
-| **Desktop UI** (`analysis_ui.py`) | Day-to-day use; no Python knowledge needed |
+| **Analysis Hub** (`ptrack-hub`) | Day-to-day use; loads experiments, runs analyses, shows plots in a tabbed dock |
+| **Config Editor** (`ptrack-config`) | Authoring `tracking_config.yaml` + visual Script Editor for saved recipes |
+| **QC Viewer** (`ptrack-qc`) | Per-tracker data-quality tables + XY / distance / timeline plots |
 | **Jupyter notebook** (`Notebooks/SimpleTracker.ipynb`) | Exploratory work; custom plots |
 | **Python script / REPL** | Automation; integration with other tools |
 
@@ -81,13 +83,15 @@ uv sync
 
 ```powershell
 # With the environment activated:
-python analysis_ui.py
+ptrack-hub                    # Analysis Hub (default entry point)
+ptrack-config                 # Config Editor
+ptrack-qc                     # QC Viewer
 
 # Or without activating, using uv run:
-uv run python analysis_ui.py
+uv run ptrack-hub
 
 # With an explicit project directory:
-uv run python analysis_ui.py "C:\Users\you\Experiments\Trial1"
+uv run ptrack-hub "C:\Users\you\Experiments\Trial1"
 ```
 
 > **PyQt6 note on Windows:** If a "platform plugin not found" error appears,
@@ -123,13 +127,15 @@ source .venv/bin/activate
 
 ```bash
 # With environment activated:
-python analysis_ui.py
+ptrack-hub                    # Analysis Hub (default entry point)
+ptrack-config                 # Config Editor
+ptrack-qc                     # QC Viewer
 
 # Without activating:
-uv run python analysis_ui.py
+uv run ptrack-hub
 
 # With a project directory:
-uv run python analysis_ui.py /path/to/Trial1
+uv run ptrack-hub /path/to/Trial1
 ```
 
 > **macOS display server note:** PyQt6 requires a display.  Confirm XQuartz is
@@ -180,9 +186,11 @@ source .venv/bin/activate
 **Run the UI**
 
 ```bash
-python analysis_ui.py                          # cwd must be the repo root
-uv run python analysis_ui.py                   # works from any directory
-uv run python analysis_ui.py /path/to/Trial1   # open a specific project
+ptrack-hub                          # Analysis Hub
+uv run ptrack-hub                   # works from any directory
+uv run ptrack-hub /path/to/Trial1   # open a specific project
+uv run ptrack-config                # Config Editor
+uv run ptrack-qc /path/to/Trial1    # QC Viewer
 ```
 
 > **Headless / SSH note:** PyQt6 requires an X11 or Wayland display.  If running
@@ -428,127 +436,121 @@ tracking_regions:
 
 ## 5. The desktop UI
 
-The desktop UI (`analysis_ui.py`) provides three tabs — **Config**, **Run**, and
-**Outputs** — all anchored to a single project directory chosen at the top.
+PyTrackingAnalysis ships three independent PyQt6 apps, each launched as its own
+window.  They share a common pyflic-style theme (category-colored cards, top
+bar, PlotDock) so the visual language is consistent across all three.
 
-### 5.1 Launching the UI
+| Command | Window | Purpose |
+|---------|--------|---------|
+| `ptrack-hub`    | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC |
+| `ptrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
+| `ptrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
+
+### 5.1 Launching the apps
 
 ```bash
-# From the repository root with the uv environment active:
-python analysis_ui.py
+# With the environment active:
+ptrack-hub                              # Hub
+ptrack-hub /path/to/MyExperiment        # Hub, pre-loaded project
 
-# Open directly to a specific project directory:
-python analysis_ui.py /path/to/MyExperiment
+ptrack-config                           # Config Editor (opens last-used or ./tracking_config.yaml)
+ptrack-config /path/to/MyExperiment     # Config Editor, pre-loaded project YAML
 
-# Without activating the environment:
-uv run python analysis_ui.py /path/to/MyExperiment
+ptrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded project
+
+# Without activating, through uv:
+uv run ptrack-hub
+uv run ptrack-config /path/to/Trial1
+
+# Dev shortcut (equivalent to the console scripts above):
+python -m pytrackinganalysis hub /path/to/Trial1
+python -m pytrackinganalysis config /path/to/Trial1
+python -m pytrackinganalysis qc /path/to/Trial1
 ```
 
-The **Project directory** bar at the top of the window determines where the UI
-looks for `tracking_config.yaml` and where it seeds the run-path fields.  Use
-**Choose…** to browse, or type a path directly and press Enter.  **Reload**
-re-reads the config file and refreshes the output file list.
+All three apps persist the light/dark theme choice to
+`~/.config/pytrackinganalysis/ui.json`.  Recent projects are tracked there too.
 
 ---
 
-### 5.2 Config tab
+### 5.2 Analysis Hub (`ptrack-hub`)
 
-The Config tab provides two ways to edit `tracking_config.yaml`:
+Six cards, each on a sidebar entry:
 
-#### Form sub-tab
-
-A structured, point-and-click interface organised into three inner tabs:
-
-- **Global** — drop-downs for `tracking_type` and `tracking_rig`; an editable
-  table for experimental design factors; optional facet cutoffs; and text fields
-  for all parameter overrides.
-- **Tracking regions** — a table with one row per region.  The **Generate N
-  regions** button creates `T_0` through `T_(N-1)` in one click, ready to fill
-  in.  X/Y multipliers are drop-downs restricted to `1` and `-1`.
-- **Counting regions** — a table mapping canonical treatment names to their
-  DTrack aliases.
-
-Use **⟵ Load values from YAML into Form** to populate the form from whatever is
-currently in the YAML editor (useful after manually editing the YAML).
-
-#### YAML sub-tab
-
-A plain-text editor showing the raw YAML.  Useful for:
-
-- Copying/pasting a config from another source
-- Making quick edits while preserving comments
-- Checking exactly what will be written to disk before saving
-
-Use **⟵ Load values from Form into YAML** to regenerate the YAML from the
-current form state.  Note that this removes any hand-written YAML comments.
-
-#### Shared buttons
-
-| Button | Action |
-|--------|--------|
-| **Save config** | Writes to `tracking_config.yaml` inside the project directory.  When the Form sub-tab is active, the form is first dumped to YAML, then saved (comments are not preserved).  When the YAML sub-tab is active, the raw text is saved as-is, preserving comments. |
-| **Validate YAML** | Checks that the current text or form output is syntactically valid YAML.  Does not check semantic correctness. |
-| **Reload from file** | Discards any unsaved edits and re-reads from disk. |
-
-> If you click **Run Single Analysis** or **Run Batch Analysis** with unsaved
-> edits, the UI will prompt you to Save, Discard, or Cancel before proceeding.
+- **Project** — pick the experiment folder, choose a YAML config, launch the
+  Config Editor or QC Viewer in their own windows.
+- **Load** — radio toggle between **Single project** and **Batch parent**, then
+  click **Load experiment**.  The Experiment is cached so subsequent analyses
+  re-use the parsed CSVs.
+- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** (single
+  mode).  **Run Batch…** runs the full pipeline over every valid sub-folder.
+  All tasks run on a background thread; stdout/stderr streams to the **Output**
+  tab in real time.
+- **Plots** — dynamically populated with the faceted plots valid for the loaded
+  tracking type (`plot_pi_facet`, `plot_totaldistance_facet`, etc.).  Each click
+  adds a new tab to the PlotDock.  Toggle **Interactive plots** in the top bar
+  to switch between static PNG rendering (fast) and a live canvas with pan /
+  zoom / save toolbar.
+- **Scripts** — lists saved analysis recipes from the active YAML's `scripts:`
+  section.  **Run Script** / **Run All** executes them and routes each step's
+  log output to the Output tab and each figure to a PlotDock tab.  Author
+  scripts from the Config Editor (see 5.3).
+- **Tools** — validate YAML, open the `analysis/` or `qc/` folder in the system
+  file browser, clear the matplotlib cache.
 
 ---
 
-### 5.3 Run tab
+### 5.3 Config Editor (`ptrack-config`)
 
-#### Analysis paths
+Structured editor for `tracking_config.yaml` with three tabs wrapped in a Card:
 
-| Field | What it means |
-|-------|---------------|
-| **Single project** | A project directory containing `tracking_config.yaml` and `data/`.  Seeded from the global project directory; change it independently with **Browse…** to run a different experiment without altering the global path. |
-| **Batch parent** | The parent directory that contains multiple project directories as sub-folders.  Each sub-folder must have its own `tracking_config.yaml` and `data/` folder. |
+- **Global** — drop-downs for `tracking_type` and `tracking_rig`; a table for
+  experimental-design factors; optional facet cutoffs; text fields for each
+  parameter override.
+- **Tracking regions** — one row per region.  **Generate N regions** bulk-fills
+  `T_0`…`T_(N-1)`.  X/Y multipliers are restricted to `1` / `-1`.
+- **Counting regions** — treatment label → DTrack aliases.
 
-Both fields are independently editable.  The global project directory at the top
-only seeds them on first load; changes to the run-tab fields do not update the
-global directory.
+A **YAML preview** Card below the tabs renders the live serialization for
+trust / debugging; an amber `●` dirty indicator surfaces unsaved edits.
 
-#### Running an analysis
+#### Visual Script Editor
 
-Click **Run Single Analysis** or **Run Batch Analysis**.  While the analysis
-runs:
+Open via the scripts icon in the top bar.  A non-modal `QMainWindow` with three
+panes (pyflic-style):
 
-- Both buttons are disabled.
-- A progress bar is displayed below the buttons.
-- The **Execution log** streams output in real time, line by line.
+- **Palette** (left) — searchable, category-grouped tile list of all registered
+  actions (`load_experiment`, `filter_by_quality`, `run_qc`, `run_analysis`,
+  `save_summary_csv`, `run_tukey_stats`, `plot`, `create_report`,
+  `batch_analyze`, …).  Double-click to add.
+- **Canvas** (center) — ordered step cards with the action's icon, a
+  parameter-summary chip, and move-up / move-down / delete buttons.
+- **Inspector** (right) — dynamic form for the selected step with widgets
+  derived from the action's param schema (spinbox, combo, line edit, checkbox,
+  browse-for-path, comma-list).  Red banner reports validation errors inline.
+- **Preview** (bottom) — live YAML of the current script.
 
-The analysis runs in a background thread so the UI remains responsive.  When
-complete, the Outputs tab is automatically refreshed.
-
-A failed run prints the full Python traceback to the log and shows a brief error
-dialog.
+Scripts are stored under the `scripts:` key of the surrounding
+`tracking_config.yaml`.  The Hub's **Scripts** card reads the same file, so
+saving in the Script Editor makes scripts immediately runnable from the Hub.
 
 ---
 
-### 5.4 Outputs tab
+### 5.4 QC Viewer (`ptrack-qc`)
 
-After an analysis completes, the Outputs tab lists every file produced under the
-project directory (and any batch sub-directories) in `analysis/` and `qc/`.
-
-#### File list
-
-Files are shown as `subfolder/filename` for files at the top level, and as
-`TrialN/subfolder/filename` for files in batch sub-directories.  Click any file
-to preview it.
-
-#### Preview pane
-
-| File type | Preview |
-|-----------|---------|
-| `.txt`, `.csv`, `.yaml`, `.log` | Plain-text view |
-| `.png`, `.jpg`, `.jpeg`, `.bmp` | Inline image (scrollable) |
-| `.pdf`, others | "Open externally" — use the button below |
-
-#### Buttons
-
-- **Refresh** — re-scans the output directories without re-running the analysis.
-- **Open externally** — opens the selected file in the default system application
-  (PDF viewer, image viewer, spreadsheet application, etc.).
+- Left pane — **Trackers** table with columns `Tracker, HighQuality, NotFound,
+  Indiscernible, StartMinutes, EndMinutes`.  Rows auto-tint green (≥ cutoff)
+  or red (< cutoff) based on the **qc_cutoff** spinbox; a filter box narrows by
+  tracker name.
+- Right pane — `PlotDock` that auto-populates when you select a tracker with
+  four tabs:
+  - **XY trajectory** — RelX/RelY scatter coloured by time (viridis).
+  - **Total distance over time** — cumulative `Dist_mm` vs `Minutes`.
+  - **X / Y vs time** — stacked RelX(t), RelY(t) line plots.
+  - **Data quality timeline** — per-frame `DataQuality` category plotted as a
+    time series so bad-tracking regions jump out visually.
+- **Export data_quality.csv** writes the full table to disk for external
+  review.
 
 ---
 
@@ -719,16 +721,19 @@ results = batch_analyze("./ParentFolder/")
 ### Starting the UI
 
 ```bash
-# From repo root:
-python analysis_ui.py
-python analysis_ui.py /absolute/path/to/project
+# Analysis Hub (the default entry point):
+ptrack-hub
+ptrack-hub /absolute/path/to/project
 
-# Via uv (works from any directory):
-uv run python analysis_ui.py /absolute/path/to/project
+# Via uv (works from any directory, no activation needed):
+uv run ptrack-hub /absolute/path/to/project
 
-# Structured config editor (standalone):
-python config_ui.py
-python config_ui.py /path/to/project
+# Standalone Config Editor (with visual Script Editor):
+ptrack-config
+ptrack-config /path/to/project
+
+# Standalone QC Viewer:
+ptrack-qc /path/to/project
 ```
 
 ### Minimal tracking\_config.yaml

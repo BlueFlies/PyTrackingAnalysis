@@ -1,13 +1,14 @@
 [project]
 name = "pytrackinganalysis"
 version = "0.1.0"
-description = "Add your description here"
+description = "Tracker-data analysis with a three-app PyQt6 UI (Hub / Config / QC)."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "ipykernel>=6.29.5",
     "ipympl>=0.10.0",
     "matplotlib>=3.10.1",
+    "mplcursors>=0.7.1",
     "natsort>=8.4.0",
     "notebook>=7.4.4",
     "numpy>=2.2.4",
@@ -16,10 +17,23 @@ dependencies = [
     "pickleshare>=0.7.5",
     "pip>=25.1.1",
     "pyperclip>=1.9.0",
-    "pyqt5>=5.15.11",
     "pyqt6>=6.11.0",
+    "pyqtdarktheme>=2.1.0",
     "pyyaml>=6.0.2",
+    "qtawesome>=1.4.2",
     "scipy>=1.15.2",
     "seaborn>=0.13.2",
     "statsmodels>=0.14.4",
 ]
+
+[project.scripts]
+ptrack-hub    = "pytrackinganalysis.apps.hub:main"
+ptrack-config = "pytrackinganalysis.apps.config_editor:main"
+ptrack-qc     = "pytrackinganalysis.apps.qc_viewer:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pytrackinganalysis"]

@@ -7,8 +7,8 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
-import Parameters
-import Arena
+from . import Parameters
+from . import Arena
 
 _RIG_MAP = Arena._RIG_MAP
 _PARAMETER_KEYS = Arena._PARAMETER_KEYS

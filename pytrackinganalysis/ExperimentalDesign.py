@@ -1,12 +1,12 @@
 import logging
 import numpy as np
 import pandas as pd
-import Tracker
-import TwoChoiceTracker
-import Parameters
+from . import Tracker
+from . import TwoChoiceTracker
+from . import Parameters
 import glob
 from natsort import natsorted
-import Arena
+from . import Arena
 import yaml
 import os
 

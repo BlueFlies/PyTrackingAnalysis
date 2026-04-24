@@ -1,23 +1,30 @@
+"""Form-based editors for each top-level YAML section.
+
+Ported verbatim from ``config_ui.py`` so the visual layout matches the
+legacy editor.  The wrapping :class:`~pytrackinganalysis.apps.config_editor.ConfigEditorWindow`
+is responsible for the surrounding pyflic-style chrome (TopBar, Cards,
+YAML preview, Script Editor launcher).
 """
-config_ui.py – PyQt6 UI for creating / editing tracking_config.yaml
-"""
 
-import argparse
-import os
-import sys
+from __future__ import annotations
 
-import yaml
-
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QTabWidget,
-    QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
-    QLabel, QLineEdit, QComboBox, QCheckBox, QSpinBox,
-    QDoubleSpinBox, QPushButton, QFileDialog, QMessageBox,
-    QScrollArea, QGroupBox, QSizePolicy, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 TRACKING_TYPES = [
@@ -28,21 +35,13 @@ TRACKING_TYPES = [
 TRACKING_RIGS = ["small_arena", "arena_max", "colosseum", "obscura", "movie"]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _section_label(text):
+def _section_label(text: str) -> QLabel:
     lbl = QLabel(text)
     font = QFont()
     font.setBold(True)
     lbl.setFont(font)
     return lbl
 
-
-# ---------------------------------------------------------------------------
-# Tab 1 – Global settings
-# ---------------------------------------------------------------------------
 
 class GlobalTab(QWidget):
     def __init__(self):
@@ -54,12 +53,10 @@ class GlobalTab(QWidget):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        # Tracking type
         self.tracking_type = QComboBox()
         self.tracking_type.addItems(TRACKING_TYPES)
         form.addRow("Tracking type:", self.tracking_type)
 
-        # Tracking rig
         self.tracking_rig = QComboBox()
         self.tracking_rig.addItems(TRACKING_RIGS)
         self.tracking_rig.currentTextChanged.connect(self._on_rig_changed)
@@ -67,7 +64,6 @@ class GlobalTab(QWidget):
 
         outer.addLayout(form)
 
-        # ── Experimental design factors ─────────────────────────────────
         outer.addSpacing(12)
         outer.addWidget(_section_label("Experimental design factors"))
 
@@ -87,7 +83,6 @@ class GlobalTab(QWidget):
         btn_row.addStretch()
         outer.addLayout(btn_row)
 
-        # ── Facet cutoffs ───────────────────────────────────────────────
         outer.addSpacing(12)
         outer.addWidget(_section_label("Facet cutoffs (optional)"))
 
@@ -102,7 +97,6 @@ class GlobalTab(QWidget):
         facet_row.addWidget(self.facet_cutoffs)
         outer.addLayout(facet_row)
 
-        # ── Optional parameter overrides ────────────────────────────────
         outer.addSpacing(12)
         outer.addWidget(_section_label("Parameter overrides (leave blank to use rig defaults)"))
 
@@ -146,9 +140,7 @@ class GlobalTab(QWidget):
         outer.addLayout(pform)
         outer.addStretch()
 
-    # ── slots ──────────────────────────────────────────────────────────
-
-    def _on_rig_changed(self, rig):
+    def _on_rig_changed(self, rig: str) -> None:
         movie = rig == "movie"
         self.fps.setEnabled(movie)
         self.mm_per_pixel.setEnabled(movie)
@@ -156,21 +148,19 @@ class GlobalTab(QWidget):
             self.fps.clear()
             self.mm_per_pixel.clear()
 
-    def _on_facet_toggled(self, state):
+    def _on_facet_toggled(self, state) -> None:
         self.facet_cutoffs.setEnabled(bool(state))
 
-    def _add_factor_row(self):
+    def _add_factor_row(self) -> None:
         r = self.factors_table.rowCount()
         self.factors_table.insertRow(r)
 
-    def _remove_factor_row(self):
+    def _remove_factor_row(self) -> None:
         rows = {idx.row() for idx in self.factors_table.selectedIndexes()}
         for r in sorted(rows, reverse=True):
             self.factors_table.removeRow(r)
 
-    # ── load / dump ────────────────────────────────────────────────────
-
-    def load(self, config):
+    def load(self, config: dict) -> None:
         g = config.get("global", {})
 
         tt = g.get("tracking_type", "TRACKER")
@@ -178,13 +168,13 @@ class GlobalTab(QWidget):
         self.tracking_type.setCurrentIndex(max(idx, 0))
 
         rig = g.get("tracking_rig", "small_arena")
-        idx = self.tracking_rig.findText(rig, Qt.MatchFlag.MatchFixedString | Qt.MatchFlag.MatchCaseSensitive)
+        idx = self.tracking_rig.findText(
+            rig, Qt.MatchFlag.MatchFixedString | Qt.MatchFlag.MatchCaseSensitive
+        )
         if idx < 0:
-            # case-insensitive fallback
             idx = self.tracking_rig.findText(rig, Qt.MatchFlag.MatchFixedString)
         self.tracking_rig.setCurrentIndex(max(idx, 0))
 
-        # factors
         self.factors_table.setRowCount(0)
         for name, levels in g.get("experimental_design_factors", {}).items():
             r = self.factors_table.rowCount()
@@ -192,7 +182,6 @@ class GlobalTab(QWidget):
             self.factors_table.setItem(r, 0, QTableWidgetItem(name))
             self.factors_table.setItem(r, 1, QTableWidgetItem(", ".join(str(l) for l in levels)))
 
-        # facets
         cutoffs = g.get("facet_cutoffs")
         if cutoffs:
             self.use_facets.setChecked(True)
@@ -201,7 +190,6 @@ class GlobalTab(QWidget):
             self.use_facets.setChecked(False)
             self.facet_cutoffs.clear()
 
-        # overrides
         self.fps.setText(str(g["fps"]) if "fps" in g else "")
         self.mm_per_pixel.setText(str(g["mm_per_pixel"]) if "mm_per_pixel" in g else "")
         self.speed_window.setText(str(g["speed_window_seconds"]) if "speed_window_seconds" in g else "")
@@ -215,38 +203,37 @@ class GlobalTab(QWidget):
         if idist:
             self.interaction_distances.setText(", ".join(str(d) for d in idist))
 
-    def dump(self):
+    def dump(self) -> dict:
         g = {
             "tracking_type": self.tracking_type.currentText(),
             "tracking_rig": self.tracking_rig.currentText(),
         }
 
-        # factors
-        factors = {}
+        factors: dict[str, list[str]] = {}
         for r in range(self.factors_table.rowCount()):
             name_item = self.factors_table.item(r, 0)
             levels_item = self.factors_table.item(r, 1)
             if name_item and name_item.text().strip():
-                levels = [l.strip() for l in (levels_item.text() if levels_item else "").split(",") if l.strip()]
+                levels = [
+                    l.strip()
+                    for l in (levels_item.text() if levels_item else "").split(",")
+                    if l.strip()
+                ]
                 factors[name_item.text().strip()] = levels
         if factors:
             g["experimental_design_factors"] = factors
 
-        # facets
         if self.use_facets.isChecked() and self.facet_cutoffs.text().strip():
             try:
-                g["facet_cutoffs"] = [int(x.strip()) for x in self.facet_cutoffs.text().split(",") if x.strip()]
+                g["facet_cutoffs"] = [
+                    int(x.strip()) for x in self.facet_cutoffs.text().split(",") if x.strip()
+                ]
             except ValueError:
                 pass
 
-        # overrides
         def _float(w):
             t = w.text().strip()
             return float(t) if t else None
-
-        def _int(w):
-            t = w.text().strip()
-            return int(t) if t else None
 
         for key, fn, widget in [
             ("fps", _float, self.fps),
@@ -269,16 +256,14 @@ class GlobalTab(QWidget):
         idist = self.interaction_distances.text().strip()
         if idist:
             try:
-                g["interaction_distances"] = [float(x.strip()) for x in idist.split(",") if x.strip()]
+                g["interaction_distances"] = [
+                    float(x.strip()) for x in idist.split(",") if x.strip()
+                ]
             except ValueError:
                 pass
 
         return {"global": g}
 
-
-# ---------------------------------------------------------------------------
-# Tab 2 – Tracking regions
-# ---------------------------------------------------------------------------
 
 class TrackingRegionsTab(QWidget):
     def __init__(self, global_tab: GlobalTab):
@@ -293,7 +278,6 @@ class TrackingRegionsTab(QWidget):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        # toolbar
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add region")
         add_btn.clicked.connect(self._add_row)
@@ -313,16 +297,16 @@ class TrackingRegionsTab(QWidget):
         layout.addLayout(btn_row)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels([
-            "Region name", "Experimental factors", "X multiplier", "Y multiplier"
-        ])
+        self.table.setHorizontalHeaderLabels(
+            ["Region name", "Experimental factors", "X multiplier", "Y multiplier"]
+        )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table)
 
-    def _add_row(self, name="", factors="", x=1, y=1):
+    def _add_row(self, name: str = "", factors: str = "", x: int = 1, y: int = 1) -> None:
         r = self.table.rowCount()
         self.table.insertRow(r)
         self.table.setItem(r, 0, QTableWidgetItem(name or f"T_{r}"))
@@ -336,18 +320,18 @@ class TrackingRegionsTab(QWidget):
         self.table.setCellWidget(r, 2, xc)
         self.table.setCellWidget(r, 3, yc)
 
-    def _remove_row(self):
+    def _remove_row(self) -> None:
         rows = {idx.row() for idx in self.table.selectedIndexes()}
         for r in sorted(rows, reverse=True):
             self.table.removeRow(r)
 
-    def _bulk_generate(self):
+    def _bulk_generate(self) -> None:
         self.table.setRowCount(0)
         n = self.count_spin.value()
         for i in range(n):
             self._add_row(name=f"T_{i}")
 
-    def load(self, config):
+    def load(self, config: dict) -> None:
         self.table.setRowCount(0)
         for name, data in config.get("tracking_regions", {}).items():
             self._add_row(
@@ -357,8 +341,8 @@ class TrackingRegionsTab(QWidget):
                 y=data.get("y_location_multiplier", 1),
             )
 
-    def dump(self):
-        regions = {}
+    def dump(self) -> dict:
+        regions: dict[str, dict] = {}
         for r in range(self.table.rowCount()):
             name_item = self.table.item(r, 0)
             factors_item = self.table.item(r, 1)
@@ -372,10 +356,6 @@ class TrackingRegionsTab(QWidget):
                 }
         return {"tracking_regions": regions} if regions else {}
 
-
-# ---------------------------------------------------------------------------
-# Tab 3 – Counting regions
-# ---------------------------------------------------------------------------
 
 class CountingRegionsTab(QWidget):
     def __init__(self):
@@ -404,24 +384,24 @@ class CountingRegionsTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
 
-    def _add_row(self, label="", aliases=""):
+    def _add_row(self, label: str = "", aliases: str = "") -> None:
         r = self.table.rowCount()
         self.table.insertRow(r)
         self.table.setItem(r, 0, QTableWidgetItem(label))
         self.table.setItem(r, 1, QTableWidgetItem(aliases))
 
-    def _remove_row(self):
+    def _remove_row(self) -> None:
         rows = {idx.row() for idx in self.table.selectedIndexes()}
         for r in sorted(rows, reverse=True):
             self.table.removeRow(r)
 
-    def load(self, config):
+    def load(self, config: dict) -> None:
         self.table.setRowCount(0)
         for label, data in config.get("counting_regions", {}).items():
             self._add_row(label=label, aliases=data.get("alias", ""))
 
-    def dump(self):
-        regions = {}
+    def dump(self) -> dict:
+        regions: dict[str, dict] = {}
         for r in range(self.table.rowCount()):
             label_item = self.table.item(r, 0)
             aliases_item = self.table.item(r, 1)
@@ -430,153 +410,3 @@ class CountingRegionsTab(QWidget):
                     "alias": aliases_item.text().strip() if aliases_item else ""
                 }
         return {"counting_regions": regions} if regions else {}
-
-
-# ---------------------------------------------------------------------------
-# Main window
-# ---------------------------------------------------------------------------
-
-class ConfigWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Tracking Config Editor")
-        self.resize(800, 650)
-        self._current_path = None
-
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-
-        # ── file bar ───────────────────────────────────────────────────
-        file_bar = QHBoxLayout()
-        self.path_label = QLabel("No file loaded")
-        self.path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        open_btn = QPushButton("Open…")
-        open_btn.clicked.connect(self.open_file)
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self.save_file)
-        save_as_btn = QPushButton("Save as…")
-        save_as_btn.clicked.connect(self.save_as_file)
-        file_bar.addWidget(self.path_label)
-        file_bar.addWidget(open_btn)
-        file_bar.addWidget(save_btn)
-        file_bar.addWidget(save_as_btn)
-        main_layout.addLayout(file_bar)
-
-        # ── tabs ───────────────────────────────────────────────────────
-        self.tabs = QTabWidget()
-        self.global_tab = GlobalTab()
-        self.tracking_tab = TrackingRegionsTab(self.global_tab)
-        self.counting_tab = CountingRegionsTab()
-        self.tabs.addTab(self.global_tab, "Global")
-        self.tabs.addTab(self.tracking_tab, "Tracking regions")
-        self.tabs.addTab(self.counting_tab, "Counting regions")
-        main_layout.addWidget(self.tabs)
-
-    # ── file I/O ───────────────────────────────────────────────────────
-
-    def open_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open config", "", "YAML files (*.yaml *.yml);;All files (*)"
-        )
-        if not path:
-            return
-        try:
-            with open(path, encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-            self._load_config(config)
-            self._current_path = path
-            self.path_label.setText(path)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load file:\n{e}")
-
-    def save_file(self):
-        if not self._current_path:
-            self.save_as_file()
-            return
-        self._write(self._current_path)
-
-    def save_as_file(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save config", "tracking_config.yaml",
-            "YAML files (*.yaml *.yml);;All files (*)"
-        )
-        if path:
-            self._write(path)
-            self._current_path = path
-            self.path_label.setText(path)
-
-    def _write(self, path):
-        try:
-            config = self._dump_config()
-            with open(path, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not save file:\n{e}")
-
-    def _load_config(self, config):
-        self.global_tab.load(config)
-        self.tracking_tab.load(config)
-        self.counting_tab.load(config)
-
-    def _dump_config(self):
-        config = {}
-        config.update(self.global_tab.dump())
-        config.update(self.tracking_tab.dump())
-        config.update(self.counting_tab.dump())
-        return config
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Tracking config editor")
-    parser.add_argument(
-        "project_dir",
-        nargs="?",
-        default=None,
-        help="Project directory containing tracking_config.yaml",
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = _parse_args()
-    app = QApplication(sys.argv)
-    win = ConfigWindow()
-
-    # Resolve which config file to auto-load, in priority order:
-    #   1. Explicit command-line argument
-    #   2. Current working directory
-    #   3. The directory containing this script (original behaviour)
-    if args.project_dir:
-        candidates = [
-            os.path.join(os.path.abspath(args.project_dir), "tracking_config.yaml")
-        ]
-    else:
-        candidates = [
-            os.path.join(os.getcwd(), "tracking_config.yaml"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracking_config.yaml"),
-        ]
-
-    for config_path in candidates:
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, encoding="utf-8") as f:
-                    config = yaml.safe_load(f)
-                win._load_config(config)
-                win._current_path = config_path
-                win.path_label.setText(config_path)
-            except Exception:
-                pass
-            break
-
-    win.show()
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

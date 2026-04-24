@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np 
-import Counter
-import PairwiseInteractionTracker
+from . import Counter
+from . import PairwiseInteractionTracker
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 

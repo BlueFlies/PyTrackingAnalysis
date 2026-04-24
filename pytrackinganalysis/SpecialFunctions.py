@@ -6,8 +6,8 @@ backward compatibility but simply delegates to the corresponding Arena methods.
 """
 import numpy as np
 import pandas as pd
-from Arena import Arena
-from Parameters import Parameters, TrackingType
+from .Arena import Arena
+from .Parameters import Parameters, TrackingType
 
 
 def analyze_rle_data(arena: Arena, change_none_to_light=True, min_duration_frames=1, range_minutes=(0, 0)):

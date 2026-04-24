@@ -1,15 +1,15 @@
 import logging
 import numpy as np
 import pandas as pd
-import Tracker
-import Counter
-import TwoChoiceTracker
-import XChoiceTracker
-import TwoChoiceCounter
-import PairwiseInteractionTracker
-import PairwiseInteractionCounter
-import Parameters
-import ExperimentalDesign
+from . import Tracker
+from . import Counter
+from . import TwoChoiceTracker
+from . import XChoiceTracker
+from . import TwoChoiceCounter
+from . import PairwiseInteractionTracker
+from . import PairwiseInteractionCounter
+from . import Parameters
+from . import ExperimentalDesign
 import glob
 from natsort import natsorted
 import seaborn as sns
