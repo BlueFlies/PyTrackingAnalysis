@@ -107,7 +107,14 @@ class Palette(QWidget):
 
         self._tiles: list[_ActionTile] = []
         self._section_headers: list[tuple[Category, QLabel]] = []
+        self._experiment_type: str | None = None
         self._build_tiles()
+
+    def set_experiment_type(self, exp_type: str | None) -> None:
+        """Limit the visible tiles to actions applicable to *exp_type*."""
+        self._experiment_type = exp_type
+        # Re-apply current filter (search + type) on the existing tiles.
+        self._apply_filter(self._search.text())
 
     def _build_tiles(self) -> None:
         # Group actions by category, preserving the order categories appear
@@ -141,14 +148,16 @@ class Palette(QWidget):
         any_visible: dict[Category, bool] = defaultdict(bool)
         for tile in self._tiles:
             action: Action = tile._action  # noqa: SLF001
-            match = (
+            applies = action.applies_to(self._experiment_type)
+            text_match = (
                 not needle
                 or needle in action.title.lower()
                 or needle in action.description.lower()
                 or needle in action.key.lower()
             )
-            tile.setVisible(match)
-            if match:
+            visible = applies and text_match
+            tile.setVisible(visible)
+            if visible:
                 any_visible[action.category] = True
         for cat, header in self._section_headers:
             header.setVisible(any_visible.get(cat, False))

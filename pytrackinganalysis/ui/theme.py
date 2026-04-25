@@ -125,6 +125,33 @@ def _additional_qss() -> str:
         font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
         font-size: 10pt;
     }
+    /* Make dropdowns embedded in tables blend with the table cell background
+       and preserve the cell grid lines on the right/bottom edges. */
+    QTableWidget QComboBox {
+        background: palette(base);
+        color: palette(text);
+        border-top: 1px solid transparent;
+        border-left: 1px solid transparent;
+        border-right: 1px solid palette(mid);
+        border-bottom: 1px solid palette(mid);
+        padding: 2px 4px;
+    }
+    QTableWidget QComboBox:hover {
+        border-top: 1px solid palette(midlight);
+        border-left: 1px solid palette(midlight);
+        border-right: 1px solid palette(midlight);
+        border-bottom: 1px solid palette(midlight);
+    }
+    QTableWidget QComboBox::drop-down {
+        border: none;
+        width: 16px;
+    }
+    QTableWidget QComboBox QAbstractItemView {
+        background: palette(base);
+        color: palette(text);
+        selection-background-color: palette(highlight);
+        selection-color: palette(highlighted-text);
+    }
     """
 
 

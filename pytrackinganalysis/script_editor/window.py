@@ -202,6 +202,22 @@ class ScriptEditorWindow(QMainWindow):
         self._dirty = False
         self._update_dirty_indicator()
 
+        # Restrict the action palette + inspector validation to whatever
+        # tracking type the project is configured for.
+        exp_type = self._read_tracking_type()
+        self._palette.set_experiment_type(exp_type)
+        self._inspector.set_experiment_type(exp_type)
+
+    def _read_tracking_type(self) -> str | None:
+        """Return the ``global.tracking_type`` from the project's YAML, or None."""
+        try:
+            with open(self._config_path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except Exception:  # noqa: BLE001
+            return None
+        tt = (data.get("global") or {}).get("tracking_type")
+        return str(tt).strip().upper() if tt else None
+
     def _save(self) -> None:
         try:
             save_scripts(self._config_path, self._scripts)

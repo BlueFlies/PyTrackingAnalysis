@@ -12,6 +12,7 @@ card-by-card breakdown.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,12 +56,60 @@ from ..ui import (
     PlotDock,
     SidebarNav,
     TopBar,
+    ZoomableImageView,
+    ZoomableTextView,
     apply_theme,
     icon,
     resolved_mode,
 )
 from ..ui import settings as ui_settings
 from .common import TaskWorker, capture_figures
+
+
+# Lines like "Saved: /path/to/file.png" come out of the various Experiment
+# methods that write artifacts to disk. We mirror them as zoomable PlotDock
+# tabs in the Hub.
+_SAVED_RE = re.compile(r"^\s*Saved:\s+(\S.*?)\s*$")
+
+
+# Per-tracking-type plot buttons for the Plots card. Each entry is
+# (label, flat_method, facet_method); the Hub picks the variant based on the
+# Analyze card's facet checkbox and updates button labels accordingly.
+_PLOT_BUTTONS: dict[str, list[tuple[str, str, str]]] = {
+    "TRACKER": [
+        ("Total distance", "plot_totaldistance", "plot_totaldistance_facet"),
+    ],
+    "TWOCHOICETRACKER": [
+        ("PI", "plot_pi", "plot_pi_facet"),
+        ("Percentage", "plot_percentage", "plot_percentage_facet"),
+        ("Transitions", "plot_transitions", "plot_transitions_facet"),
+        ("Total distance", "plot_totaldistance", "plot_totaldistance_facet"),
+    ],
+    "TWOCHOICECOUNTER": [
+        ("PI", "plot_pi", "plot_pi_facet"),
+        ("Percentage", "plot_percentage", "plot_percentage_facet"),
+    ],
+    "XCHOICETRACKER": [
+        ("Adjusted X position", "plot_adjusted_x_position", "plot_adjusted_x_position_facet"),
+        ("Total distance", "plot_totaldistance", "plot_totaldistance_facet"),
+    ],
+    "PAIRWISEINTERACTIONTRACKER": [
+        ("Interactions", "plot_interactions", "plot_interactions_facet"),
+        ("Total distance", "plot_totaldistance", "plot_totaldistance_facet"),
+    ],
+    "PAIRWISEINTERACTIONCOUNTER": [
+        ("Interactions", "plot_interactions", "plot_interactions_facet"),
+    ],
+}
+
+_PLOT_ICON_BY_LABEL: dict[str, str] = {
+    "Total distance": "distance",
+    "PI": "plot",
+    "Percentage": "plot",
+    "Transitions": "transition",
+    "Adjusted X position": "xy",
+    "Interactions": "plot",
+}
 
 
 class HubWindow(QMainWindow):
@@ -80,6 +129,10 @@ class HubWindow(QMainWindow):
         # Cards we reference by sidebar key so clicking a sidebar item scrolls to it.
         self._cards: dict[str, Card] = {}
         self._scripts: list[dict] = []
+        # Resolved artifact path → tab widget. Used to deduplicate tabs when
+        # the same file is re-saved by a subsequent task run. Stored by widget
+        # (not index) so it survives the user closing other tabs.
+        self._artifact_tabs: dict[str, QWidget] = {}
 
         self._build_ui()
 
@@ -157,7 +210,9 @@ class HubWindow(QMainWindow):
 
         scroll.setWidget(cards_host)
         left_lay.addWidget(scroll, 1)
-        left_host.setMinimumWidth(420)
+        # 180px sidebar + ~420px cards column so the form rows + button
+        # clusters never get clipped behind the splitter handle.
+        left_host.setMinimumWidth(600)
         splitter.addWidget(left_host)
 
         # Right: plot dock
@@ -168,7 +223,7 @@ class HubWindow(QMainWindow):
 
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([500, 850])
+        splitter.setSizes([620, 730])
 
         outer.addWidget(splitter, 1)
 
@@ -195,6 +250,8 @@ class HubWindow(QMainWindow):
         )
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._project_edit = QLineEdit()
         self._project_edit.setPlaceholderText("/path/to/experiment/folder")
@@ -203,11 +260,18 @@ class HubWindow(QMainWindow):
         browse.clicked.connect(self._pick_project_dir)
         reload_btn = ActionButton("Reload", Category.TOOLS, icon_name="clear")
         reload_btn.clicked.connect(self._reload_project)
-        row = QHBoxLayout()
-        row.addWidget(self._project_edit, 1)
-        row.addWidget(browse)
-        row.addWidget(reload_btn)
-        form.addRow("Project dir:", _wrap_layout(row))
+        # Path on its own line so long paths stay readable; buttons below.
+        proj_col = QVBoxLayout()
+        proj_col.setContentsMargins(0, 0, 0, 0)
+        proj_col.setSpacing(6)
+        proj_col.addWidget(self._project_edit)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.addWidget(browse)
+        btn_row.addWidget(reload_btn)
+        btn_row.addStretch(1)
+        proj_col.addLayout(btn_row)
+        form.addRow("Project dir:", _wrap_layout(proj_col))
 
         self._config_combo = QComboBox()
         self._config_combo.setToolTip("YAML configs found in the project dir.")
@@ -286,6 +350,23 @@ class HubWindow(QMainWindow):
             icon_name="basic",
         )
 
+        # Facet checkbox controls whether Summarize / Pairwise / Plots buttons
+        # call the faceted variants. Disabled until a project is loaded; its
+        # label is rewritten then to show the configured cutoffs.
+        self._facet_checkbox = QCheckBox("Faceted (no project loaded)")
+        self._facet_checkbox.setEnabled(False)
+        self._facet_checkbox.setToolTip(
+            "When checked, Summarize, Run pairwise comparisons, and the Plots "
+            "buttons all call their faceted variants using the cutoffs from "
+            "the project's tracking_config.yaml."
+        )
+        self._facet_checkbox.toggled.connect(self._on_facet_toggled)
+        card.add_body(self._facet_checkbox)
+
+        # Tracks (button, base_label) for any button whose text gets the
+        # "(facet)" suffix appended when the checkbox is on.
+        self._dynamic_label_buttons: list[tuple[ActionButton, str]] = []
+
         self._btn_run_analysis = ActionButton(
             "Run Analysis", Category.ANALYZE, icon_name="basic", primary=True
         )
@@ -301,6 +382,18 @@ class HubWindow(QMainWindow):
         )
         self._btn_create_report.clicked.connect(self._run_create_report)
 
+        self._btn_summarize = ActionButton(
+            "Summarize", Category.ANALYZE, icon_name="csv"
+        )
+        self._btn_summarize.clicked.connect(self._run_summarize)
+        self._dynamic_label_buttons.append((self._btn_summarize, "Summarize"))
+
+        self._btn_pairwise = ActionButton(
+            "Run pairwise comparisons", Category.ANALYZE, icon_name="compare"
+        )
+        self._btn_pairwise.clicked.connect(self._run_pairwise)
+        self._dynamic_label_buttons.append((self._btn_pairwise, "Run pairwise comparisons"))
+
         self._btn_run_batch = ActionButton(
             "Run Batch…", Category.LOAD, icon_name="batch"
         )
@@ -311,6 +404,8 @@ class HubWindow(QMainWindow):
             self._btn_run_analysis,
             self._btn_run_qc,
             self._btn_create_report,
+            self._btn_summarize,
+            self._btn_pairwise,
             self._btn_run_batch,
         ):
             card.add_body(btn)
@@ -410,7 +505,16 @@ class HubWindow(QMainWindow):
             "Clear matplotlib cache", Category.TOOLS, icon_name="clear"
         )
         btn_clear_cache.clicked.connect(self._clear_mpl_cache)
-        for b in (btn_validate, btn_open_analysis, btn_open_qc, btn_clear_cache):
+        btn_convert = ActionButton(
+            "Convert subdirectories", Category.TOOLS, icon_name="batch"
+        )
+        btn_convert.setToolTip(
+            "For each subdirectory of the project dir, create a 'data/' folder "
+            "and copy every non-YAML file at the top level into it. Preps the "
+            "subdirectories for a batch run."
+        )
+        btn_convert.clicked.connect(self._convert_subdirectories)
+        for b in (btn_open_analysis, btn_open_qc, btn_convert, btn_validate, btn_clear_cache):
             card.add_body(b)
         self._cards["tools"] = card
         self._cards_lay.addWidget(card)
@@ -584,67 +688,115 @@ class HubWindow(QMainWindow):
         if not self._project_dir:
             self._warn("Choose a project directory first.")
             return
-        try:
-            self._log.append_line(f"Loading experiment from {self._project_dir}…")
-            exp = ExperimentMod.Experiment(str(self._project_dir))
-            self._exp = exp
-            self._log.append_line(str(exp))
-            self._on_experiment_ready()
-        except Exception as err:  # noqa: BLE001
-            import traceback
 
-            self._log.append_line(traceback.format_exc())
-            self._warn(f"Failed to load experiment: {err}")
+        project_dir = self._project_dir
+        # Use a list as a mutable holder so the worker callable can hand the
+        # built Experiment back to the GUI thread without a custom signal.
+        result_holder: list = []
+
+        def _do_load_and_qc() -> str:
+            exp = ExperimentMod.Experiment(str(project_dir))
+            result_holder.append(exp)
+            print(str(exp))
+            exp.run_qc()
+            return f"Loaded experiment and ran QC ({project_dir})."
+
+        def _on_ok(msg: str) -> None:
+            if result_holder:
+                self._exp = result_holder[0]
+                self._on_experiment_ready()
+                # Launch the QC viewer so it picks up the freshly-saved qc/ artifacts.
+                self._launch_subapp("qc")
+            self._log.append_line(msg)
+
+        def _on_fail(msg: str) -> None:
+            self._log.append_line(msg)
+            self._warn("Failed to load experiment — see Output for details.")
+
+        self._log.append_line(f"Loading experiment from {project_dir}…")
+        # Don't pop QC artifacts as Hub tabs — the QC viewer (auto-launched on
+        # success) is the canonical surface for them.
+        self._spawn_task_with_callbacks(
+            "Load + QC", _do_load_and_qc, _on_ok, _on_fail, surface_artifacts=False,
+        )
 
     def _on_experiment_ready(self) -> None:
-        # Enable single-mode analysis buttons
+        # Enable single-mode analysis buttons (including the new dynamic ones).
         for btn in (
             self._btn_run_analysis,
             self._btn_run_qc,
             self._btn_create_report,
+            self._btn_summarize,
+            self._btn_pairwise,
         ):
             btn.setEnabled(True)
+        # Configure the facet checkbox based on the experiment's cutoffs.
+        cutoffs = getattr(self._exp, "facet_cutoffs", None)
+        if cutoffs is None:
+            self._facet_checkbox.setEnabled(False)
+            self._facet_checkbox.setChecked(False)
+            self._facet_checkbox.setText("Faceted (no cutoffs in config)")
+        else:
+            self._facet_checkbox.setEnabled(True)
+            self._facet_checkbox.setChecked(True)
+            cuts = ", ".join(str(c) for c in cutoffs)
+            self._facet_checkbox.setText(f"Faceted (cutoffs: {cuts})")
         self._rebuild_plot_buttons()
+        # Sync labels after both rebuild + checkbox state changes.
+        self._refresh_dynamic_labels()
 
     def _rebuild_plot_buttons(self) -> None:
-        # Clear existing plot buttons
+        # Clear existing plot buttons.
         for btn in self._plot_buttons:
             btn.setParent(None)
             btn.deleteLater()
         self._plot_buttons.clear()
+        # Drop entries in the dynamic-label registry that belong to plot buttons
+        # we just deleted, so _refresh_dynamic_labels doesn't dereference dead Qt objects.
+        self._dynamic_label_buttons = [
+            (b, lbl) for (b, lbl) in self._dynamic_label_buttons
+            if b is self._btn_summarize or b is self._btn_pairwise
+        ]
         self._plots_empty.setVisible(False)
 
         if self._exp is None:
             self._plots_empty.setVisible(True)
             return
 
-        methods = self._exp._plot_methods()
-        if not methods:
+        tt_name = self._exp.parameters.get_tracking_type().name
+        entries = _PLOT_BUTTONS.get(tt_name, [])
+        if not entries:
             self._plots_empty.setText(
-                f"No faceted plots registered for tracking type "
-                f"{self._exp.parameters.get_tracking_type().name}."
+                f"No plots registered for tracking type {tt_name}."
             )
             self._plots_empty.setVisible(True)
             return
 
-        for method_name, kwargs in methods:
-            title = _plot_title(method_name)
-            btn = ActionButton(title, Category.PLOTS, icon_name=_plot_icon(method_name))
+        for label, flat_method, facet_method in entries:
+            icon_name = _PLOT_ICON_BY_LABEL.get(label, "plot")
+            btn = ActionButton(label, Category.PLOTS, icon_name=icon_name)
             btn.clicked.connect(
-                lambda _=False, m=method_name, k=dict(kwargs), t=title: self._render_plot(m, k, t)
+                lambda _=False, lbl=label, fm=flat_method, fa=facet_method:
+                    self._render_dynamic_plot(lbl, fm, fa)
             )
             self._plots_card.add_body(btn)
             self._plot_buttons.append(btn)
+            self._dynamic_label_buttons.append((btn, label))
 
     def _render_plot(self, method_name: str, kwargs: dict, title: str) -> None:
+        """Run an Arena plot method, capture its figure, and add a PlotDock tab.
+
+        Routes through ``self._exp.arena`` rather than ``self._exp`` so we
+        bypass any Experiment wrappers that save-and-close the figure (which
+        would leave nothing for ``capture_figures`` to grab).
+        """
         if self._exp is None:
             return
-        try:
-            fn = getattr(self._exp, method_name)
-        except AttributeError:
-            self._log.append_line(f"Unknown plot method: {method_name}")
+        fn = getattr(self._exp.arena, method_name, None)
+        if fn is None:
+            self._log.append_line(f"Unknown plot method: arena.{method_name}")
             return
-        self._log.append_line(f"[plot] {method_name}({_fmt_kwargs(kwargs)})")
+        self._log.append_line(f"[plot] arena.{method_name}({_fmt_kwargs(kwargs)})")
         with capture_figures() as figs:
             try:
                 fn(**kwargs)
@@ -661,6 +813,46 @@ class HubWindow(QMainWindow):
         for i, fig in enumerate(figs):
             tab_title = title if len(figs) == 1 else f"{title} ({i+1})"
             self._plot_dock.add_figure(tab_title, fig, interactive=interactive)
+
+    def _render_dynamic_plot(
+        self, base_label: str, flat_method: str, facet_method: str
+    ) -> None:
+        """Dispatch a Plots-card click to either the flat or faceted Arena method."""
+        if self._exp is None:
+            return
+        if self._is_facet_active():
+            method = facet_method
+            kwargs = {"cutoffs": tuple(self._exp.facet_cutoffs)}
+            title = f"{base_label} (facet)"
+        else:
+            method = flat_method
+            kwargs = {}
+            title = base_label
+        self._render_plot(method, kwargs, title)
+
+    # ------------------------------------------------------------------
+    # Facet checkbox plumbing
+    # ------------------------------------------------------------------
+
+    def _is_facet_active(self) -> bool:
+        return (
+            self._facet_checkbox.isEnabled()
+            and self._facet_checkbox.isChecked()
+            and self._exp is not None
+            and getattr(self._exp, "facet_cutoffs", None) is not None
+        )
+
+    def _on_facet_toggled(self, _checked: bool = False) -> None:
+        self._refresh_dynamic_labels()
+
+    def _refresh_dynamic_labels(self) -> None:
+        suffix = " (facet)" if self._is_facet_active() else ""
+        for btn, base in self._dynamic_label_buttons:
+            try:
+                btn.setText(base + suffix)
+            except RuntimeError:
+                # Underlying C++ widget was deleted; ignore.
+                pass
 
     # ==================================================================
     # Behaviour — analysis tasks (threaded)
@@ -687,6 +879,45 @@ class HubWindow(QMainWindow):
         exp = self._exp
         self._spawn_task("PDF report", lambda: exp.create_report())
 
+    def _run_summarize(self) -> None:
+        if self._exp is None:
+            return
+        exp = self._exp
+        if self._is_facet_active():
+            cutoffs = tuple(exp.facet_cutoffs)
+
+            def _do() -> str:
+                exp.save_summary(cutoffs=cutoffs)
+                return "Summarize (facet) complete."
+
+            self._spawn_task("Summarize (facet)", _do)
+        else:
+            def _do() -> str:
+                # Pass cutoffs=None so save_summary writes only the flat CSV.
+                exp.save_summary(cutoffs=None)
+                return "Summarize complete."
+
+            self._spawn_task("Summarize", _do)
+
+    def _run_pairwise(self) -> None:
+        if self._exp is None:
+            return
+        exp = self._exp
+        if self._is_facet_active():
+            cutoffs = tuple(exp.facet_cutoffs)
+
+            def _do() -> str:
+                exp.stats(cutoffs=cutoffs, save=True)
+                return "Pairwise comparisons (facet) complete."
+
+            self._spawn_task("Pairwise (facet)", _do)
+        else:
+            def _do() -> str:
+                _run_pairwise_flat(exp)
+                return "Pairwise comparisons complete."
+
+            self._spawn_task("Pairwise", _do)
+
     def _run_batch(self) -> None:
         parent = self._batch_parent_edit.text().strip()
         if not parent:
@@ -706,19 +937,74 @@ class HubWindow(QMainWindow):
         fn: Callable[[], object],
         on_ok: Callable[[str], None],
         on_fail: Callable[[str], None],
+        surface_artifacts: bool = True,
     ) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._warn("Another task is already running.")
             return
         self._progress.setVisible(True)
         self._set_busy(True)
+        # Whether ``Saved: <path>`` lines from this task should appear as
+        # PlotDock tabs. Disabled for Load + QC since the QC viewer is the
+        # canonical surface for those artifacts.
+        self._surface_artifacts = surface_artifacts
         worker = TaskWorker(task_name, fn)
-        worker.log_text.connect(self._log.append_line)
+        worker.log_text.connect(self._on_worker_log)
         worker.finished_ok.connect(on_ok)
         worker.failed.connect(on_fail)
         worker.finished.connect(lambda: self._on_task_finished(worker))
         self._worker = worker
         worker.start()
+
+    def _on_worker_log(self, text: str) -> None:
+        """Mirror worker stdout to the Output tab and (when enabled for the
+        current task) surface ``Saved: <path>`` artifacts as PlotDock tabs."""
+        self._log.append_line(text)
+        if not getattr(self, "_surface_artifacts", True):
+            return
+        for line in text.splitlines():
+            m = _SAVED_RE.match(line)
+            if not m:
+                continue
+            path_str = m.group(1).strip()
+            if not path_str:
+                continue
+            try:
+                path = Path(path_str)
+            except Exception:  # noqa: BLE001
+                continue
+            self._add_artifact_tab(path)
+
+    def _add_artifact_tab(self, path: Path) -> None:
+        """Add a zoomable PlotDock tab for *path* (PNG / TXT / CSV)."""
+        if not path.exists():
+            return
+        key = str(path.resolve())
+        cached = self._artifact_tabs.get(key)
+        if cached is not None:
+            idx = self._plot_dock.indexOf(cached)
+            if idx >= 0:
+                self._plot_dock.setCurrentIndex(idx)
+                return
+            # Tab was closed by the user — drop the stale entry and re-add below.
+            del self._artifact_tabs[key]
+
+        suffix = path.suffix.lower()
+        title = path.stem
+        if suffix == ".png":
+            view = ZoomableImageView(path)
+            if view.is_empty():
+                return
+            tab_icon = icon("plots", category=Category.PLOTS)
+        elif suffix in (".txt", ".csv"):
+            view = ZoomableTextView(path)
+            tab_icon = icon("csv", category=Category.ANALYZE)
+        else:
+            return  # PDFs / other formats: just leave them on disk.
+
+        idx = self._plot_dock.addTab(view, tab_icon, title)
+        self._artifact_tabs[key] = view
+        self._plot_dock.setCurrentIndex(idx)
 
     def _on_task_ok(self, msg: str) -> None:
         self._log.append_line(msg)
@@ -737,6 +1023,8 @@ class HubWindow(QMainWindow):
             self._btn_run_analysis,
             self._btn_run_qc,
             self._btn_create_report,
+            self._btn_summarize,
+            self._btn_pairwise,
             self._btn_run_batch,
             self._load_btn,
         ):
@@ -784,6 +1072,48 @@ class HubWindow(QMainWindow):
         else:
             self._log.append_line(f"[tools] no cache at {cache}")
 
+    def _convert_subdirectories(self) -> None:
+        """For each subdirectory of the project dir, ensure a ``data/`` folder
+        exists and copy every non-YAML top-level file into it. Preps a
+        directory tree for a batch run."""
+        if not self._project_dir:
+            self._warn("Choose a project directory first.")
+            return
+        project = self._project_dir
+        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
+        if not subdirs:
+            self._log.append_line(f"[convert] no subdirectories under {project}")
+            return
+
+        def _do_convert() -> str:
+            print(f"Converting {len(subdirs)} subdirectories under {project}…")
+            copied = 0
+            skipped = 0
+            for sub in subdirs:
+                data = sub / "data"
+                if not data.exists():
+                    data.mkdir()
+                    print(f"Created: {data}")
+                for entry in sorted(sub.iterdir()):
+                    if entry.is_dir():
+                        continue
+                    if entry.suffix.lower() in (".yaml", ".yml"):
+                        continue
+                    dest = data / entry.name
+                    if dest.exists():
+                        print(f"Skipped (exists): {dest}")
+                        skipped += 1
+                        continue
+                    shutil.copy2(entry, dest)
+                    print(f"Copied: {entry.name} → {dest}")
+                    copied += 1
+            return (
+                f"Convert complete: {copied} file(s) copied, "
+                f"{skipped} skipped, across {len(subdirs)} subdirectories."
+            )
+
+        self._spawn_task("Convert subdirectories", _do_convert)
+
     def _launch_subapp(self, which: str) -> None:
         """Launch the Config or QC viewer in a separate process."""
         args = [sys.executable, "-m", "pytrackinganalysis", which]
@@ -828,34 +1158,6 @@ def _wrap_layout(layout) -> QWidget:
     return host
 
 
-# Human-friendly titles for Arena.plot_* methods.
-_PLOT_TITLES: dict[str, str] = {
-    "plot_totaldistance_facet": "Total distance (facet)",
-    "plot_pi_facet": "PI (facet)",
-    "plot_percentage_facet": "Percentage (facet)",
-    "plot_transitions_facet": "Transitions (facet)",
-    "plot_adjusted_x_position_facet": "Adjusted X position (facet)",
-    "plot_interactions_facet": "Interactions (facet)",
-}
-
-_PLOT_ICONS: dict[str, str] = {
-    "plot_totaldistance_facet": "distance",
-    "plot_pi_facet": "plot",
-    "plot_percentage_facet": "plot",
-    "plot_transitions_facet": "transition",
-    "plot_adjusted_x_position_facet": "xy",
-    "plot_interactions_facet": "plot",
-}
-
-
-def _plot_title(method_name: str) -> str:
-    return _PLOT_TITLES.get(method_name, method_name.replace("_", " ").title())
-
-
-def _plot_icon(method_name: str) -> str:
-    return _PLOT_ICONS.get(method_name, "plot")
-
-
 def _fmt_kwargs(kwargs: dict) -> str:
     if not kwargs:
         return ""
@@ -871,6 +1173,40 @@ def _format_batch_result(result: dict[str, str]) -> str:
         if status != "ok":
             lines.append(f"       {status}")
     return "\n".join(lines)
+
+
+def _run_pairwise_flat(exp) -> None:
+    """Non-facet counterpart to ``Experiment.stats`` — runs over the full range
+    and writes ``<exp>_Stats_flat.txt`` to ``analysis_path``."""
+    import io as _io
+    import sys as _sys
+
+    metrics = exp._stats_metrics()
+    if not metrics:
+        print("No comparison metrics defined for this tracking type.")
+        return
+
+    buf = _io.StringIO()
+    saved_stdout = _sys.stdout
+    _sys.stdout = buf
+    try:
+        for metric in metrics:
+            try:
+                exp.arena.run_pairwise_comparisons(metric=metric)
+            except Exception as err:  # noqa: BLE001
+                print(f"Warning: could not run comparison for '{metric}': {err}")
+    finally:
+        _sys.stdout = saved_stdout
+
+    text = buf.getvalue()
+    print(text)
+
+    path = os.path.join(
+        exp.analysis_path, f"{exp.arena.experiment_name}_Stats_flat.txt"
+    )
+    with open(path, "w") as f:
+        f.write(text)
+    print(f"Saved: {path}")
 
 
 # ---------------------------------------------------------------------------

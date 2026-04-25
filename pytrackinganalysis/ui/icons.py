@@ -48,6 +48,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "lint":       ("fa5s.spell-check",         Category.TOOLS),
     "compare_cfg":("fa5s.exchange-alt",        Category.TOOLS),
     "clear":      ("fa5s.trash-alt",           Category.TOOLS),
+    "refresh":    ("fa5s.sync-alt",            Category.TOOLS),
     "config":     ("fa5s.sliders-h",           Category.TOOLS),
     # Tracking-specific (new to PyTrackingAnalysis)
     "track":      ("fa5s.route",               Category.ANALYZE),

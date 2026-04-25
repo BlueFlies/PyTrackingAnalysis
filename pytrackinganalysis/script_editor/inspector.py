@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..ui import Category, category_color, icon
-from .actions import ACTIONS, Action, ParamSpec, plot_methods_for_type
+from .actions import ACTIONS, Action, ParamSpec
 
 
 class Inspector(QWidget):
@@ -199,9 +199,6 @@ class Inspector(QWidget):
         if spec.kind == "choice":
             w = QComboBox()
             choices = list(spec.choices or ())
-            # The 'plot' action's method list is runtime-filtered by tracking type.
-            if self._current_action and self._current_action.key == "plot" and spec.name == "method":
-                choices = list(plot_methods_for_type(self._experiment_type)) or choices
             w.addItems(choices)
             if value is not None and str(value) in choices:
                 w.setCurrentText(str(value))

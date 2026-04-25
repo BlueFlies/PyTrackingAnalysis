@@ -908,6 +908,7 @@ class Arena:
         the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
+            kwargs.pop('color', None)  # FacetGrid injects color; hue handles it.
             p=sns.stripplot(x='Treatment', y='FinalPI', hue='Transitions', data=data, jitter=True, **kwargs)
             means = data.groupby('Treatment', sort=False)['FinalPI'].mean()
             ax = plt.gca()
@@ -984,6 +985,7 @@ class Arena:
         the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
+            kwargs.pop('color', None)  # FacetGrid injects color; hue handles it.
             p=sns.stripplot(x='Treatment', y='TransitionsPerMin', hue='FinalPI', data=data, jitter=True, **kwargs)
             means = data.groupby('Treatment', sort=False)['TransitionsPerMin'].mean()
             ax = plt.gca()
@@ -1080,6 +1082,7 @@ class Arena:
         the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
+            kwargs.pop('color', None)  # FacetGrid injects color; hue handles it.
             p=sns.stripplot(x='Treatment', y='AvgAdjX_mm', hue='TotalXDistance_mm', data=data, jitter=True, **kwargs)
             means = data.groupby('Treatment', sort=False)['AvgAdjX_mm'].mean()
             ax = plt.gca()
@@ -1211,6 +1214,7 @@ class Arena:
         the_data = self._abbrev_df(the_data)
 
         def custom_plot(data, **kwargs):
+            kwargs.pop('color', None)  # FacetGrid injects color; hue handles it.
             p=sns.stripplot(x='Treatment', y='FinalPercentage', hue='Transitions', data=data, jitter=True, **kwargs)
             means = data.groupby('Treatment', sort=False)['FinalPercentage'].mean()
             ax = plt.gca()
@@ -1547,10 +1551,14 @@ class Arena:
         """
         Run pairwise comparisons for a given metric.
         Generally not called by the user.
-        
+
         Parameters:
         metric (str): Metric to compare.
         range_minutes (tuple): Range of minutes to compare.
+
+        Returns:
+            ``"Not applicable"`` if there are fewer than two treatment levels,
+            otherwise ``None`` (results are printed).
         """
         remove_partners = False
         if((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and ("Interacting" in metric)):
@@ -1560,12 +1568,14 @@ class Arena:
             raise ValueError("The summary data does not contain a 'Treatment' column.")
         if metric not in summary.columns:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
-        
+
         # Perform pairwise t-tests
         treatments = summary['Treatment'].unique()
 
         if(len(treatments)<2):
-            print("There must be at least two treatments to compare.")
+            msg = f"Not applicable: {metric} has fewer than two treatment levels."
+            print(msg)
+            return msg
         elif(len(treatments)==2):
             group1 = pd.to_numeric(summary[summary['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
             group2 = pd.to_numeric(summary[summary['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
@@ -1602,12 +1612,15 @@ class Arena:
         if metric not in summary.columns:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
         
+        applicable = False
         for frange in summary['FacetRange'].unique():
             subset = summary[summary['FacetRange'] == frange]
             treatments = subset['Treatment'].unique()
             if(len(treatments)<2):
-                print("There must be at least two treatments to compare.")
-            elif(len(treatments)==2):
+                print(f"Not applicable for facet {frange}: fewer than two treatment levels.")
+                continue
+            applicable = True
+            if(len(treatments)==2):
                 group1 = pd.to_numeric(subset[subset['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
                 group2 = pd.to_numeric(subset[subset['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
                 if len(group1) == 0 or len(group2) == 0:
@@ -1630,8 +1643,11 @@ class Arena:
                 print(f"Column = {metric}, Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
                 print(tukey)
                 print("\n")
-            
-#endregion ########### Statistical Functions ############        
+
+        if not applicable:
+            return f"Not applicable: {metric} has fewer than two treatment levels in any facet."
+
+#endregion ########### Statistical Functions ############
 
 #region ########### QC Functions ############
 

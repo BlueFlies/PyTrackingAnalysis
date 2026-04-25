@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QTabWidget,
     QVBoxLayout,
@@ -318,16 +317,22 @@ class PlotDock(QTabWidget):
             w.deleteLater()
 
     def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> None:
-        """Embed *figure* (a matplotlib ``Figure``) as a new tab."""
+        """Embed *figure* (a matplotlib ``Figure``) as a new tab.
+
+        ``interactive=True`` uses matplotlib's native Qt canvas + navigation
+        toolbar; ``interactive=False`` (default) renders the figure to a PNG
+        and shows it inside :class:`ZoomableImageView` so the user can pan,
+        wheel-zoom, and use the +/−/Fit buttons just like the saved-artifact
+        tabs in the QC viewer.
+        """
         if not hasattr(figure, "savefig") and hasattr(figure, "draw"):
             figure = figure.draw()
 
-        host = QWidget(self)
-        lay = QVBoxLayout(host)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-
         if interactive:
+            host = QWidget(self)
+            lay = QVBoxLayout(host)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
             canvas = FigureCanvasQTAgg(figure)
@@ -341,8 +346,11 @@ class PlotDock(QTabWidget):
                 host._mpl_cursor = cursor  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 pass
+            widget: QWidget = host
         else:
             import io as _io
+
+            from .zoom import ZoomableImageView
 
             buf = _io.BytesIO()
             figure.savefig(buf, format="png", dpi=150, bbox_inches="tight")
@@ -355,14 +363,7 @@ class PlotDock(QTabWidget):
                 _plt.close(figure)
             except Exception:  # noqa: BLE001
                 pass
-            scroll = QScrollArea(host)
-            scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label = QLabel()
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setPixmap(pix)
-            scroll.setWidget(label)
-            scroll.setWidgetResizable(False)
-            lay.addWidget(scroll, 1)
+            widget = ZoomableImageView(pix)
 
-        idx = self.addTab(host, icon("plots", category=Category.PLOTS), title)
+        idx = self.addTab(widget, icon("plots", category=Category.PLOTS), title)
         self.setCurrentIndex(idx)

@@ -418,6 +418,160 @@ class Experiment:
             dq.to_csv(path, index=False, na_rep='NA')
             print(f"\nSaved: {path}")
 
+    def run_qc(self, cutoffs=None, qc_cutoff: float = 0.9) -> None:
+        """Run the full QC suite. All outputs are written to ``self.qc_path``.
+
+        Always:
+          * Per-tracker data-quality table — same as :meth:`qc` (when supported).
+          * Per-tracker XY plot grid (``<exp>_qc_trackers_xy.png``).
+
+        Tracker-class types (TRACKER, TWOCHOICETRACKER, XCHOICETRACKER,
+        PAIRWISEINTERACTIONTRACKER, CENTROPHOBISMTRACKER, DDROPTRACKER):
+          * Faceted dot plot of TotalDistancePerMin
+            (``<exp>_qc_TotalDistancePerMin_facet.png``).
+
+        TWOCHOICETRACKER only:
+          * Faceted dot plot of TransitionsPerMin
+            (``<exp>_qc_TransitionsPerMin_facet.png``).
+
+        Parameters
+        ----------
+        cutoffs :
+            Facet cutoffs in minutes. Defaults to ``self.facet_cutoffs``.
+        qc_cutoff :
+            Fraction threshold passed through to :meth:`qc`.
+        """
+        cutoffs = self._resolve_cutoffs(cutoffs)
+        name = self.arena.experiment_name
+        print(f"=== Running QC for: {name} ===\n")
+
+        # 1. Data-quality table (Tracker subclasses only — Counter has no get_data_quality).
+        first = next(iter(self.arena.trackers.values()), None)
+        if first is not None and hasattr(first, 'get_data_quality'):
+            self.qc(cutoff=qc_cutoff, save=True)
+        else:
+            print("Skipping data-quality table (not supported for this tracking type).")
+
+        # 2. Per-tracker XY plot grid.
+        self._save_qc_xy_grid()
+
+        # 3. Conditional facet plots.
+        tt = self.parameters.get_tracking_type()
+        facet_tracker_types = (
+            Parameters.TrackingType.TRACKER,
+            Parameters.TrackingType.TWOCHOICETRACKER,
+            Parameters.TrackingType.XCHOICETRACKER,
+            Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER,
+            Parameters.TrackingType.CENTROPHOBISMTRACKER,
+            Parameters.TrackingType.DDROPTRACKER,
+        )
+        if tt in facet_tracker_types:
+            self._save_qc_facet_plot('TotalDistancePerMin', cutoffs)
+
+        if tt == Parameters.TrackingType.TWOCHOICETRACKER:
+            self._save_qc_facet_plot('TransitionsPerMin', cutoffs)
+
+        print(f"\n=== QC outputs in: {self.qc_path} ===")
+
+    def _save_qc_xy_grid(self, range_minutes=(0, 0), ncols: int = 4) -> None:
+        """Save a multi-panel XY scatter, one subplot per tracker, to qc_path."""
+        tracker_items = list(self.arena.trackers.items())
+        n = len(tracker_items)
+        if n == 0:
+            print("No trackers to plot.")
+            return
+        ncols = min(ncols, n)
+        nrows = -(-n // ncols)
+        exp_name = self.arena.experiment_name
+
+        def _treatment(tr):
+            d = getattr(tr, 'tracking_region_design', None)
+            return str(d['Treatment'].iat[0]) if d is not None and not d.empty else ''
+
+        def _x_mult(tr):
+            d = getattr(tr, 'tracking_region_design', None)
+            return int(d['XLocationMultiplier'].iloc[0]) if d is not None and not d.empty else 1
+
+        def _y_mult(tr):
+            d = getattr(tr, 'tracking_region_design', None)
+            return int(d['YLocationMultiplier'].iloc[0]) if d is not None and not d.empty else 1
+
+        fig, axes = plt.subplots(
+            nrows, ncols, figsize=(ncols * 3.5, nrows * 3.5), squeeze=False,
+        )
+        for idx, (key, tracker) in enumerate(tracker_items):
+            ax = axes[idx // ncols][idx % ncols]
+            try:
+                data = tracker.get_data_subset(range_minutes)
+                xlims, ylims = tracker.get_plot_limits()
+                ax.scatter(
+                    data['Xpos_mm'] * _x_mult(tracker),
+                    data['Ypos_mm'] * _y_mult(tracker),
+                    c=data['Minutes'], cmap='viridis',
+                    vmin=data['Minutes'].min(), vmax=data['Minutes'].max(),
+                    s=1, alpha=0.5,
+                )
+                ax.set_xlim(xlims)
+                ax.set_ylim(ylims)
+                ax.set_aspect('equal', adjustable='box')
+                ax.set_title(f"{key}\n{_treatment(tracker)}", fontsize=7)
+                ax.tick_params(labelsize=6)
+                roi = getattr(tracker, 'tracking_region_roi', None)
+                if roi is not None and not roi.empty and roi['Shape'].values[0] == 'Ellipse':
+                    w = roi['Width'].values[0] * tracker.parameters.mm_per_pixel
+                    h = roi['Height'].values[0] * tracker.parameters.mm_per_pixel
+                    ax.add_patch(patches.Ellipse(
+                        (0, 0), width=w, height=h,
+                        edgecolor='gray', facecolor='none', linewidth=0.8,
+                    ))
+            except Exception as err:  # noqa: BLE001
+                ax.set_title(f"{key}\n(error: {err})", fontsize=7)
+        for idx in range(n, nrows * ncols):
+            axes[idx // ncols][idx % ncols].set_visible(False)
+        fig.supxlabel('X Position (mm)', fontsize=9)
+        fig.supylabel('Y Position (mm)', fontsize=9)
+        fig.suptitle(f"{exp_name} — QC: XY positions", fontsize=11)
+        fig.tight_layout()
+        path = os.path.join(self.qc_path, f"{exp_name}_qc_trackers_xy.png")
+        fig.savefig(path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved: {path}")
+
+    def _save_qc_facet_plot(self, metric: str, cutoffs) -> None:
+        """Save a facet dot plot of *metric* (mm/min or transitions/min) to qc_path."""
+        if cutoffs is None:
+            print(f"Skipping QC facet plot for {metric} (facet_cutoffs not set).")
+            return
+
+        method_name = {
+            'TotalDistancePerMin': 'plot_totaldistance_facet_generaltracker',
+            'TransitionsPerMin':   'plot_transitions_facet_twochoicetracker',
+        }.get(metric)
+        if method_name is None:
+            print(f"Unknown QC facet metric: {metric}")
+            return
+        method = getattr(self.arena, method_name, None)
+        if method is None:
+            print(f"Arena does not implement {method_name}; skipping.")
+            return
+
+        exp_name = self.arena.experiment_name
+        filename = os.path.join(self.qc_path, f"{exp_name}_qc_{metric}_facet.png")
+
+        original_show = plt.show
+
+        def _save_and_close():
+            fig = plt.gcf()
+            fig.savefig(filename, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            print(f"Saved: {filename}")
+
+        plt.show = _save_and_close
+        try:
+            method(cutoffs=cutoffs)
+        finally:
+            plt.show = original_show
+
     def save_summary(self, cutoffs=None, copy_to_clipboard: bool = False):
         """
         Compute and save the flat and faceted summaries to analysis_path.
@@ -462,6 +616,11 @@ class Experiment:
         Results are printed to the console and, when *save* is True, written to
         ``{experiment_name}_Stats.txt`` in analysis_path.
 
+        When facet cutoffs are available the per-facet Tukey HSD comparisons are
+        run; otherwise (or in addition) the flat full-recording comparisons are
+        run, so :meth:`run_analysis` always produces a Stats file even on
+        configs without ``facet_cutoffs``.
+
         Parameters
         ----------
         cutoffs :
@@ -476,24 +635,29 @@ class Experiment:
         """
         cutoffs = self._resolve_cutoffs(cutoffs)
 
-        if cutoffs is None:
-            print("Skipping statistics (facet_cutoffs not set in config or as argument).")
-            return ''
-
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
         try:
-            for metric in self._stats_metrics():
-                remove_partners = 'Interacting' in metric
-                try:
-                    self.arena.run_pairwise_comparisons_facet(
-                        metric=metric,
-                        cutoffs=cutoffs,
-                        remove_partners=remove_partners,
-                    )
-                except Exception as e:
-                    print(f"Warning: could not run comparison for '{metric}': {e}")
+            metrics = self._stats_metrics()
+            if cutoffs is None:
+                print("(No facet_cutoffs configured — running flat pairwise comparisons.)\n")
+                for metric in metrics:
+                    try:
+                        self.arena.run_pairwise_comparisons(metric=metric)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"Warning: could not run comparison for '{metric}': {e}")
+            else:
+                for metric in metrics:
+                    remove_partners = 'Interacting' in metric
+                    try:
+                        self.arena.run_pairwise_comparisons_facet(
+                            metric=metric,
+                            cutoffs=cutoffs,
+                            remove_partners=remove_partners,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        print(f"Warning: could not run comparison for '{metric}': {e}")
         finally:
             sys.stdout = old_stdout
 
@@ -762,226 +926,343 @@ class Experiment:
         if self.parameters.get_tracking_type() == Parameters.TrackingType.TRACKER:
             self.save_tracker_grid_plots(output_dir=output_dir)
 
+    # ------------------------------------------------------------------
+    # PDF report generation
+    # ------------------------------------------------------------------
+
+    # Letter-size page dimensions in inches.
+    _LETTER_PORTRAIT = (8.5, 11.0)
+    _LETTER_LANDSCAPE = (11.0, 8.5)
+    # Inset that keeps content off the edge of the printable area.
+    _MARGIN_LEFT = 0.06
+    _MARGIN_RIGHT = 0.94
+    _MARGIN_TOP = 0.94
+    _MARGIN_BOTTOM = 0.06
+
     def create_report(self, cutoffs=None, qc_cutoff: float = 0.9) -> str:
-        """Generate a PDF report of the experiment to analysis_path.
+        """Assemble a letter-size PDF report from the artifacts already in
+        ``analysis/`` and ``qc/``.
 
-        The report contains:
-          1. Experiment summary text
-          2. Data quality table
-          3. Per-tracker QC position grids (tracking types only)
-          4. All analysis plots appropriate for the tracking type
+        Run this after :meth:`run_analysis` and :meth:`run_qc`. The PDF is
+        written to ``<analysis_path>/<exp>_report.pdf``. The report layout:
 
-        Parameters
-        ----------
-        cutoffs :
-            Facet cutoffs to use for faceted plots. Defaults to ``self.facet_cutoffs``.
-        qc_cutoff :
-            High-quality threshold used to flag trackers in the QC table.
+          * Cover page
+          * Section divider — "Analysis"
+          * Every ``.txt`` in ``analysis/`` (paginated monospaced text)
+          * Every ``.csv`` in ``analysis/`` (rendered as a table)
+          * Every ``.png`` in ``analysis/`` (one image per page, fit to letter)
+          * Section divider — "Quality Control"
+          * Every ``.txt`` / ``.csv`` / ``.png`` in ``qc/``
 
-        Returns
-        -------
-        str
-            Path to the saved PDF file.
+        Parameters are accepted for back-compat but ``cutoffs`` is unused
+        (the report reads pre-rendered artifacts). ``qc_cutoff`` only drives
+        the colored summary line on the cover page.
         """
         from matplotlib.backends.backend_pdf import PdfPages
+        from pathlib import Path as _Path
 
-        cutoffs = self._resolve_cutoffs(cutoffs)
+        del cutoffs  # unused; report sources already-rendered artifacts.
+
         exp_name = self.arena.experiment_name
+        analysis_dir = _Path(self.analysis_path)
+        qc_dir = _Path(self.qc_path)
         pdf_path = os.path.join(self.analysis_path, f"{exp_name}_report.pdf")
+        # Don't try to embed the report into itself.
+        exclude = {os.path.abspath(pdf_path)}
 
+        plt.close("all")
         with PdfPages(pdf_path) as pdf:
+            self._report_cover_page(pdf, exp_name, qc_cutoff)
 
-            # ── Page 1: Experiment summary text ───────────────────────────
-            summary_text = self.experiment_summary(save=False)
-            lines = summary_text.splitlines()
-            lines_per_page = 90
-            for chunk_start in range(0, max(len(lines), 1), lines_per_page):
-                chunk = '\n'.join(lines[chunk_start:chunk_start + lines_per_page])
-                fig = plt.figure(figsize=(8.5, 11))
-                fig.text(0.04, 0.97, chunk,
-                         fontsize=6.5, verticalalignment='top',
-                         fontfamily='monospace', transform=fig.transFigure)
-                pdf.savefig(fig, bbox_inches='tight')
-                plt.close(fig)
+            self._report_section_divider(pdf, "Analysis")
+            self._report_section_files(pdf, analysis_dir, exclude=exclude)
 
-            # ── Page 2: Data quality table ─────────────────────────────────
+            self._report_section_divider(pdf, "Quality Control")
+            self._report_section_files(pdf, qc_dir, exclude=exclude)
+
+        plt.close("all")
+        print(f"Saved: {pdf_path}")
+        return pdf_path
+
+    # ---------- Section walker -----------------------------------------
+
+    def _report_section_files(
+        self,
+        pdf,
+        directory,
+        exclude: set | None = None,
+    ) -> None:
+        from pathlib import Path as _Path
+
+        directory = _Path(directory)
+        if not directory.exists():
+            return
+        exclude = {os.path.abspath(p) for p in (exclude or set())}
+
+        def _filter(paths):
+            return [p for p in paths if os.path.abspath(p) not in exclude]
+
+        # Order text → tables → images so the narrative reads top-down.
+        for path in sorted(_filter(directory.glob("*.txt"))):
+            self._report_text_file(pdf, path)
+        for path in sorted(_filter(directory.glob("*.csv"))):
+            self._report_csv_table(pdf, path)
+        for path in sorted(_filter(directory.glob("*.png"))):
+            self._report_image(pdf, path)
+
+    # ---------- Cover + section divider --------------------------------
+
+    def _report_cover_page(self, pdf, exp_name: str, qc_cutoff: float) -> None:
+        from datetime import datetime as _dt
+
+        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
+        fig.patch.set_facecolor("white")
+
+        # Title block — centered, top third.
+        fig.text(0.5, 0.78, exp_name, ha="center", va="center",
+                 fontsize=26, fontweight="bold", color="#0f172a")
+        fig.text(0.5, 0.72, "Tracking Analysis Report",
+                 ha="center", va="center", fontsize=14, color="#475569")
+        # Hairline separator under the title block.
+        ax_line = fig.add_axes([0.18, 0.685, 0.64, 0.001])
+        ax_line.axis("off")
+        ax_line.axhline(0, color="#94a3b8", linewidth=0.8)
+
+        # Metadata block.
+        global_cfg = self.config.get("global", {}) if isinstance(self.config, dict) else {}
+        info = [
+            ("Tracking type", self.parameters.get_tracking_type().name),
+            ("Tracking rig", str(global_cfg.get("tracking_rig", "—"))),
+            ("Project", os.path.abspath(self.project_directory)),
+            ("Generated", _dt.now().strftime("%Y-%m-%d %H:%M")),
+        ]
+        y = 0.6
+        for label, value in info:
+            fig.text(0.18, y, f"{label}:", fontsize=10, color="#64748b",
+                     fontweight="bold")
+            fig.text(0.36, y, value, fontsize=10, family="monospace",
+                     color="#0f172a")
+            y -= 0.03
+
+        # QC summary line — green if everything passes, red otherwise.
+        try:
             dq = self.arena.get_data_quality()
-            col_labels = ['Tracker', 'HighQuality', 'NotFound',
-                          'Indiscernible', 'Start (min)', 'End (min)']
-            table_rows = []
-            row_colors = []
-            for _, row in dq.iterrows():
-                ok = row['HighQuality'] >= qc_cutoff
-                table_rows.append([
-                    row['Tracker'],
-                    f"{row['HighQuality']:.1%}",
-                    f"{row['NotFound']:.1%}",
-                    f"{row['Indiscernible']:.1%}",
-                    f"{row['StartMinutes']:.1f}",
-                    f"{row['EndMinutes']:.1f}",
-                ])
-                row_colors.append(['#d4edda' if ok else '#f8d7da'] * len(col_labels))
+            n = len(dq)
+            n_good = int((dq["HighQuality"] >= qc_cutoff).sum())
+            color = "#16a34a" if n_good == n else "#dc2626"
+            fig.text(
+                0.5, 0.36,
+                f"Data quality: {n_good}/{n} trackers ≥ {qc_cutoff:.0%} high-quality",
+                ha="center", fontsize=12, color=color, fontweight="bold",
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
-            fig, ax = plt.subplots(figsize=(11, max(3, 0.35 * len(table_rows) + 1.5)))
-            ax.axis('off')
-            tbl = ax.table(
-                cellText=table_rows,
-                colLabels=col_labels,
-                cellColours=row_colors,
-                loc='center',
-                cellLoc='center',
+        # Footer.
+        fig.text(0.5, 0.05, "PyTrackingAnalysis", ha="center", va="center",
+                 fontsize=9, color="#94a3b8")
+
+        pdf.savefig(fig)
+        plt.close(fig)
+
+    def _report_section_divider(self, pdf, title: str) -> None:
+        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
+        fig.patch.set_facecolor("white")
+        fig.text(0.5, 0.5, title, ha="center", va="center",
+                 fontsize=42, fontweight="bold", color="#1f2937")
+        # Decorative bars above and below.
+        ax = fig.add_axes([0.25, 0.555, 0.5, 0.001]); ax.axis("off")
+        ax.axhline(0, color="#94a3b8", linewidth=1.2)
+        ax = fig.add_axes([0.25, 0.445, 0.5, 0.001]); ax.axis("off")
+        ax.axhline(0, color="#94a3b8", linewidth=1.2)
+        pdf.savefig(fig)
+        plt.close(fig)
+
+    # ---------- Body content renderers ---------------------------------
+
+    def _report_page_header(self, fig, title: str, subtitle: str | None = None) -> None:
+        fig.text(self._MARGIN_LEFT, self._MARGIN_TOP + 0.03, title,
+                 fontsize=12, fontweight="bold", color="#0f172a")
+        if subtitle:
+            fig.text(self._MARGIN_RIGHT, self._MARGIN_TOP + 0.03, subtitle,
+                     fontsize=9, color="#64748b", ha="right")
+        # Underline.
+        ax = fig.add_axes(
+            [self._MARGIN_LEFT, self._MARGIN_TOP + 0.018,
+             self._MARGIN_RIGHT - self._MARGIN_LEFT, 0.0008],
+        )
+        ax.axis("off")
+        ax.axhline(0, color="#cbd5e1", linewidth=0.6)
+
+    def _report_text_file(self, pdf, path) -> None:
+        title = path.stem
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception as err:  # noqa: BLE001
+            text = f"(could not read {path.name}: {err})"
+        lines = text.splitlines() or [""]
+
+        LINES_PER_PAGE = 60
+        total_pages = max(1, -(-len(lines) // LINES_PER_PAGE))
+        for page_idx in range(total_pages):
+            start = page_idx * LINES_PER_PAGE
+            chunk = "\n".join(lines[start:start + LINES_PER_PAGE])
+            fig = plt.figure(figsize=self._LETTER_PORTRAIT)
+            fig.patch.set_facecolor("white")
+            subtitle = (
+                f"page {page_idx + 1}/{total_pages}"
+                if total_pages > 1 else None
             )
-            tbl.auto_set_font_size(False)
-            tbl.set_fontsize(8)
-            tbl.scale(1, 1.4)
-            n_good = int((dq['HighQuality'] >= qc_cutoff).sum())
-            ax.set_title(
-                f"Data Quality — {exp_name}   "
-                f"({n_good}/{len(dq)} trackers ≥ {qc_cutoff:.0%} high-quality)   "
-                f"green = pass, red = fail",
-                fontsize=10, pad=16,
+            self._report_page_header(fig, title, subtitle)
+            fig.text(
+                self._MARGIN_LEFT,
+                self._MARGIN_TOP - 0.01,
+                chunk,
+                fontsize=8.5, family="monospace",
+                verticalalignment="top",
+                color="#0f172a",
             )
-            pdf.savefig(fig, bbox_inches='tight')
+            pdf.savefig(fig)
             plt.close(fig)
 
-            # ── Pages 3+: Per-tracker QC grid plots (tracking class only) ─
-            if self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING:
-                tracker_items = list(self.arena.trackers.items())
-                n = len(tracker_items)
-                if n > 0:
-                    ncols = min(4, n)
-                    nrows = -(-n // ncols)
+    def _report_csv_table(self, pdf, path) -> None:
+        title = path.stem
+        try:
+            df = pd.read_csv(path)
+        except Exception as err:  # noqa: BLE001
+            self._report_text_file_string(pdf, title, f"(could not read {path}: {err})")
+            return
+        if df.empty:
+            self._report_text_file_string(pdf, title, "(empty)")
+            return
 
-                    def _trt(tracker):
-                        if tracker.tracking_region_design is not None:
-                            return str(tracker.tracking_region_design['Treatment'].iat[0])
-                        return ''
+        # Wide tables go landscape.
+        landscape = len(df.columns) > 6
+        figsize = self._LETTER_LANDSCAPE if landscape else self._LETTER_PORTRAIT
 
-                    def _xm(tracker):
-                        if tracker.tracking_region_design is not None:
-                            return int(tracker.tracking_region_design['XLocationMultiplier'].iloc[0])
-                        return 1
+        # Format float columns for compactness; keep ints / strings as-is.
+        display = df.copy()
+        for col in display.columns:
+            if pd.api.types.is_float_dtype(display[col]):
+                display[col] = display[col].map(
+                    lambda v: ("" if pd.isna(v) else f"{v:.3f}")
+                )
+            else:
+                display[col] = display[col].astype(str)
 
-                    def _ym(tracker):
-                        if tracker.tracking_region_design is not None:
-                            return int(tracker.tracking_region_design['YLocationMultiplier'].iloc[0])
-                        return 1
+        rows_per_page = 30 if landscape else 36
+        n_rows = len(display)
+        total_pages = max(1, -(-n_rows // rows_per_page))
 
-                    for plot_type, sup_x, sup_y, title_sfx in [
-                        ('x',    'Minutes', 'X Position (mm)', '— X Position'),
-                        ('y',    'Minutes', 'Y Position (mm)', '— Y Position'),
-                        ('dist', 'Minutes', 'Cumulative Distance (mm)', '— Total Distance'),
-                    ]:
-                        fig, axes = plt.subplots(
-                            nrows, ncols,
-                            figsize=(ncols * 4, nrows * 3),
-                            squeeze=False,
-                        )
-                        for idx, (key, tracker) in enumerate(tracker_items):
-                            ax = axes[idx // ncols][idx % ncols]
-                            try:
-                                data = tracker.get_data_subset((0, 0))
-                                if plot_type == 'x':
-                                    xlims, _ = tracker.get_plot_limits()
-                                    ax.plot(data['Minutes'],
-                                            data['Xpos_mm'] * _xm(tracker),
-                                            linewidth=0.8)
-                                    ax.set_ylim(xlims)
-                                elif plot_type == 'y':
-                                    _, ylims = tracker.get_plot_limits()
-                                    ax.plot(data['Minutes'],
-                                            data['Ypos_mm'] * _ym(tracker),
-                                            linewidth=0.8)
-                                    ax.set_ylim(ylims)
-                                else:
-                                    ax.plot(data['Minutes'],
-                                            data['Dist_mm'].cumsum(),
-                                            linewidth=0.8)
-                                ax.set_title(f"{key}\n{_trt(tracker)}", fontsize=7)
-                                ax.tick_params(labelsize=6)
-                            except Exception:
-                                ax.set_title(f"{key}\n(error)", fontsize=7)
-                        for idx in range(n, nrows * ncols):
-                            axes[idx // ncols][idx % ncols].set_visible(False)
-                        fig.supxlabel(sup_x, fontsize=9)
-                        fig.supylabel(sup_y, fontsize=9)
-                        fig.suptitle(f"{exp_name} {title_sfx}", fontsize=11)
-                        fig.tight_layout()
-                        pdf.savefig(fig, bbox_inches='tight')
-                        plt.close(fig)
+        for page_idx in range(total_pages):
+            start = page_idx * rows_per_page
+            chunk = display.iloc[start:start + rows_per_page]
+            fig = plt.figure(figsize=figsize)
+            fig.patch.set_facecolor("white")
+            subtitle = (
+                f"page {page_idx + 1}/{total_pages}  ·  rows {start + 1}–"
+                f"{start + len(chunk)} of {n_rows}"
+            )
+            self._report_page_header(fig, title, subtitle)
 
-                    # XY scatter grid — rasterized to keep PDF size manageable
-                    fig, axes = plt.subplots(
-                        nrows, ncols,
-                        figsize=(ncols * 3.5, nrows * 3.5),
-                        squeeze=False,
-                    )
-                    for idx, (key, tracker) in enumerate(tracker_items):
-                        ax = axes[idx // ncols][idx % ncols]
-                        try:
-                            data = tracker.get_data_subset((0, 0))
-                            # Downsample to at most 5000 points per tracker to keep PDF renderable
-                            if len(data) > 5000:
-                                data = data.iloc[::len(data) // 5000]
-                            xlims, ylims = tracker.get_plot_limits()
-                            ax.scatter(
-                                data['Xpos_mm'] * _xm(tracker),
-                                data['Ypos_mm'] * _ym(tracker),
-                                c=data['Minutes'], cmap='viridis',
-                                vmin=data['Minutes'].min(),
-                                vmax=data['Minutes'].max(),
-                                s=2, alpha=0.5,
-                                rasterized=True,
-                            )
-                            ax.set_xlim(xlims)
-                            ax.set_ylim(ylims)
-                            ax.set_aspect('equal', adjustable='box')
-                            ax.set_title(f"{key}\n{_trt(tracker)}", fontsize=7)
-                            ax.tick_params(labelsize=6)
-                        except Exception:
-                            ax.set_title(f"{key}\n(error)", fontsize=7)
-                    for idx in range(n, nrows * ncols):
-                        axes[idx // ncols][idx % ncols].set_visible(False)
-                    fig.supxlabel('X Position (mm)', fontsize=9)
-                    fig.supylabel('Y Position (mm)', fontsize=9)
-                    fig.suptitle(f"{exp_name} — XY Position", fontsize=11)
-                    fig.tight_layout()
-                    pdf.savefig(fig, bbox_inches='tight', dpi=150)
-                    plt.close(fig)
+            ax = fig.add_axes([
+                self._MARGIN_LEFT,
+                self._MARGIN_BOTTOM,
+                self._MARGIN_RIGHT - self._MARGIN_LEFT,
+                self._MARGIN_TOP - self._MARGIN_BOTTOM - 0.04,
+            ])
+            ax.axis("off")
+            tbl = ax.table(
+                cellText=chunk.values.tolist(),
+                colLabels=list(chunk.columns),
+                cellLoc="center",
+                loc="upper center",
+            )
+            tbl.auto_set_font_size(False)
+            font_size = 7.5 if len(chunk.columns) > 8 else 8.5
+            tbl.set_fontsize(font_size)
+            tbl.scale(1, 1.35)
 
-            # ── Final pages: analysis plots ────────────────────────────────
-            # Close any stray figures left open by prior sections before
-            # intercepting plt.show, so they don't pollute _add_to_pdf.
-            plt.close('all')
-
-            old_cutoffs = self.facet_cutoffs
-            if cutoffs is not None:
-                self.facet_cutoffs = cutoffs
-
-            original_show = plt.show
-
-            def _add_to_pdf():
-                fig = plt.gcf()
-                # Only save if the figure actually has axes (guards against
-                # plt.gcf() auto-creating a blank figure).
-                if fig.get_axes():
-                    pdf.savefig(fig, bbox_inches='tight')
-                plt.close(fig)
-
-            plt.show = _add_to_pdf
-            try:
-                for method_name, kwargs in self._plot_methods():
+            # Header row styling.
+            for j in range(len(chunk.columns)):
+                cell = tbl[(0, j)]
+                cell.set_facecolor("#1f2937")
+                cell.set_text_props(color="white", weight="bold")
+                cell.set_height(cell.get_height() * 1.1)
+            # Alternating row tints, plus green/red for HighQuality if present.
+            hq_idx = (
+                list(chunk.columns).index("HighQuality")
+                if "HighQuality" in chunk.columns else -1
+            )
+            for i, (_, row) in enumerate(chunk.iterrows()):
+                base = "#f8fafc" if i % 2 == 0 else "#ffffff"
+                for j in range(len(chunk.columns)):
+                    tbl[(i + 1, j)].set_facecolor(base)
+                if hq_idx >= 0:
                     try:
-                        getattr(self.arena, method_name)(**kwargs)
-                    except Exception as e:
-                        print(f"Warning: could not generate '{method_name}': {e}")
-            finally:
-                plt.show = original_show
-                self.facet_cutoffs = old_cutoffs
-                plt.close('all')
+                        hq_val = float(str(row.iloc[hq_idx]).rstrip("%"))
+                        if hq_val < 1.0:  # already a fraction
+                            pass
+                        else:
+                            hq_val = hq_val / 100.0
+                    except (TypeError, ValueError):
+                        hq_val = None
+                    if hq_val is not None:
+                        if hq_val >= 0.90:
+                            tint = "#dcfce7"
+                        elif hq_val >= 0.80:
+                            tint = "#fef9c3"
+                        else:
+                            tint = "#fee2e2"
+                        for j in range(len(chunk.columns)):
+                            tbl[(i + 1, j)].set_facecolor(tint)
 
-        print(f"Report saved: {pdf_path}")
-        return pdf_path
+            pdf.savefig(fig)
+            plt.close(fig)
+
+    def _report_text_file_string(self, pdf, title: str, body: str) -> None:
+        """Helper for the rare case we need to surface a string, not a real file."""
+        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
+        fig.patch.set_facecolor("white")
+        self._report_page_header(fig, title)
+        fig.text(self._MARGIN_LEFT, self._MARGIN_TOP - 0.01, body,
+                 fontsize=9, family="monospace", verticalalignment="top",
+                 color="#0f172a")
+        pdf.savefig(fig)
+        plt.close(fig)
+
+    def _report_image(self, pdf, path) -> None:
+        import matplotlib.image as mpimg
+
+        title = path.stem
+        try:
+            img = mpimg.imread(str(path))
+        except Exception as err:  # noqa: BLE001
+            self._report_text_file_string(pdf, title, f"(could not read image: {err})")
+            return
+
+        # Pick orientation that wastes less paper for the source aspect ratio.
+        h = img.shape[0]
+        w = img.shape[1]
+        landscape = w > h
+        figsize = self._LETTER_LANDSCAPE if landscape else self._LETTER_PORTRAIT
+
+        fig = plt.figure(figsize=figsize)
+        fig.patch.set_facecolor("white")
+        self._report_page_header(fig, title)
+
+        ax = fig.add_axes([
+            self._MARGIN_LEFT,
+            self._MARGIN_BOTTOM,
+            self._MARGIN_RIGHT - self._MARGIN_LEFT,
+            self._MARGIN_TOP - self._MARGIN_BOTTOM - 0.04,
+        ])
+        ax.imshow(img)
+        ax.axis("off")
+        # Preserve aspect ratio inside the page area.
+        ax.set_aspect("equal")
+        pdf.savefig(fig, dpi=150)
+        plt.close(fig)
 
     def run_analysis(self, cutoffs=None, qc_cutoff: float = 0.9) -> None:
         """

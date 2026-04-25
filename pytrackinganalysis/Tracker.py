@@ -90,7 +90,7 @@ class Tracker:
             self.rawdata['DeltaSecWindow'] = self.rawdata['DeltaSec'].rolling(window=window_size).sum()
             self.rawdata.loc[self.rawdata.index[0],'DeltaSecWindow']=0
             self.rawdata['Speed_mm_sec']  = self.rawdata['DistWindow_mm']/self.rawdata['DeltaSecWindow']
-            self.rawdata['Speed_mm_sec'].iat[0]=0
+            self.rawdata.loc[self.rawdata.index[0], 'Speed_mm_sec'] = 0
 
         self.rawdata['IsWalking'] = self.rawdata['Speed_mm_sec'] > self.parameters.walking_speed_mm_sec
         self.rawdata['IsMicroMove'] = (self.rawdata['Speed_mm_sec'] > self.parameters.micro_move_speed_mm_sec[0]) & (self.rawdata['Speed_mm_sec'] < self.parameters.micro_move_speed_mm_sec[1])

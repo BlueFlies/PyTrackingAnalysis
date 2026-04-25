@@ -15,8 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from PyQt6.QtCore import QSize, QTimer, Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -24,9 +23,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QSplitter,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -138,16 +134,12 @@ class ConfigEditorWindow(QMainWindow):
         pbl.setContentsMargins(16, 8, 16, 8)
         pbl.setSpacing(8)
         self._path_label = QLabel("No file loaded")
-        self._path_label.setStyleSheet("color: palette(mid);")
+        self._path_label.setStyleSheet("color: palette(text); font-weight: 500;")
         self._dirty_label = QLabel("")
         self._dirty_label.setStyleSheet("color: #f59e0b; font-weight: 600;")
         pbl.addWidget(self._path_label, 1)
         pbl.addWidget(self._dirty_label)
         outer.addWidget(path_bar)
-
-        # ── Split: tabs on top, YAML preview on bottom ──────────────────
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
 
         # Tabs (wrapped in a Card)
         tabs_card = Card(
@@ -164,31 +156,12 @@ class ConfigEditorWindow(QMainWindow):
         self._tabs.addTab(self._tracking_tab, "Tracking regions")
         self._tabs.addTab(self._counting_tab, "Counting regions")
         tabs_card.add_body(self._tabs)
-        splitter.addWidget(tabs_card)
+        outer.addWidget(tabs_card, 1)
 
-        # YAML preview
-        yaml_card = Card(
-            "YAML preview",
-            category=Category.TOOLS,
-            subtitle="Live serialization of the form above. Read-only.",
-            icon_name="csv",
-        )
-        self._yaml_preview = QPlainTextEdit()
-        self._yaml_preview.setObjectName("PtrackLog")
-        self._yaml_preview.setReadOnly(True)
-        self._yaml_preview.setMinimumHeight(120)
-        yaml_card.add_body(self._yaml_preview)
-        splitter.addWidget(yaml_card)
-
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-
-        outer.addWidget(splitter, 1)
-
-        # Refresh the preview periodically (cheap; ~200ms) so live edits reflect.
+        # Poll the form vs. disk so the "unsaved changes" indicator stays live.
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(400)
-        self._refresh_timer.timeout.connect(self._refresh_preview)
+        self._refresh_timer.timeout.connect(self._refresh_dirty)
         self._refresh_timer.start()
 
     # ==================================================================
@@ -217,7 +190,7 @@ class ConfigEditorWindow(QMainWindow):
         self._current_path = path
         self._disk_text = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
         self._set_title(path)
-        self._refresh_preview()
+        self._refresh_dirty()
         ui_settings.add_recent_project(path.parent)
 
     def _save(self) -> None:
@@ -248,7 +221,7 @@ class ConfigEditorWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not save file:\n{err}")
             return
         self._disk_text = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
-        self._refresh_preview()
+        self._refresh_dirty()
         QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
 
     def _dump_config(self) -> dict:
@@ -259,21 +232,16 @@ class ConfigEditorWindow(QMainWindow):
         return config
 
     # ==================================================================
-    # Preview / dirty indicator
+    # Dirty indicator
     # ==================================================================
 
-    def _refresh_preview(self) -> None:
+    def _refresh_dirty(self) -> None:
         try:
             text = yaml.safe_dump(
                 self._dump_config(), default_flow_style=False, sort_keys=False
             )
-        except Exception as err:  # noqa: BLE001
-            text = f"# Could not serialize: {err}"
-        # Only overwrite when the text actually changed, to preserve user
-        # scroll position.
-        if self._yaml_preview.toPlainText() != text:
-            self._yaml_preview.setPlainText(text)
-
+        except Exception:  # noqa: BLE001
+            return
         dirty = text != self._disk_text
         self._dirty_label.setText("●  unsaved changes" if dirty else "")
 

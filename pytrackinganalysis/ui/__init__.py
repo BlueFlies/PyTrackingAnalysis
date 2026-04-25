@@ -8,6 +8,7 @@ ever share a process.
 from .icons import icon
 from .theme import Category, ThemeMode, apply_theme, category_color, current_mode, resolved_mode
 from .widgets import ActionButton, Card, OutputLog, PlotDock, SidebarNav, TopBar
+from .zoom import ZoomableImageView, ZoomableTextView
 
 __all__ = [
     "ActionButton",
@@ -18,6 +19,8 @@ __all__ = [
     "SidebarNav",
     "ThemeMode",
     "TopBar",
+    "ZoomableImageView",
+    "ZoomableTextView",
     "apply_theme",
     "category_color",
     "current_mode",

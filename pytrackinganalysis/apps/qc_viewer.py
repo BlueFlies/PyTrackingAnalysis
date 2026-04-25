@@ -32,7 +32,6 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication,
-    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -55,6 +54,7 @@ from ..ui import (
     OutputLog,
     PlotDock,
     TopBar,
+    ZoomableImageView,
     apply_theme,
     icon,
     resolved_mode,
@@ -63,15 +63,19 @@ from ..ui import settings as ui_settings
 from ..ui.table_model import DataFrameModel
 
 
+
 class QcViewerWindow(QMainWindow):
+    # Fixed thresholds for row colouring (HighQuality column).
+    _THR_GREEN = 0.90
+    _THR_YELLOW = 0.80
+
     def __init__(self, initial_project: str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("PyTrackingAnalysis — QC Viewer")
-        self.resize(1300, 860)
+        self.resize(1430, 860)
         self._exp: ExperimentMod.Experiment | None = None
         self._project_dir: Optional[Path] = None
         self._dq: pd.DataFrame = pd.DataFrame()
-        self._qc_cutoff: float = 0.8
 
         self._build_ui()
 
@@ -92,19 +96,10 @@ class QcViewerWindow(QMainWindow):
         # ── Top bar ─────────────────────────────────────────────────────
         self._top_bar = TopBar("QC Viewer")
         self._path_lbl = QLabel("(no project)")
-        self._path_lbl.setStyleSheet("color: palette(mid); padding-right: 8px;")
         self._top_bar.add_right(self._path_lbl)
 
-        btn_open = QToolButton()
-        btn_open.setIcon(icon("open"))
-        btn_open.setIconSize(QSize(18, 18))
-        btn_open.setAutoRaise(True)
-        btn_open.setToolTip("Open project directory")
-        btn_open.clicked.connect(self._pick_project)
-        self._top_bar.add_right(btn_open)
-
         btn_reload = QToolButton()
-        btn_reload.setIcon(icon("clear"))
+        btn_reload.setIcon(icon("refresh"))
         btn_reload.setIconSize(QSize(18, 18))
         btn_reload.setAutoRaise(True)
         btn_reload.setToolTip("Reload")
@@ -135,20 +130,11 @@ class QcViewerWindow(QMainWindow):
         trackers_card = Card(
             "Trackers",
             category=Category.QC,
-            subtitle="Rows colour-coded by %HighQuality vs qc_cutoff.",
+            subtitle="Rows tinted by %HighQuality: green ≥ 0.90, yellow 0.80–0.90, red < 0.80.",
             icon_name="qc",
         )
 
         header_row = QHBoxLayout()
-        header_row.addWidget(QLabel("qc_cutoff:"))
-        self._cutoff_spin = QDoubleSpinBox()
-        self._cutoff_spin.setRange(0.0, 1.0)
-        self._cutoff_spin.setSingleStep(0.05)
-        self._cutoff_spin.setDecimals(2)
-        self._cutoff_spin.setValue(self._qc_cutoff)
-        self._cutoff_spin.valueChanged.connect(self._on_cutoff_changed)
-        header_row.addWidget(self._cutoff_spin)
-        header_row.addStretch(1)
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by tracker name…")
         self._filter_edit.setClearButtonEnabled(True)
@@ -162,7 +148,9 @@ class QcViewerWindow(QMainWindow):
         self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self._table.setAlternatingRowColors(True)
+        # We supply our own per-row tints (band + alternating shade) via
+        # _color_for_row, so let Qt skip its default alternateBase fill.
+        self._table.setAlternatingRowColors(False)
         self._table.setMinimumHeight(300)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.selectionModel().selectionChanged.connect(self._on_row_selected)
@@ -186,7 +174,7 @@ class QcViewerWindow(QMainWindow):
         tools_card.add_body(btn_export)
         left_lay.addWidget(tools_card)
 
-        left_host.setMinimumWidth(420)
+        left_host.setMinimumWidth(560)
         splitter.addWidget(left_host)
 
         # Right: PlotDock
@@ -197,20 +185,32 @@ class QcViewerWindow(QMainWindow):
 
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-        splitter.setSizes([500, 800])
+        splitter.setSizes([620, 810])
         outer.addWidget(splitter, 1)
+
+        self._apply_text_styles()
+
+    def _apply_text_styles(self) -> None:
+        """Force high-contrast text on the trackers table and project path label.
+
+        qdarktheme's palette(text)/palette(mid) read as muted greys; the row
+        tints in the trackers grid wash them out further. We override with
+        explicit colors per theme and re-apply on theme toggle.
+        """
+        if resolved_mode() == "dark":
+            table_fg = "#ffffff"
+            path_fg = "#e2e8f0"
+        else:
+            table_fg = "#0f172a"
+            path_fg = "#1e293b"
+        self._table.setStyleSheet(f"QTableView {{ color: {table_fg}; }}")
+        self._path_lbl.setStyleSheet(
+            f"color: {path_fg}; padding-right: 8px; font-weight: 500;"
+        )
 
     # ==================================================================
     # Project loading
     # ==================================================================
-
-    def _pick_project(self) -> None:
-        start = str(self._project_dir) if self._project_dir else os.getcwd()
-        chosen = QFileDialog.getExistingDirectory(
-            self, "Choose project directory", start
-        )
-        if chosen:
-            self._load_project(Path(chosen))
 
     def _reload(self) -> None:
         if self._project_dir:
@@ -232,6 +232,38 @@ class QcViewerWindow(QMainWindow):
         ui_settings.add_recent_project(path)
         self._log.append_line(str(self._exp))
         self._refresh_table()
+        self._show_qc_artifacts()
+
+    def _show_qc_artifacts(self) -> None:
+        """Add a PlotDock tab for every ``*_qc_*.png`` in the project's qc/ folder."""
+        if self._exp is None:
+            return
+        qc_dir = Path(self._exp.qc_path)
+        if not qc_dir.exists():
+            return
+        pngs = sorted(qc_dir.glob("*_qc_*.png"))
+        if not pngs:
+            self._log.append_line(
+                f"[qc] no QC artifacts found in {qc_dir} "
+                "(re-load via the Hub to regenerate)"
+            )
+            return
+        for png in pngs:
+            self._add_png_tab(png)
+
+    def _add_png_tab(self, png_path: Path) -> None:
+        """Embed a PNG as a zoomable tab in the PlotDock."""
+        view = ZoomableImageView(png_path)
+        if view.is_empty():
+            self._log.append_line(f"[qc] failed to load {png_path}")
+            return
+        # Drop the leading "<exp>_qc_" prefix and the ".png" suffix to keep tab titles short.
+        title = png_path.stem
+        prefix = f"{self._exp.arena.experiment_name}_qc_"
+        if title.startswith(prefix):
+            title = title[len(prefix):]
+        idx = self._plot_dock.addTab(view, icon("qc", category=Category.QC), title)
+        self._plot_dock.setCurrentIndex(idx)
 
     def _refresh_table(self) -> None:
         if self._exp is None:
@@ -241,9 +273,14 @@ class QcViewerWindow(QMainWindow):
         self._dq = df
         self._model.set_dataframe(df)
         n = len(df)
-        good = int((df["HighQuality"] >= self._qc_cutoff).sum())
+        green = int((df["HighQuality"] >= self._THR_GREEN).sum())
+        yellow = int(((df["HighQuality"] >= self._THR_YELLOW)
+                      & (df["HighQuality"] < self._THR_GREEN)).sum())
+        red = n - green - yellow
         self._summary_lbl.setText(
-            f"{good}/{n} trackers pass qc_cutoff = {self._qc_cutoff:.2f}"
+            f"{green} green (≥ {self._THR_GREEN:.2f})  ·  "
+            f"{yellow} yellow ({self._THR_YELLOW:.2f}–{self._THR_GREEN:.2f})  ·  "
+            f"{red} red (< {self._THR_YELLOW:.2f})  ·  {n} total"
         )
 
     # ==================================================================
@@ -255,19 +292,14 @@ class QcViewerWindow(QMainWindow):
         if df.empty or not (0 <= row_idx < len(df)):
             return None
         hq = float(df.iloc[row_idx].get("HighQuality", 0.0))
-        # Subtle tints that read on both themes
-        if hq >= self._qc_cutoff:
-            return QColor(34, 197, 94, 40)  # analyze-green
-        return QColor(220, 38, 38, 40)  # qc-red
-
-    def _on_cutoff_changed(self, value: float) -> None:
-        self._qc_cutoff = float(value)
-        self._model.set_row_color(self._color_for_row)
-        if not self._dq.empty:
-            good = int((self._dq["HighQuality"] >= self._qc_cutoff).sum())
-            self._summary_lbl.setText(
-                f"{good}/{len(self._dq)} trackers pass qc_cutoff = {self._qc_cutoff:.2f}"
-            )
+        # Two alpha shades per band keep the visual cue of alternating rows
+        # without leaking the default palette(alternateBase) through the tint.
+        alpha = 42 if (row_idx % 2) else 22
+        if hq >= self._THR_GREEN:
+            return QColor(34, 197, 94, alpha)    # analyze-green
+        if hq >= self._THR_YELLOW:
+            return QColor(245, 158, 11, alpha)   # amber/yellow
+        return QColor(220, 38, 38, alpha)        # qc-red
 
     def _apply_filter(self, text: str) -> None:
         if self._dq.empty:
@@ -421,6 +453,7 @@ class QcViewerWindow(QMainWindow):
         self._btn_theme.setIcon(
             icon("theme_dark" if resolved_mode() == "light" else "theme_light")
         )
+        self._apply_text_styles()
 
 
 def _scalar(value) -> float:

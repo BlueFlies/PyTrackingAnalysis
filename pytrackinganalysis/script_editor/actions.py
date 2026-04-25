@@ -79,6 +79,10 @@ class Action:
     params: tuple[ParamSpec, ...]
     validate_fn: Callable[[dict, str | None], list[str]] | None = None
     execute_fn: Callable[[dict, RunContext], None] | None = None
+    # Tracking types this action is relevant for. ``None`` means "any" — used
+    # by Palette.set_experiment_type to hide actions that don't apply to the
+    # currently-loaded tracking type.
+    applicable_types: tuple[str, ...] | None = None
 
     def validate(self, params: dict, experiment_type: str | None = None) -> list[str]:
         errs: list[str] = []
@@ -90,6 +94,12 @@ class Action:
         if self.validate_fn is not None:
             errs.extend(self.validate_fn(params, experiment_type))
         return errs
+
+    def applies_to(self, experiment_type: str | None) -> bool:
+        """Return True if this action should appear in the palette for *experiment_type*."""
+        if self.applicable_types is None or experiment_type is None:
+            return True
+        return experiment_type in self.applicable_types
 
     def execute(self, params: dict, ctx: RunContext) -> None:
         if self.execute_fn is None:
@@ -193,55 +203,121 @@ def _exec_run_analysis(params: dict, ctx: RunContext) -> None:
     ctx.exp.run_analysis(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
 
 
-def _exec_save_summary_csv(params: dict, ctx: RunContext) -> None:
-    _require_exp(ctx, "save_summary_csv")
-    cutoffs = _parse_cutoffs(params.get("cutoffs"))
-    ctx.log(f"[save_summary_csv] cutoffs={cutoffs}")
-    ctx.exp.save_summary(cutoffs=cutoffs)
+def _exec_summarize(params: dict, ctx: RunContext) -> None:
+    """Mirrors the Hub's Summarize button (with the Faceted checkbox)."""
+    _require_exp(ctx, "summarize")
+    facet = bool(params.get("facet", True))
+    if facet:
+        cutoffs = ctx.exp.facet_cutoffs
+        if cutoffs is None:
+            ctx.log("[summarize] facet=True but no facet_cutoffs in config — running flat only.")
+        ctx.log(f"[summarize] facet={facet} cutoffs={cutoffs}")
+        ctx.exp.save_summary(cutoffs=cutoffs)
+    else:
+        ctx.log("[summarize] facet=False")
+        ctx.exp.save_summary(cutoffs=None)
 
 
-def _exec_run_tukey_stats(_params: dict, ctx: RunContext) -> None:
-    _require_exp(ctx, "run_tukey_stats")
-    ctx.log("[run_tukey_stats]")
-    ctx.exp.stats()
+def _exec_run_pairwise_comparisons(params: dict, ctx: RunContext) -> None:
+    """Mirrors the Hub's Run pairwise comparisons button."""
+    _require_exp(ctx, "run_pairwise_comparisons")
+    facet = bool(params.get("facet", True))
+    if facet:
+        cutoffs = ctx.exp.facet_cutoffs
+        if cutoffs is None:
+            ctx.log(
+                "[run_pairwise_comparisons] facet=True but no facet_cutoffs in config — "
+                "skipping facet, running flat."
+            )
+            _run_flat_pairwise(ctx)
+            return
+        ctx.log(f"[run_pairwise_comparisons] facet=True cutoffs={cutoffs}")
+        ctx.exp.stats(cutoffs=cutoffs, save=True)
+    else:
+        ctx.log("[run_pairwise_comparisons] facet=False")
+        _run_flat_pairwise(ctx)
 
 
-def _exec_plot(params: dict, ctx: RunContext) -> None:
-    _require_exp(ctx, "plot")
-    method_name = params.get("method") or ""
-    if not method_name:
-        raise ValueError("plot: please pick a method")
-    # Target Arena directly so Experiment's save-to-disk ``plt.show``
-    # override does not swallow the Figure before us.  Fall back to the
-    # Experiment wrapper only if Arena has no such method.
-    arena = ctx.exp.arena
-    fn = getattr(arena, method_name) if hasattr(arena, method_name) else getattr(ctx.exp, method_name)
+def _run_flat_pairwise(ctx: RunContext) -> None:
+    """Run flat (non-faceted) pairwise comparisons for every relevant metric."""
+    import io as _io
+    import os as _os
+    import sys as _sys
 
-    import matplotlib.pyplot as plt
+    exp = ctx.exp
+    metrics = exp._stats_metrics()
+    if not metrics:
+        ctx.log("[run_pairwise_comparisons] no metrics for this tracking type")
+        return
 
-    figures: list = []
-    orig_show = plt.show
-
-    def _capture(*_a, **_k) -> None:  # noqa: ANN002, ANN003
-        figures.append(plt.gcf())
-
-    plt.show = _capture  # type: ignore[assignment]
+    buf = _io.StringIO()
+    saved = _sys.stdout
+    _sys.stdout = buf
     try:
-        kwargs: dict[str, Any] = {}
-        cutoffs = _parse_cutoffs(params.get("cutoffs"))
-        if method_name.endswith("_facet") and cutoffs:
-            kwargs["cutoffs"] = cutoffs
-        elif method_name.endswith("_facet") and ctx.exp.facet_cutoffs is not None:
-            kwargs["cutoffs"] = ctx.exp.facet_cutoffs
-        ctx.log(f"[plot] {method_name}({kwargs})")
-        fn(**kwargs)
+        for metric in metrics:
+            try:
+                exp.arena.run_pairwise_comparisons(metric=metric)
+            except Exception as err:  # noqa: BLE001
+                print(f"Warning: could not run comparison for '{metric}': {err}")
     finally:
-        plt.show = orig_show  # type: ignore[assignment]
+        _sys.stdout = saved
 
-    title = _plot_title(method_name)
-    for i, fig in enumerate(figures):
-        tab_title = title if len(figures) == 1 else f"{title} ({i+1})"
-        ctx.figure(tab_title, fig)
+    text = buf.getvalue()
+    ctx.log(text)
+    path = _os.path.join(
+        exp.analysis_path, f"{exp.arena.experiment_name}_Stats_flat.txt"
+    )
+    with open(path, "w") as f:
+        f.write(text)
+    ctx.log(f"Saved: {path}")
+
+
+def _make_plot_executor(base_method: str):
+    """Build an executor for a per-type plot action with a ``facet`` boolean."""
+
+    def _exec(params: dict, ctx: RunContext) -> None:
+        _require_exp(ctx, base_method)
+        facet = bool(params.get("facet", True))
+        method_name = f"{base_method}_facet" if facet else base_method
+        kwargs: dict[str, Any] = {}
+        if facet:
+            if ctx.exp.facet_cutoffs is None:
+                ctx.log(
+                    f"[{base_method}] facet=True but no facet_cutoffs configured — "
+                    f"falling back to flat ``{base_method}``."
+                )
+                method_name = base_method
+            else:
+                kwargs["cutoffs"] = tuple(ctx.exp.facet_cutoffs)
+
+        arena = ctx.exp.arena
+        fn = getattr(arena, method_name, None)
+        if fn is None:
+            raise ValueError(f"Arena has no method {method_name!r}")
+
+        import matplotlib.pyplot as plt
+
+        figures: list = []
+        orig_show = plt.show
+
+        def _capture(*_a, **_k) -> None:  # noqa: ANN002, ANN003
+            figures.append(plt.gcf())
+
+        plt.show = _capture  # type: ignore[assignment]
+        try:
+            ctx.log(f"[{base_method}] arena.{method_name}({kwargs})")
+            fn(**kwargs)
+        finally:
+            plt.show = orig_show  # type: ignore[assignment]
+
+        title = _PLOT_TITLES.get(base_method, base_method.replace("_", " ").title())
+        if facet and method_name.endswith("_facet"):
+            title = f"{title} (facet)"
+        for i, fig in enumerate(figures):
+            tab_title = title if len(figures) == 1 else f"{title} ({i+1})"
+            ctx.figure(tab_title, fig)
+
+    return _exec
 
 
 def _exec_create_report(params: dict, ctx: RunContext) -> None:
@@ -294,190 +370,218 @@ def _validate_cutoffs(params: dict, _exp_type: str | None) -> list[str]:
     return []
 
 
-# Valid plot methods per TrackingType (used for choice validation + inspector dropdown).
-_PLOTS_BY_TYPE: dict[str, tuple[str, ...]] = {
-    "TRACKER": ("plot_totaldistance_facet",),
-    "TWOCHOICETRACKER": (
-        "plot_pi_facet",
-        "plot_percentage_facet",
-        "plot_transitions_facet",
-        "plot_totaldistance_facet",
+# Per-tracking-type plot button mapping. Each entry is (base_method, label,
+# applicable_types). The executor uses ``base_method`` for flat and
+# ``base_method + "_facet"`` for the faceted variant. ``label`` is the user-facing
+# title in the palette and the resulting PlotDock tab.
+_PLOT_BUTTON_DEFS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "plot_pi", "PI",
+        ("TWOCHOICETRACKER", "TWOCHOICECOUNTER"),
     ),
-    "TWOCHOICECOUNTER": ("plot_pi_facet", "plot_percentage_facet"),
-    "XCHOICETRACKER": (
-        "plot_adjusted_x_position_facet",
-        "plot_totaldistance_facet",
+    (
+        "plot_percentage", "Percentage",
+        ("TWOCHOICETRACKER", "TWOCHOICECOUNTER"),
     ),
-    "PAIRWISEINTERACTIONTRACKER": (
-        "plot_interactions_facet",
-        "plot_totaldistance_facet",
+    (
+        "plot_transitions", "Transitions",
+        ("TWOCHOICETRACKER",),
     ),
-    "PAIRWISEINTERACTIONCOUNTER": ("plot_interactions_facet",),
+    (
+        "plot_totaldistance", "Total distance",
+        (
+            "TRACKER", "TWOCHOICETRACKER", "XCHOICETRACKER",
+            "PAIRWISEINTERACTIONTRACKER",
+        ),
+    ),
+    (
+        "plot_adjusted_x_position", "Adjusted X position",
+        ("XCHOICETRACKER",),
+    ),
+    (
+        "plot_interactions", "Interactions",
+        ("PAIRWISEINTERACTIONTRACKER", "PAIRWISEINTERACTIONCOUNTER"),
+    ),
+)
+
+_PLOT_TITLES: dict[str, str] = {base: label for base, label, _ in _PLOT_BUTTON_DEFS}
+
+_PLOT_ICON_BY_LABEL: dict[str, str] = {
+    "Total distance": "distance",
+    "PI": "plot",
+    "Percentage": "plot",
+    "Transitions": "transition",
+    "Adjusted X position": "xy",
+    "Interactions": "plot",
 }
-
-_ALL_PLOT_METHODS: tuple[str, ...] = tuple(sorted({
-    m for methods in _PLOTS_BY_TYPE.values() for m in methods
-}))
-
-
-def plot_methods_for_type(experiment_type: str | None) -> tuple[str, ...]:
-    if experiment_type and experiment_type in _PLOTS_BY_TYPE:
-        return _PLOTS_BY_TYPE[experiment_type]
-    return _ALL_PLOT_METHODS
-
-
-_PLOT_TITLES: dict[str, str] = {
-    "plot_totaldistance_facet": "Total distance (facet)",
-    "plot_pi_facet": "PI (facet)",
-    "plot_percentage_facet": "Percentage (facet)",
-    "plot_transitions_facet": "Transitions (facet)",
-    "plot_adjusted_x_position_facet": "Adjusted X position (facet)",
-    "plot_interactions_facet": "Interactions (facet)",
-}
-
-
-def _plot_title(method_name: str) -> str:
-    return _PLOT_TITLES.get(method_name, method_name.replace("_", " ").title())
-
-
-def _validate_plot(params: dict, experiment_type: str | None) -> list[str]:
-    method = params.get("method", "")
-    if not method:
-        return ["method is required"]
-    allowed = plot_methods_for_type(experiment_type)
-    if experiment_type and method not in allowed:
-        return [f"method {method!r} is not valid for tracking type {experiment_type}"]
-    return _validate_cutoffs(params, experiment_type)
 
 
 # ---------------------------------------------------------------------------
 # Registered actions
 # ---------------------------------------------------------------------------
 
-ACTIONS: dict[str, Action] = {
-    "load_experiment": Action(
-        key="load_experiment",
-        title="Load experiment",
-        description="Load an Experiment from a project directory (data/*.xlsx + tracking_config.yaml).",
-        category=Category.LOAD,
-        icon_name="load",
-        params=(
-            ParamSpec("path", "path", "Project dir", default=".", help="Defaults to the script's project dir."),
-            ParamSpec("force_preprocessing", "bool", "Force preprocessing", default=False),
-        ),
-        execute_fn=_exec_load_experiment,
-    ),
-    "filter_by_quality": Action(
-        key="filter_by_quality",
-        title="Filter trackers by quality",
-        description="Drop trackers whose %HighQuality is below the threshold.",
-        category=Category.QC,
-        icon_name="quality",
-        params=(
-            ParamSpec("min_high_quality", "float", "min_high_quality", default=0.8, min=0.0, max=1.0),
-        ),
-        validate_fn=_validate_filter_by_quality,
-        execute_fn=_exec_filter_by_quality,
-    ),
-    "filter_by_region": Action(
-        key="filter_by_region",
-        title="Filter trackers by region",
-        description="Keep only trackers whose tracking_region matches the list.",
-        category=Category.QC,
-        icon_name="quality",
-        params=(
-            ParamSpec("regions", "list", "regions (comma-separated)", default="T_0, T_1"),
-        ),
-        execute_fn=_exec_filter_by_region,
-    ),
-    "run_qc": Action(
-        key="run_qc",
-        title="Run QC",
-        description="Print a data-quality report and write {exp}_data_quality.csv.",
-        category=Category.ANALYZE,
-        icon_name="quality",
-        params=(
-            ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
-        ),
-        execute_fn=_exec_run_qc,
-    ),
-    "run_analysis": Action(
-        key="run_analysis",
-        title="Run full analysis",
-        description="Run QC, write summary/facet CSVs, save plots, and run stats.",
-        category=Category.ANALYZE,
-        icon_name="basic",
-        params=(
-            ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
-            ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
-        ),
-        validate_fn=_validate_cutoffs,
-        execute_fn=_exec_run_analysis,
-    ),
-    "save_summary_csv": Action(
-        key="save_summary_csv",
-        title="Export Summary CSV",
-        description="Write {exp}_Summary.csv and, if cutoffs, {exp}_Summary_Facet.csv.",
-        category=Category.ANALYZE,
-        icon_name="csv",
-        params=(
-            ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
-        ),
-        validate_fn=_validate_cutoffs,
-        execute_fn=_exec_save_summary_csv,
-    ),
-    "run_tukey_stats": Action(
-        key="run_tukey_stats",
-        title="Run Tukey HSD stats",
-        description="Write {exp}_Stats.txt with pairwise comparisons.",
-        category=Category.ANALYZE,
-        icon_name="compare",
-        params=(),
-        execute_fn=_exec_run_tukey_stats,
-    ),
-    "plot": Action(
-        key="plot",
-        title="Add plot to output",
-        description="Run an Arena.plot_* method and send the figure to the Hub's PlotDock.",
-        category=Category.PLOTS,
-        icon_name="plot",
-        params=(
-            ParamSpec(
-                "method", "choice", "method",
-                default="plot_totaldistance_facet",
-                choices=_ALL_PLOT_METHODS,
+def _build_actions() -> dict[str, Action]:
+    actions: dict[str, Action] = {
+        "load_experiment": Action(
+            key="load_experiment",
+            title="Load experiment",
+            description=(
+                "Load an Experiment from a project directory "
+                "(data/*.xlsx + tracking_config.yaml)."
             ),
-            ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
+            category=Category.LOAD,
+            icon_name="load",
+            params=(
+                ParamSpec(
+                    "path", "path", "Project dir",
+                    default=".", help="Defaults to the script's project dir.",
+                ),
+                ParamSpec("force_preprocessing", "bool", "Force preprocessing", default=False),
+            ),
+            execute_fn=_exec_load_experiment,
         ),
-        validate_fn=_validate_plot,
-        execute_fn=_exec_plot,
-    ),
-    "create_report": Action(
-        key="create_report",
-        title="Create PDF report",
-        description="Write {exp}_report.pdf with QC tables, tracker grids, and plots.",
-        category=Category.ANALYZE,
-        icon_name="report",
-        params=(
-            ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
-            ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
+        "filter_by_quality": Action(
+            key="filter_by_quality",
+            title="Filter trackers by quality",
+            description="Drop trackers whose %HighQuality is below the threshold.",
+            category=Category.QC,
+            icon_name="quality",
+            params=(
+                ParamSpec(
+                    "min_high_quality", "float", "min_high_quality",
+                    default=0.8, min=0.0, max=1.0,
+                ),
+            ),
+            validate_fn=_validate_filter_by_quality,
+            execute_fn=_exec_filter_by_quality,
         ),
-        validate_fn=_validate_cutoffs,
-        execute_fn=_exec_create_report,
-    ),
-    "batch_analyze": Action(
-        key="batch_analyze",
-        title="Run batch analysis",
-        description="Run Experiment.run_analysis() + create_report() on every valid subdir.",
-        category=Category.LOAD,
-        icon_name="batch",
-        params=(
-            ParamSpec("parent_path", "path", "parent dir", default="."),
-            ParamSpec("force_preprocessing", "bool", "Force preprocessing", default=False),
+        "filter_by_region": Action(
+            key="filter_by_region",
+            title="Filter trackers by region",
+            description="Keep only trackers whose tracking_region matches the list.",
+            category=Category.QC,
+            icon_name="quality",
+            params=(
+                ParamSpec("regions", "list", "regions (comma-separated)", default="T_0, T_1"),
+            ),
+            execute_fn=_exec_filter_by_region,
         ),
-        execute_fn=_exec_batch_analyze,
-    ),
-}
+        "run_qc": Action(
+            key="run_qc",
+            title="Run QC",
+            description="Print a data-quality report and write {exp}_data_quality.csv.",
+            category=Category.ANALYZE,
+            icon_name="quality",
+            params=(
+                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
+            ),
+            execute_fn=_exec_run_qc,
+        ),
+        "run_analysis": Action(
+            key="run_analysis",
+            title="Run Analysis",
+            description=(
+                "Run QC, write summary/facet CSVs, save plots, and run stats. "
+                "Mirrors the Hub's Run Analysis button."
+            ),
+            category=Category.ANALYZE,
+            icon_name="basic",
+            params=(
+                ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
+                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
+            ),
+            validate_fn=_validate_cutoffs,
+            execute_fn=_exec_run_analysis,
+        ),
+        "summarize": Action(
+            key="summarize",
+            title="Summarize",
+            description=(
+                "Write {exp}_Summary.csv (and, when faceted, {exp}_Summary_Facet.csv). "
+                "Mirrors the Hub's Summarize button."
+            ),
+            category=Category.ANALYZE,
+            icon_name="csv",
+            params=(
+                ParamSpec(
+                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
+                    help="When checked, also writes the per-facet summary using "
+                         "the project's facet_cutoffs.",
+                ),
+            ),
+            execute_fn=_exec_summarize,
+        ),
+        "run_pairwise_comparisons": Action(
+            key="run_pairwise_comparisons",
+            title="Run pairwise comparisons",
+            description=(
+                "Run treatment-vs-treatment comparisons for every metric appropriate "
+                "to the tracking type. Mirrors the Hub's Run pairwise comparisons button."
+            ),
+            category=Category.ANALYZE,
+            icon_name="compare",
+            params=(
+                ParamSpec(
+                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
+                    help="When checked, runs Tukey HSD per facet using the project's "
+                         "facet_cutoffs; otherwise runs over the full recording.",
+                ),
+            ),
+            execute_fn=_exec_run_pairwise_comparisons,
+        ),
+        "create_report": Action(
+            key="create_report",
+            title="Create PDF Report",
+            description="Write {exp}_report.pdf with QC tables, tracker grids, and plots.",
+            category=Category.ANALYZE,
+            icon_name="report",
+            params=(
+                ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
+                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
+            ),
+            validate_fn=_validate_cutoffs,
+            execute_fn=_exec_create_report,
+        ),
+        "batch_analyze": Action(
+            key="batch_analyze",
+            title="Run batch analysis",
+            description="Run Experiment.run_analysis() + create_report() on every valid subdir.",
+            category=Category.LOAD,
+            icon_name="batch",
+            params=(
+                ParamSpec("parent_path", "path", "parent dir", default="."),
+                ParamSpec("force_preprocessing", "bool", "Force preprocessing", default=False),
+            ),
+            execute_fn=_exec_batch_analyze,
+        ),
+    }
+
+    # Per-tracking-type plot actions. One palette tile per Hub Plots-card button,
+    # filtered by the current experiment's tracking type.
+    for base_method, label, applies in _PLOT_BUTTON_DEFS:
+        actions[base_method] = Action(
+            key=base_method,
+            title=label,
+            description=(
+                f"Render the {label} plot. When ``Faceted`` is checked, calls the "
+                f"_facet variant using the project's facet_cutoffs; otherwise plots "
+                f"over the full recording."
+            ),
+            category=Category.PLOTS,
+            icon_name=_PLOT_ICON_BY_LABEL.get(label, "plot"),
+            params=(
+                ParamSpec(
+                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
+                ),
+            ),
+            execute_fn=_make_plot_executor(base_method),
+            applicable_types=applies,
+        )
+
+    return actions
+
+
+ACTIONS: dict[str, Action] = _build_actions()
 
 
 def validation_issues(steps: list[dict], experiment_type: str | None) -> list[tuple[int, str]]:
