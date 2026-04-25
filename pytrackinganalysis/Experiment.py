@@ -1268,7 +1268,7 @@ class Experiment:
         """
         Run the complete analysis pipeline in one call.
 
-        Order: experiment summary → QC report → summary CSVs → plots → statistics.
+        Order: experiment summary → QC report → summary CSVs → statistics → plots.
 
         Parameters
         ----------
@@ -1291,11 +1291,11 @@ class Experiment:
         print("\n--- Saving Summaries ---")
         self.save_summary(cutoffs=cutoffs)
 
-        print("\n--- Saving Plots ---")
-        self.save_plots(cutoffs=cutoffs)
-
         print("\n--- Running Statistics ---")
         self.stats(cutoffs=cutoffs, save=True)
+
+        print("\n--- Saving Plots ---")
+        self.save_plots(cutoffs=cutoffs)
 
         print(f"\n=== Done. Outputs written to: {self.analysis_path} ===")
 

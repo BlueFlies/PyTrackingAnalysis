@@ -31,9 +31,11 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -505,16 +507,15 @@ class HubWindow(QMainWindow):
             "Clear matplotlib cache", Category.TOOLS, icon_name="clear"
         )
         btn_clear_cache.clicked.connect(self._clear_mpl_cache)
-        btn_convert = ActionButton(
-            "Convert subdirectories", Category.TOOLS, icon_name="batch"
+        btn_batch_tools = ActionButton(
+            "Batch tools", Category.TOOLS, icon_name="batch"
         )
-        btn_convert.setToolTip(
-            "For each subdirectory of the project dir, create a 'data/' folder "
-            "and copy every non-YAML file at the top level into it. Preps the "
-            "subdirectories for a batch run."
+        btn_batch_tools.setToolTip(
+            "Open a window with batch operations across project subdirectories: "
+            "convert to data/ layout, rename subdirectories, and combine summary CSVs."
         )
-        btn_convert.clicked.connect(self._convert_subdirectories)
-        for b in (btn_open_analysis, btn_open_qc, btn_convert, btn_validate, btn_clear_cache):
+        btn_batch_tools.clicked.connect(self._open_batch_tools)
+        for b in (btn_open_analysis, btn_open_qc, btn_batch_tools, btn_validate, btn_clear_cache):
             card.add_body(b)
         self._cards["tools"] = card
         self._cards_lay.addWidget(card)
@@ -1114,6 +1115,131 @@ class HubWindow(QMainWindow):
 
         self._spawn_task("Convert subdirectories", _do_convert)
 
+    def _open_batch_tools(self) -> None:
+        if not self._project_dir:
+            self._warn("Choose a project directory first.")
+            return
+        dlg = BatchToolsDialog(self)
+        dlg.exec()
+
+    def _rename_subdirectories(self, mode: str, text: str) -> None:
+        """Rename every immediate subdirectory of the project dir.
+
+        ``mode`` is one of ``"prepend"``, ``"append"``, or ``"remove"``.
+        ``text`` is the substring to add or remove.
+        """
+        if not self._project_dir:
+            self._warn("Choose a project directory first.")
+            return
+        if not text:
+            self._warn("Enter a non-empty substring.")
+            return
+        project = self._project_dir
+        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
+        if not subdirs:
+            self._log.append_line(f"[rename] no subdirectories under {project}")
+            return
+
+        # Compute new names up front so we can detect collisions and skip
+        # no-ops before mutating the filesystem.
+        plans: list[tuple[Path, Path]] = []
+        existing = {d.name for d in subdirs}
+        seen_targets: set[str] = set()
+        for sub in subdirs:
+            old = sub.name
+            if mode == "prepend":
+                new = f"{text}{old}"
+            elif mode == "append":
+                new = f"{old}{text}"
+            elif mode == "remove":
+                new = old.replace(text, "")
+            else:
+                self._warn(f"Unknown rename mode: {mode}")
+                return
+            if not new or new == old:
+                continue
+            if new in existing or new in seen_targets:
+                self._log.append_line(
+                    f"[rename] skip {old} → {new} (collides with existing name)"
+                )
+                continue
+            seen_targets.add(new)
+            plans.append((sub, sub.with_name(new)))
+
+        if not plans:
+            self._log.append_line("[rename] nothing to do.")
+            return
+
+        def _do_rename() -> str:
+            print(f"Renaming {len(plans)} subdirectories under {project}…")
+            renamed = 0
+            for src, dst in plans:
+                if dst.exists():
+                    print(f"Skipped (exists): {dst.name}")
+                    continue
+                src.rename(dst)
+                print(f"Renamed: {src.name} → {dst.name}")
+                renamed += 1
+            return f"Rename complete: {renamed} of {len(plans)} subdirectories."
+
+        self._spawn_task("Rename subdirectories", _do_rename)
+
+    def _combine_summaries(self) -> None:
+        """Stack every ``*_Summary.csv`` and ``*_Summary_Facet.csv`` found in
+        ``<subdir>/analysis/`` across the project dir into a single combined
+        CSV per type, tagged with the originating subdirectory name."""
+        if not self._project_dir:
+            self._warn("Choose a project directory first.")
+            return
+        project = self._project_dir
+        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
+        if not subdirs:
+            self._log.append_line(f"[combine] no subdirectories under {project}")
+            return
+
+        def _do_combine() -> str:
+            import pandas as pd
+
+            flat_frames: list[pd.DataFrame] = []
+            facet_frames: list[pd.DataFrame] = []
+            for sub in subdirs:
+                analysis = sub / "analysis"
+                if not analysis.is_dir():
+                    continue
+                for csv_path in sorted(analysis.glob("*_Summary.csv")):
+                    df = pd.read_csv(csv_path)
+                    df.insert(0, "subdirectory", sub.name)
+                    flat_frames.append(df)
+                    print(f"Read: {csv_path}")
+                for csv_path in sorted(analysis.glob("*_Summary_Facet.csv")):
+                    df = pd.read_csv(csv_path)
+                    df.insert(0, "subdirectory", sub.name)
+                    facet_frames.append(df)
+                    print(f"Read: {csv_path}")
+
+            if not flat_frames and not facet_frames:
+                return "No summary CSVs found to combine."
+
+            written: list[str] = []
+            base = project.name
+            if flat_frames:
+                out = project / f"{base}_combined.csv"
+                pd.concat(flat_frames, ignore_index=True).to_csv(
+                    out, index=False, na_rep="NA"
+                )
+                print(f"Saved: {out}")
+                written.append(f"{len(flat_frames)} → {out.name}")
+            if facet_frames:
+                out = project / f"{base}_combined_facet.csv"
+                pd.concat(facet_frames, ignore_index=True).to_csv(
+                    out, index=False, na_rep="NA"
+                )
+                print(f"Saved: {out}")
+                written.append(f"{len(facet_frames)} → {out.name}")
+            return "Combine complete: " + "; ".join(written)
+
+        self._spawn_task("Combine summaries", _do_combine)
+
     def _launch_subapp(self, which: str) -> None:
         """Launch the Config or QC viewer in a separate process."""
         args = [sys.executable, "-m", "pytrackinganalysis", which]
@@ -1207,6 +1333,100 @@ def _run_pairwise_flat(exp) -> None:
     with open(path, "w") as f:
         f.write(text)
     print(f"Saved: {path}")
+
+
+class BatchToolsDialog(QDialog):
+    """Secondary window with batch operations across project subdirectories."""
+
+    def __init__(self, hub: "HubWindow") -> None:
+        super().__init__(hub)
+        self._hub = hub
+        project = hub._project_dir
+        self.setWindowTitle("PyTrackingAnalysis — Batch tools")
+        self.setMinimumWidth(420)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(10)
+
+        header = QLabel(f"Project: <b>{project}</b>" if project else "Project: <i>(not set)</i>")
+        header.setWordWrap(True)
+        outer.addWidget(header)
+
+        btn_convert = ActionButton(
+            "Convert subdirectories", Category.TOOLS, icon_name="batch"
+        )
+        btn_convert.setToolTip(
+            "For each subdirectory of the project dir, create a 'data/' folder "
+            "and copy every non-YAML file at the top level into it. Preps the "
+            "subdirectories for a batch run."
+        )
+        btn_convert.clicked.connect(self._on_convert)
+
+        btn_prepend = ActionButton(
+            "Prepend to subdir names", Category.TOOLS, icon_name="add"
+        )
+        btn_prepend.setToolTip("Add a substring to the start of every subdirectory name.")
+        btn_prepend.clicked.connect(lambda: self._on_rename("prepend"))
+
+        btn_append = ActionButton(
+            "Append to subdir names", Category.TOOLS, icon_name="add"
+        )
+        btn_append.setToolTip("Add a substring to the end of every subdirectory name.")
+        btn_append.clicked.connect(lambda: self._on_rename("append"))
+
+        btn_remove = ActionButton(
+            "Remove from subdir names", Category.TOOLS, icon_name="remove"
+        )
+        btn_remove.setToolTip("Remove a substring from every subdirectory name.")
+        btn_remove.clicked.connect(lambda: self._on_rename("remove"))
+
+        btn_combine = ActionButton(
+            "Combine summary CSVs", Category.TOOLS, icon_name="csv"
+        )
+        btn_combine.setToolTip(
+            "Stack every analysis/*_Summary.csv and *_Summary_Facet.csv under "
+            "each subdirectory into <project>_combined.csv (and "
+            "<project>_combined_facet.csv) at the project root. Adds a "
+            "'subdirectory' column to track origin."
+        )
+        btn_combine.clicked.connect(self._on_combine)
+
+        for b in (btn_convert, btn_prepend, btn_append, btn_remove, btn_combine):
+            outer.addWidget(b)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        btn_close = QToolButton()
+        btn_close.setText("Close")
+        btn_close.clicked.connect(self.accept)
+        close_row.addWidget(btn_close)
+        outer.addLayout(close_row)
+
+    def _on_convert(self) -> None:
+        self.accept()
+        self._hub._convert_subdirectories()
+
+    def _on_rename(self, mode: str) -> None:
+        prompts = {
+            "prepend": ("Prepend to subdir names", "Substring to prepend:"),
+            "append": ("Append to subdir names", "Substring to append:"),
+            "remove": ("Remove from subdir names", "Substring to remove:"),
+        }
+        title, label = prompts[mode]
+        text, ok = QInputDialog.getText(self, title, label)
+        if not ok:
+            return
+        text = text.strip()
+        if not text:
+            QMessageBox.warning(self, "Batch tools", "Enter a non-empty substring.")
+            return
+        self.accept()
+        self._hub._rename_subdirectories(mode, text)
+
+    def _on_combine(self) -> None:
+        self.accept()
+        self._hub._combine_summaries()
 
 
 # ---------------------------------------------------------------------------
