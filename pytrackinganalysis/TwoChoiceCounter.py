@@ -37,20 +37,22 @@ class TwoChoiceCounter(Counter.Counter):
         keys = list(self.counting_regions_design.keys())
         a = data_subset[keys[0]].cumsum()
         b= data_subset[keys[1]].cumsum()
-        cumpi = (a - b)/(a + b)
-        
+        cumpi = ((a - b)/(a + b)).replace([np.inf, -np.inf], np.nan)
+
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset
-    
-    def calculate_pi_data(self):        
+
+    def calculate_pi_data(self):
         self.pi_data = self.sum_counts_assign_treatments()
-        
+
         trts =[]
-        for key, value in self.counting_regions_design.items():            
+        for key, value in self.counting_regions_design.items():
             trts.append(self.pi_data[key])
-        
-        pi = (trts[0].astype(int) - trts[1].astype(int))/(trts[0].astype(int) + trts[1].astype(int))
-        perc = trts[0].astype(int)/(trts[0].astype(int) + trts[1].astype(int))
+
+        a = trts[0].astype(int)
+        b = trts[1].astype(int)
+        pi = ((a - b)/(a + b)).replace([np.inf, -np.inf], np.nan)
+        perc = (a/(a + b)).replace([np.inf, -np.inf], np.nan)
 
         self.pi_data.insert(1, "Percentage", perc)
         self.pi_data.insert(1, "PI", pi)      
@@ -89,12 +91,12 @@ class TwoChoiceCounter(Counter.Counter):
             
         return pd.DataFrame(pis, columns=['StartMin','EndMin','Percentage'])
     
-    def get_cumulative_percentage(self,range_minutes=(0,0)):                             
+    def get_cumulative_percentage(self,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
         keys = list(self.counting_regions_design.keys())
         a = data_subset[keys[0]].cumsum()
         b= data_subset[keys[1]].cumsum()
-        cumperc = (a)/(a + b)
+        cumperc = (a/(a + b)).replace([np.inf, -np.inf], np.nan)
         
         data_subset.insert(1, "CumulativePercentage", cumperc)
         return data_subset    

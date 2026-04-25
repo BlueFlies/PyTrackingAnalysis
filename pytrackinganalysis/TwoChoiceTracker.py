@@ -87,7 +87,7 @@ class TwoChoiceTracker(Tracker.Tracker):
         data_subset = self.get_pi_subset(range_minutes)
         cumpi_n = data_subset['PI'].cumsum()
         cumpi_d= data_subset['PI'].abs().cumsum()
-        cumpi = cumpi_n/cumpi_d
+        cumpi = (cumpi_n/cumpi_d).replace([np.inf, -np.inf], np.nan)
         
         data_subset.insert(1, "CumulativePI", cumpi)
         return data_subset

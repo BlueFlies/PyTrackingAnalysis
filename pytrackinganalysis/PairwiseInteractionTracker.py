@@ -49,7 +49,7 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1) | (self.neighbor_tracker.rawdata['ClosestNeighbor'] == -1) 
         null_observations = (self.rawdata['ClosestNeighbor'].isnull()) | (self.neighbor_tracker.rawdata['ClosestNeighbor'].isnull())    
            
-        final_quality = (quality | one_blob) & ((~neg_one_distance) | (~null_observations))        
+        final_quality = (quality | one_blob) & (~neg_one_distance) & (~null_observations)
         self.rawdata['IsNeighborValid'] = final_quality 
         
         self.rawdata['ClosestNeighbor_mm'] = self.rawdata['ClosestNeighbor']
@@ -109,7 +109,10 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         median_neighbor_distance = self.get_median_neighbor_distance(range_minutes)
         frames_interacting = self.get_frames_interacting(range_minutes)
         total_valid_frames = self.get_total_frames_with_valid_neighbor(range_minutes)
-        percent_frames_interacting = [x/total_valid_frames for x in frames_interacting]
+        if total_valid_frames == 0:
+            percent_frames_interacting = [0] * len(frames_interacting)
+        else:
+            percent_frames_interacting = [x/total_valid_frames for x in frames_interacting]
         
         distance_names = [f"FramesInteracting_{dist}" for dist in self.parameters.interaction_distance_mm]    
         distance_names2 = [f"PercentInteracting_{dist}" for dist in self.parameters.interaction_distance_mm]    
@@ -197,11 +200,11 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         plt.ylabel('Y Position (mm)')
         title = f'{self.name} ({self.tracking_region_design["Treatment"].iloc[0]})'
         if((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1 and (int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X and Y Coordinates Fipped)"
+                title = title + " (X and Y Coordinates Flipped)"
         elif((int)(self.tracking_region_design['YLocationMultiplier'].iloc[0])==-1):
-                title = title + " (Y Coordinate Fipped)"
+                title = title + " (Y Coordinate Flipped)"
         elif((int)(self.tracking_region_design['XLocationMultiplier'].iloc[0])==-1):
-                title = title + " (X Coordinate Fipped)"
+                title = title + " (X Coordinate Flipped)"
         plt.title(title)
         tmp = self.get_plot_limits()
         plt.xlim(tmp[0])

@@ -278,9 +278,9 @@ class Arena:
         if ((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER) and force_preprocessing):             
             if 'ClosestNeighbor' not in rawdata.columns:
                 rawdata=self.calculate_distances_for_pairwise_tracker(rawdata)
-        if ((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):             
-            #rawdata=self.calculate_distances_for_pairwise_tracker(rawdata)
-            pass
+        if ((self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER)):
+            if 'ClosestNeighbor' not in rawdata.columns:
+                rawdata=self.calculate_distances_for_pairwise_tracker(rawdata)
         return rawdata
     
     def calculate_distances_for_pairwise_tracker(self,rawdata):
@@ -318,7 +318,7 @@ class Arena:
                     distances.extend([distance, distance])
                 else:
                     distances.extend([np.nan] * len(group))
-            elif group['NObjhects'].sum() == 2:
+            elif group['NObjects'].sum() == 2:
                 distance = 0
                 distances.extend([distance, distance])  # Add the distance for both observations
             else:
@@ -1358,7 +1358,7 @@ class Arena:
         Returns:
         DataFrame: Per-tracker RLE statistics including mean and median run lengths per choice.
         """
-        from Parameters import TrackingType
+        from .Parameters import TrackingType
         if self.parameters.get_tracking_type() != TrackingType.TWOCHOICETRACKER:
             raise ValueError(
                 f"Invalid tracking type: {self.parameters.get_tracking_type()}. "

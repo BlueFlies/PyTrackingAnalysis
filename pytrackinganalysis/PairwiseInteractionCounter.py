@@ -16,7 +16,7 @@ class PairwiseInteractionCounter(Counter.Counter):
             raise ValueError(f"Insufficient data for PairwiseInteractionCounter: {tracking_region_id}. Must have at least two objects.")    
         elif(len(object_ids)>2):
             print("Too many objects for PairwiseInteractionCounter.  Only the first two will be used.")
-            object_ids = object_ids.drop(object_ids.index[-1])  
+            object_ids = object_ids[:2]
         
         self.trackers=[]
         for object_id in object_ids:
