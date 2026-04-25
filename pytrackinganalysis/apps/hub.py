@@ -304,7 +304,7 @@ class HubWindow(QMainWindow):
         )
 
         self._mode_single = QRadioButton("Single project")
-        self._mode_batch = QRadioButton("Batch parent")
+        self._mode_batch = QRadioButton("Batch experiments")
         self._mode_single.setChecked(True)
         mode_group = QButtonGroup(self)
         mode_group.addButton(self._mode_single)
@@ -316,21 +316,6 @@ class HubWindow(QMainWindow):
         mode_row.addWidget(self._mode_batch)
         mode_row.addStretch(1)
         card.add_body(mode_row)
-
-        self._batch_parent_edit = QLineEdit()
-        self._batch_parent_edit.setPlaceholderText(
-            "(batch mode) parent folder containing experiment subdirs"
-        )
-        self._batch_parent_edit.setReadOnly(True)
-        self._batch_parent_edit.setEnabled(False)
-        batch_browse = ActionButton("Browse…", Category.NEUTRAL, icon_name="browse")
-        batch_browse.clicked.connect(self._pick_batch_parent)
-        batch_row = QHBoxLayout()
-        batch_row.addWidget(self._batch_parent_edit, 1)
-        batch_row.addWidget(batch_browse)
-        card.add_body(batch_row)
-        self._batch_parent_browse = batch_browse
-        self._batch_parent_browse.setEnabled(False)
 
         load_btn = ActionButton(
             "Load experiment", Category.LOAD, icon_name="load", primary=True
@@ -396,19 +381,12 @@ class HubWindow(QMainWindow):
         self._btn_pairwise.clicked.connect(self._run_pairwise)
         self._dynamic_label_buttons.append((self._btn_pairwise, "Run pairwise comparisons"))
 
-        self._btn_run_batch = ActionButton(
-            "Run Batch…", Category.LOAD, icon_name="batch"
-        )
-        self._btn_run_batch.clicked.connect(self._run_batch)
-        self._btn_run_batch.setVisible(False)  # shown in batch mode
-
         for btn in (
             self._btn_run_analysis,
             self._btn_run_qc,
             self._btn_create_report,
             self._btn_summarize,
             self._btn_pairwise,
-            self._btn_run_batch,
         ):
             card.add_body(btn)
             btn.setEnabled(False)
@@ -541,19 +519,9 @@ class HubWindow(QMainWindow):
         if chosen:
             self._set_project_dir(chosen)
 
-    def _pick_batch_parent(self) -> None:
-        start = str(self._project_dir.parent) if self._project_dir else os.getcwd()
-        chosen = QFileDialog.getExistingDirectory(
-            self, "Choose parent directory of experiments", start
-        )
-        if chosen:
-            self._batch_parent_edit.setText(chosen)
-
     def _on_mode_changed(self) -> None:
         is_batch = self._mode_batch.isChecked()
-        self._batch_parent_edit.setEnabled(is_batch)
-        self._batch_parent_browse.setEnabled(is_batch)
-        self._btn_run_batch.setVisible(is_batch)
+        self._load_btn.setText("Run batch script" if is_batch else "Load experiment")
         # Single-project analyses only make sense for single mode
         for btn in (
             self._btn_run_analysis,
@@ -561,6 +529,12 @@ class HubWindow(QMainWindow):
             self._btn_create_report,
         ):
             btn.setVisible(not is_batch)
+        # Scripts card runs against a single loaded experiment; disable it
+        # wholesale in batch mode so only the load card's "Run batch script"
+        # button stays interactive.
+        scripts_card = self._cards.get("scripts")
+        if scripts_card is not None:
+            scripts_card.setEnabled(not is_batch)
 
     def _set_project_dir(self, path: str | Path) -> None:
         p = Path(path).expanduser().resolve()
@@ -682,9 +656,7 @@ class HubWindow(QMainWindow):
 
     def _load_experiment(self) -> None:
         if self._mode_batch.isChecked():
-            self._log.append_line(
-                "Batch mode: Load is not needed — click 'Run Batch…' directly."
-            )
+            self._run_batch_scripts_per_subdir()
             return
         if not self._project_dir:
             self._warn("Choose a project directory first.")
@@ -919,15 +891,105 @@ class HubWindow(QMainWindow):
 
             self._spawn_task("Pairwise", _do)
 
-    def _run_batch(self) -> None:
-        parent = self._batch_parent_edit.text().strip()
-        if not parent:
-            self._warn("Choose a batch parent directory first.")
+    def _run_batch_scripts_per_subdir(self) -> None:
+        """Run the script named ``batch`` against every immediate subdirectory
+        of the project directory. Each subdir is treated as its own project:
+        scripts are loaded from ``<subdir>/tracking_config.yaml``. Subdirs
+        that don't define a ``batch`` script are reported as warnings and
+        skipped."""
+        from ..script_editor.runner import load_scripts, run_script
+
+        if self._project_dir is None:
+            self._warn("Choose a project directory first.")
             return
-        self._spawn_task(
-            "Batch analysis",
-            lambda: _format_batch_result(ExperimentMod.batch_analyze(parent)),
-        )
+        parent = self._project_dir
+        if not parent.is_dir():
+            self._warn(f"Project directory is not a directory: {parent}")
+            return
+        subdirs = sorted(d for d in parent.iterdir() if d.is_dir())
+        if not subdirs:
+            self._warn(f"No subdirectories found in {parent}.")
+            return
+
+        figures: list[tuple[str, object]] = []
+        worker_log: list[str] = []
+
+        def _log_cb(msg: str) -> None:
+            worker_log.append(str(msg))
+
+        def _fig_cb(title: str, fig) -> None:
+            figures.append((title, fig))
+
+        def _find_config(subdir: Path) -> Path | None:
+            for entry in subdir.iterdir():
+                if entry.is_file() and entry.name.lower() == "tracking_config.yaml":
+                    return entry
+            return None
+
+        def _find_batch_script(scripts: list[dict]) -> dict | None:
+            for s in scripts:
+                if str(s.get("name", "")).strip().lower() == "batch":
+                    return s
+            return None
+
+        def _do() -> str:
+            ran = 0
+            skipped_no_config = 0
+            skipped_no_script = 0
+            failed = 0
+            for sub in subdirs:
+                cfg = _find_config(sub)
+                if cfg is None:
+                    worker_log.append(f"[batch] {sub.name}: no tracking_config.yaml — skipped.")
+                    skipped_no_config += 1
+                    continue
+                try:
+                    scripts = load_scripts(cfg)
+                except Exception as err:  # noqa: BLE001
+                    worker_log.append(f"[batch] {sub.name}: failed to read scripts ({err}) — skipped.")
+                    failed += 1
+                    continue
+                script = _find_batch_script(scripts)
+                if script is None:
+                    worker_log.append(
+                        f"[batch] {sub.name}: no script named 'batch' in {cfg.name} — skipped."
+                    )
+                    skipped_no_script += 1
+                    continue
+                worker_log.append(f"── Running 'batch' in {sub.name} ──")
+                try:
+                    run_script(
+                        script,
+                        project_dir=sub,
+                        log_cb=_log_cb,
+                        figure_cb=_fig_cb,
+                        exp=None,
+                    )
+                    ran += 1
+                except Exception as err:  # noqa: BLE001
+                    worker_log.append(f"[batch] {sub.name}: script failed: {err}")
+                    failed += 1
+            return (
+                f"Batch script complete: {ran} ran, "
+                f"{skipped_no_script} without 'batch' script, "
+                f"{skipped_no_config} without config, "
+                f"{failed} failed (of {len(subdirs)} subdirs)."
+            )
+
+        def _on_ok(msg: str) -> None:
+            for ln in worker_log:
+                self._log.append_line(ln)
+            interactive = self._interactive_checkbox.isChecked()
+            for title, fig in figures:
+                self._plot_dock.add_figure(title, fig, interactive=interactive)
+            self._log.append_line(msg)
+
+        def _on_fail(msg: str) -> None:
+            for ln in worker_log:
+                self._log.append_line(ln)
+            self._log.append_line(msg)
+
+        self._spawn_task_with_callbacks("Batch script", _do, _on_ok, _on_fail)
 
     def _spawn_task(self, task_name: str, fn: Callable[[], object]) -> None:
         self._spawn_task_with_callbacks(task_name, fn, self._on_task_ok, self._on_task_failed)
@@ -1026,7 +1088,6 @@ class HubWindow(QMainWindow):
             self._btn_create_report,
             self._btn_summarize,
             self._btn_pairwise,
-            self._btn_run_batch,
             self._load_btn,
         ):
             btn.setEnabled(
@@ -1075,7 +1136,7 @@ class HubWindow(QMainWindow):
 
     def _convert_subdirectories(self) -> None:
         """For each subdirectory of the project dir, ensure a ``data/`` folder
-        exists and copy every non-YAML top-level file into it. Preps a
+        exists and move every non-YAML top-level file into it. Preps a
         directory tree for a batch run."""
         if not self._project_dir:
             self._warn("Choose a project directory first.")
@@ -1088,8 +1149,8 @@ class HubWindow(QMainWindow):
 
         def _do_convert() -> str:
             print(f"Converting {len(subdirs)} subdirectories under {project}…")
-            copied = 0
-            skipped = 0
+            moved = 0
+            overwritten = 0
             for sub in subdirs:
                 data = sub / "data"
                 if not data.exists():
@@ -1101,16 +1162,19 @@ class HubWindow(QMainWindow):
                     if entry.suffix.lower() in (".yaml", ".yml"):
                         continue
                     dest = data / entry.name
-                    if dest.exists():
-                        print(f"Skipped (exists): {dest}")
-                        skipped += 1
-                        continue
-                    shutil.copy2(entry, dest)
-                    print(f"Copied: {entry.name} → {dest}")
-                    copied += 1
+                    existed = dest.exists()
+                    if existed:
+                        dest.unlink()
+                    shutil.move(str(entry), str(dest))
+                    if existed:
+                        print(f"Overwrote: {entry.name} → {dest}")
+                        overwritten += 1
+                    else:
+                        print(f"Moved: {entry.name} → {dest}")
+                        moved += 1
             return (
-                f"Convert complete: {copied} file(s) copied, "
-                f"{skipped} skipped, across {len(subdirs)} subdirectories."
+                f"Convert complete: {moved} new, {overwritten} overwritten, "
+                f"across {len(subdirs)} subdirectories."
             )
 
         self._spawn_task("Convert subdirectories", _do_convert)
@@ -1119,8 +1183,17 @@ class HubWindow(QMainWindow):
         if not self._project_dir:
             self._warn("Choose a project directory first.")
             return
+        existing = getattr(self, "_batch_tools_dialog", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
         dlg = BatchToolsDialog(self)
-        dlg.exec()
+        dlg.setModal(False)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dlg.destroyed.connect(lambda _=None: setattr(self, "_batch_tools_dialog", None))
+        self._batch_tools_dialog = dlg
+        dlg.show()
 
     def _rename_subdirectories(self, mode: str, text: str) -> None:
         """Rename every immediate subdirectory of the project dir.
@@ -1183,6 +1256,45 @@ class HubWindow(QMainWindow):
             return f"Rename complete: {renamed} of {len(plans)} subdirectories."
 
         self._spawn_task("Rename subdirectories", _do_rename)
+
+    def _copy_yaml_to_subdirectories(self, yaml_path: Path) -> None:
+        """Copy ``yaml_path`` into every immediate subdirectory of the project."""
+        if not self._project_dir:
+            self._warn("Choose a project directory first.")
+            return
+        src = Path(yaml_path)
+        if not src.is_file():
+            self._warn(f"YAML not found: {src}")
+            return
+        project = self._project_dir
+        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
+        if not subdirs:
+            self._log.append_line(f"[copy-yaml] no subdirectories under {project}")
+            return
+
+        def _do_copy() -> str:
+            print(f"Copying {src.name} into {len(subdirs)} subdirectories…")
+            copied = 0
+            overwritten = 0
+            for sub in subdirs:
+                dest = sub / src.name
+                if dest.resolve() == src.resolve():
+                    print(f"Skipped (same file): {dest}")
+                    continue
+                existed = dest.exists()
+                shutil.copy2(src, dest)
+                if existed:
+                    print(f"Overwrote: {dest}")
+                    overwritten += 1
+                else:
+                    print(f"Copied: {dest}")
+                    copied += 1
+            return (
+                f"Copy YAML complete: {copied} new, {overwritten} overwritten "
+                f"across {len(subdirs)} subdirectories."
+            )
+
+        self._spawn_task("Copy YAML to subdirectories", _do_copy)
 
     def _combine_summaries(self) -> None:
         """Stack every ``*_Summary.csv`` and ``*_Summary_Facet.csv`` found in
@@ -1290,17 +1402,6 @@ def _fmt_kwargs(kwargs: dict) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
 
 
-def _format_batch_result(result: dict[str, str]) -> str:
-    ok = sum(1 for v in result.values() if v == "ok")
-    lines = [f"Batch complete: {ok}/{len(result)} succeeded."]
-    for path, status in result.items():
-        tag = "OK  " if status == "ok" else "FAIL"
-        lines.append(f"  {tag}  {path}")
-        if status != "ok":
-            lines.append(f"       {status}")
-    return "\n".join(lines)
-
-
 def _run_pairwise_flat(exp) -> None:
     """Non-facet counterpart to ``Experiment.stats`` — runs over the full range
     and writes ``<exp>_Stats_flat.txt`` to ``analysis_path``."""
@@ -1358,7 +1459,7 @@ class BatchToolsDialog(QDialog):
         )
         btn_convert.setToolTip(
             "For each subdirectory of the project dir, create a 'data/' folder "
-            "and copy every non-YAML file at the top level into it. Preps the "
+            "and move every non-YAML file at the top level into it. Preps the "
             "subdirectories for a batch run."
         )
         btn_convert.clicked.connect(self._on_convert)
@@ -1392,7 +1493,16 @@ class BatchToolsDialog(QDialog):
         )
         btn_combine.clicked.connect(self._on_combine)
 
-        for b in (btn_convert, btn_prepend, btn_append, btn_remove, btn_combine):
+        btn_copy_yaml = ActionButton(
+            "Copy YAML to subdirs", Category.TOOLS, icon_name="config"
+        )
+        btn_copy_yaml.setToolTip(
+            "Pick a YAML file from the project directory and copy it into "
+            "every subdirectory (overwrites if already present)."
+        )
+        btn_copy_yaml.clicked.connect(self._on_copy_yaml)
+
+        for b in (btn_convert, btn_prepend, btn_append, btn_remove, btn_combine, btn_copy_yaml):
             outer.addWidget(b)
 
         close_row = QHBoxLayout()
@@ -1404,7 +1514,6 @@ class BatchToolsDialog(QDialog):
         outer.addLayout(close_row)
 
     def _on_convert(self) -> None:
-        self.accept()
         self._hub._convert_subdirectories()
 
     def _on_rename(self, mode: str) -> None:
@@ -1421,12 +1530,34 @@ class BatchToolsDialog(QDialog):
         if not text:
             QMessageBox.warning(self, "Batch tools", "Enter a non-empty substring.")
             return
-        self.accept()
         self._hub._rename_subdirectories(mode, text)
 
     def _on_combine(self) -> None:
-        self.accept()
         self._hub._combine_summaries()
+
+    def _on_copy_yaml(self) -> None:
+        project = self._hub._project_dir
+        if project is None:
+            QMessageBox.warning(self, "Batch tools", "Choose a project directory first.")
+            return
+        yamls = sorted(
+            [p.name for p in project.iterdir()
+             if p.is_file() and p.suffix.lower() in (".yaml", ".yml")]
+        )
+        if not yamls:
+            QMessageBox.warning(
+                self, "Batch tools",
+                f"No YAML files found at the top of {project}."
+            )
+            return
+        choice, ok = QInputDialog.getItem(
+            self, "Copy YAML to subdirs",
+            "YAML file to copy into every subdirectory:",
+            yamls, 0, False,
+        )
+        if not ok or not choice:
+            return
+        self._hub._copy_yaml_to_subdirectories(project / choice)
 
 
 # ---------------------------------------------------------------------------

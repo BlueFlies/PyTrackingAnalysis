@@ -91,6 +91,14 @@ class Inspector(QWidget):
         self._current_index: int = -1
         self._current_action: Action | None = None
         self._experiment_type: str | None = None
+        # param name → human-readable inherited value. Surfaced as placeholder
+        # text on the matching widget so the user can see what value the
+        # script will inherit from the project's tracking_config.yaml when
+        # left blank.
+        self._inherited: dict[str, str] = {}
+        # param name → field widget for the currently rendered step. Used by
+        # _collect_params so we never depend on form-row indexing.
+        self._widgets_by_name: dict[str, QWidget] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -104,12 +112,31 @@ class Inspector(QWidget):
             if self._current_index >= 0 and self._current_action is not None:
                 self.show_step(self._current_index, self._current_action, self._collect_params())
 
+    def set_inherited(self, values: dict[str, str]) -> None:
+        """Provide YAML-inherited values to display as placeholders.
+
+        Maps param name → string representation. Each is rendered as
+        placeholder text on the matching widget so the user sees what the
+        step will fall back to when the field is left blank.
+        """
+        self._inherited = dict(values)
+        if self._current_index >= 0 and self._current_action is not None:
+            self.show_step(self._current_index, self._current_action, self._collect_params())
+
     def clear(self) -> None:
         self._current_index = -1
         self._current_action = None
         self._clear_empty()
 
     def show_step(self, index: int, action: Action, params: dict) -> None:
+        # Detach the current action *before* clearing the form. Widgets
+        # destroyed by ``_clear_form`` may emit final signals that fire the
+        # connected ``_validate_and_emit`` slot; we don't want it walking the
+        # half-cleared form against the new action's specs.
+        self._current_index = -1
+        self._current_action = None
+        self._clear_form()
+
         self._current_index = index
         self._current_action = action
 
@@ -126,15 +153,33 @@ class Inspector(QWidget):
         self._header_title.setText(action.title)
         self._header_desc.setText(action.description)
 
-        self._clear_form()
-
+        self._widgets_by_name = {}
         for spec in action.params:
             value = params.get(spec.name, spec.default)
             widget = self._make_widget(spec, value)
             self._form.addRow(f"{spec.label}:", widget)
+            self._widgets_by_name[spec.name] = widget
+
+        # Wire `enabled_when` dependencies: a dependent widget is enabled iff
+        # its sibling controller checkbox is checked.
+        for spec in action.params:
+            if spec.enabled_when is None:
+                continue
+            controller = self._widgets_by_name.get(spec.enabled_when)
+            dependent = self._widgets_by_name.get(spec.name)
+            if not isinstance(controller, QCheckBox) or dependent is None:
+                continue
+            self._wire_enabled_when(controller, dependent)
 
         # Validate + surface errors immediately
         self._validate_and_emit(emit_change=False)
+
+    @staticmethod
+    def _wire_enabled_when(controller: QCheckBox, dependent: QWidget) -> None:
+        def _sync() -> None:
+            dependent.setEnabled(controller.isChecked())
+        _sync()
+        controller.toggled.connect(lambda _checked: _sync())
 
     def _clear_empty(self) -> None:
         self._header.setVisible(False)
@@ -148,15 +193,11 @@ class Inspector(QWidget):
         self._form.addRow(empty)
 
     def _clear_form(self) -> None:
-        # Remove all rows
-        while self._form.count():
-            item = self._form.takeAt(0)
-            if item is None:
-                continue
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
+        # Drop every row. ``removeRow`` (unlike ``takeAt``) also collapses the
+        # row count, so subsequent ``addRow`` calls start at row 0 again.
+        while self._form.rowCount() > 0:
+            self._form.removeRow(0)
+        self._widgets_by_name = {}
         self._header.setVisible(True)
 
     # ------------------------------------------------------------------
@@ -232,7 +273,10 @@ class Inspector(QWidget):
                 w.setText(", ".join(str(v) for v in value))
             elif value is not None:
                 w.setText(str(value))
-            w.setPlaceholderText("comma-separated")
+            inherited = self._inherited.get(spec.name)
+            w.setPlaceholderText(
+                f"inherited: {inherited}" if inherited else "comma-separated"
+            )
             w.textChanged.connect(lambda _: self._validate_and_emit())
             return w
 
@@ -246,17 +290,9 @@ class Inspector(QWidget):
         if self._current_action is None:
             return {}
         params: dict[str, Any] = {}
-        # Walk the form rows in order; each row has one field widget.
-        rows = self._form.rowCount()
-        for row in range(rows):
-            item = self._form.itemAt(row, QFormLayout.ItemRole.FieldRole)
-            if item is None:
-                continue
-            w = item.widget()
+        for spec in self._current_action.params:
+            w = self._widgets_by_name.get(spec.name)
             if w is None:
-                continue
-            spec = self._current_action.params[row] if row < len(self._current_action.params) else None
-            if spec is None:
                 continue
             params[spec.name] = self._widget_value(w, spec)
         return params

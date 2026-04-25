@@ -204,19 +204,28 @@ class ScriptEditorWindow(QMainWindow):
 
         # Restrict the action palette + inspector validation to whatever
         # tracking type the project is configured for.
-        exp_type = self._read_tracking_type()
+        cfg = self._read_global_config()
+        tt = cfg.get("tracking_type")
+        exp_type = str(tt).strip().upper() if tt else None
         self._palette.set_experiment_type(exp_type)
         self._inspector.set_experiment_type(exp_type)
 
-    def _read_tracking_type(self) -> str | None:
-        """Return the ``global.tracking_type`` from the project's YAML, or None."""
+        # Surface YAML-inherited defaults as placeholder text in the
+        # inspector. Right now only `cutoffs` inherits.
+        inherited: dict[str, str] = {}
+        cutoffs = cfg.get("facet_cutoffs")
+        if isinstance(cutoffs, (list, tuple)) and cutoffs:
+            inherited["cutoffs"] = ", ".join(str(c) for c in cutoffs)
+        self._inspector.set_inherited(inherited)
+
+    def _read_global_config(self) -> dict:
+        """Return the ``global:`` block from the project's YAML, or ``{}``."""
         try:
             with open(self._config_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
         except Exception:  # noqa: BLE001
-            return None
-        tt = (data.get("global") or {}).get("tracking_type")
-        return str(tt).strip().upper() if tt else None
+            return {}
+        return data.get("global") or {}
 
     def _save(self) -> None:
         try:

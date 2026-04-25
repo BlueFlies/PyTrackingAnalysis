@@ -47,6 +47,11 @@ class ParamSpec:
     choices: tuple[str, ...] | None = None
     min: float | None = None
     max: float | None = None
+    # Name of a sibling bool param that must be True for this widget to be
+    # enabled in the inspector. When the controller is False the widget is
+    # greyed out; the saved value is still preserved so toggling the
+    # controller back on restores it.
+    enabled_when: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +138,24 @@ def _require_exp(ctx: RunContext, action: str) -> None:
         )
 
 
+def _resolve_facet_cutoffs(params: dict, ctx: RunContext) -> tuple[int, ...] | None:
+    """Return cutoffs to pass to a faceted method, or ``None`` for flat.
+
+    ``params['facet']`` controls whether facets are used at all. When facet is
+    on, ``params['cutoffs']`` overrides the experiment's configured cutoffs;
+    if blank, the configured ``facet_cutoffs`` are used. Returns ``None``
+    when facet is off, or when facet is on but no cutoffs are available
+    anywhere — caller is responsible for falling back to flat behaviour.
+    """
+    if not bool(params.get("facet", False)):
+        return None
+    cutoffs = _parse_cutoffs(params.get("cutoffs"))
+    if cutoffs is not None:
+        return cutoffs
+    cfg = getattr(ctx.exp, "facet_cutoffs", None)
+    return tuple(cfg) if cfg is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Executors
 # ---------------------------------------------------------------------------
@@ -188,54 +211,53 @@ def _exec_filter_by_region(params: dict, ctx: RunContext) -> None:
     ctx.log(f"[filter_by_region] kept {len(keep)}/{before} trackers matching {regions}")
 
 
-def _exec_run_qc(params: dict, ctx: RunContext) -> None:
+def _exec_run_qc(_params: dict, ctx: RunContext) -> None:
     _require_exp(ctx, "run_qc")
-    cutoff = float(params.get("qc_cutoff", 0.9))
-    ctx.log(f"[run_qc] cutoff={cutoff:.2f}")
-    ctx.exp.qc(cutoff=cutoff)
+    ctx.log("[run_qc]")
+    ctx.exp.qc()
 
 
 def _exec_run_analysis(params: dict, ctx: RunContext) -> None:
     _require_exp(ctx, "run_analysis")
-    cutoffs = _parse_cutoffs(params.get("cutoffs"))
-    qc_cutoff = float(params.get("qc_cutoff", 0.9))
-    ctx.log(f"[run_analysis] cutoffs={cutoffs} qc_cutoff={qc_cutoff}")
-    ctx.exp.run_analysis(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
+    cutoffs = _resolve_facet_cutoffs(params, ctx)
+    if bool(params.get("facet", False)) and cutoffs is None:
+        ctx.log(
+            "[run_full_analysis] facet=True but no cutoffs provided or configured — "
+            "running flat."
+        )
+    ctx.log(f"[run_full_analysis] cutoffs={cutoffs}")
+    ctx.exp.run_analysis(cutoffs=cutoffs)
 
 
 def _exec_summarize(params: dict, ctx: RunContext) -> None:
     """Mirrors the Hub's Summarize button (with the Faceted checkbox)."""
     _require_exp(ctx, "summarize")
-    facet = bool(params.get("facet", True))
-    if facet:
-        cutoffs = ctx.exp.facet_cutoffs
-        if cutoffs is None:
-            ctx.log("[summarize] facet=True but no facet_cutoffs in config — running flat only.")
-        ctx.log(f"[summarize] facet={facet} cutoffs={cutoffs}")
-        ctx.exp.save_summary(cutoffs=cutoffs)
-    else:
-        ctx.log("[summarize] facet=False")
-        ctx.exp.save_summary(cutoffs=None)
+    cutoffs = _resolve_facet_cutoffs(params, ctx)
+    if bool(params.get("facet", False)) and cutoffs is None:
+        ctx.log(
+            "[summarize] facet=True but no cutoffs provided or configured — "
+            "running flat only."
+        )
+    ctx.log(f"[summarize] cutoffs={cutoffs}")
+    ctx.exp.save_summary(cutoffs=cutoffs)
 
 
 def _exec_run_pairwise_comparisons(params: dict, ctx: RunContext) -> None:
     """Mirrors the Hub's Run pairwise comparisons button."""
     _require_exp(ctx, "run_pairwise_comparisons")
-    facet = bool(params.get("facet", True))
-    if facet:
-        cutoffs = ctx.exp.facet_cutoffs
-        if cutoffs is None:
+    cutoffs = _resolve_facet_cutoffs(params, ctx)
+    if cutoffs is None:
+        if bool(params.get("facet", False)):
             ctx.log(
-                "[run_pairwise_comparisons] facet=True but no facet_cutoffs in config — "
-                "skipping facet, running flat."
+                "[run_pairwise_comparisons] facet=True but no cutoffs provided or "
+                "configured — running flat."
             )
-            _run_flat_pairwise(ctx)
-            return
-        ctx.log(f"[run_pairwise_comparisons] facet=True cutoffs={cutoffs}")
-        ctx.exp.stats(cutoffs=cutoffs, save=True)
-    else:
-        ctx.log("[run_pairwise_comparisons] facet=False")
+        else:
+            ctx.log("[run_pairwise_comparisons] facet=False")
         _run_flat_pairwise(ctx)
+        return
+    ctx.log(f"[run_pairwise_comparisons] cutoffs={cutoffs}")
+    ctx.exp.stats(cutoffs=cutoffs, save=True)
 
 
 def _run_flat_pairwise(ctx: RunContext) -> None:
@@ -278,17 +300,18 @@ def _make_plot_executor(base_method: str):
     def _exec(params: dict, ctx: RunContext) -> None:
         _require_exp(ctx, base_method)
         facet = bool(params.get("facet", True))
-        method_name = f"{base_method}_facet" if facet else base_method
+        cutoffs = _resolve_facet_cutoffs(params, ctx) if facet else None
         kwargs: dict[str, Any] = {}
-        if facet:
-            if ctx.exp.facet_cutoffs is None:
+        if facet and cutoffs is not None:
+            method_name = f"{base_method}_facet"
+            kwargs["cutoffs"] = cutoffs
+        else:
+            if facet and cutoffs is None:
                 ctx.log(
-                    f"[{base_method}] facet=True but no facet_cutoffs configured — "
-                    f"falling back to flat ``{base_method}``."
+                    f"[{base_method}] facet=True but no cutoffs provided or "
+                    f"configured — falling back to flat ``{base_method}``."
                 )
-                method_name = base_method
-            else:
-                kwargs["cutoffs"] = tuple(ctx.exp.facet_cutoffs)
+            method_name = base_method
 
         arena = ctx.exp.arena
         fn = getattr(arena, method_name, None)
@@ -320,28 +343,11 @@ def _make_plot_executor(base_method: str):
     return _exec
 
 
-def _exec_create_report(params: dict, ctx: RunContext) -> None:
+def _exec_create_report(_params: dict, ctx: RunContext) -> None:
     _require_exp(ctx, "create_report")
-    cutoffs = _parse_cutoffs(params.get("cutoffs"))
-    qc_cutoff = float(params.get("qc_cutoff", 0.9))
-    ctx.log(f"[create_report] cutoffs={cutoffs} qc_cutoff={qc_cutoff}")
-    path = ctx.exp.create_report(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
+    ctx.log("[create_report]")
+    path = ctx.exp.create_report()
     ctx.log(f"[create_report] wrote {path}")
-
-
-def _exec_batch_analyze(params: dict, ctx: RunContext) -> None:
-    from .. import Experiment as ExperimentMod
-
-    raw = (params.get("parent_path") or "").strip()
-    if raw in ("", "."):
-        parent = str(ctx.project_dir) if ctx.project_dir else "."
-    else:
-        parent = raw
-    force = bool(params.get("force_preprocessing", False))
-    ctx.log(f"[batch_analyze] parent={parent} force={force}")
-    result = ExperimentMod.batch_analyze(parent, force_preprocessing=force)
-    ok = sum(1 for v in result.values() if v == "ok")
-    ctx.log(f"[batch_analyze] {ok}/{len(result)} succeeded")
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +422,22 @@ _PLOT_ICON_BY_LABEL: dict[str, str] = {
 }
 
 
+def _facet_param_pair() -> tuple[ParamSpec, ParamSpec]:
+    """The standard (facet, cutoffs) pair used by every analysis/plot action."""
+    return (
+        ParamSpec(
+            "facet", "bool", "Faceted", default=True,
+            help="When checked, runs the faceted variant; cutoffs below override "
+                 "the project's facet_cutoffs (blank = use config).",
+        ),
+        ParamSpec(
+            "cutoffs", "list", "cutoffs (minutes, comma-sep)", default="",
+            enabled_when="facet",
+            help="Optional. When blank, the project's facet_cutoffs are used.",
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registered actions
 # ---------------------------------------------------------------------------
@@ -472,24 +494,20 @@ def _build_actions() -> dict[str, Action]:
             description="Print a data-quality report and write {exp}_data_quality.csv.",
             category=Category.ANALYZE,
             icon_name="quality",
-            params=(
-                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
-            ),
+            params=(),
             execute_fn=_exec_run_qc,
         ),
         "run_analysis": Action(
             key="run_analysis",
-            title="Run Analysis",
+            title="Run Full Analysis",
             description=(
-                "Run QC, write summary/facet CSVs, save plots, and run stats. "
-                "Mirrors the Hub's Run Analysis button."
+                "Run the multi-step pipeline: experiment summary → QC → "
+                "summary CSVs → statistics → plots. Mirrors the Hub's "
+                "Run Analysis button."
             ),
             category=Category.ANALYZE,
             icon_name="basic",
-            params=(
-                ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
-                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
-            ),
+            params=_facet_param_pair(),
             validate_fn=_validate_cutoffs,
             execute_fn=_exec_run_analysis,
         ),
@@ -502,13 +520,8 @@ def _build_actions() -> dict[str, Action]:
             ),
             category=Category.ANALYZE,
             icon_name="csv",
-            params=(
-                ParamSpec(
-                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
-                    help="When checked, also writes the per-facet summary using "
-                         "the project's facet_cutoffs.",
-                ),
-            ),
+            params=_facet_param_pair(),
+            validate_fn=_validate_cutoffs,
             execute_fn=_exec_summarize,
         ),
         "run_pairwise_comparisons": Action(
@@ -520,13 +533,8 @@ def _build_actions() -> dict[str, Action]:
             ),
             category=Category.ANALYZE,
             icon_name="compare",
-            params=(
-                ParamSpec(
-                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
-                    help="When checked, runs Tukey HSD per facet using the project's "
-                         "facet_cutoffs; otherwise runs over the full recording.",
-                ),
-            ),
+            params=_facet_param_pair(),
+            validate_fn=_validate_cutoffs,
             execute_fn=_exec_run_pairwise_comparisons,
         ),
         "create_report": Action(
@@ -535,24 +543,8 @@ def _build_actions() -> dict[str, Action]:
             description="Write {exp}_report.pdf with QC tables, tracker grids, and plots.",
             category=Category.ANALYZE,
             icon_name="report",
-            params=(
-                ParamSpec("cutoffs", "list", "cutoffs (minutes, comma-sep)", default=""),
-                ParamSpec("qc_cutoff", "float", "qc_cutoff", default=0.9, min=0.0, max=1.0),
-            ),
-            validate_fn=_validate_cutoffs,
+            params=(),
             execute_fn=_exec_create_report,
-        ),
-        "batch_analyze": Action(
-            key="batch_analyze",
-            title="Run batch analysis",
-            description="Run Experiment.run_analysis() + create_report() on every valid subdir.",
-            category=Category.LOAD,
-            icon_name="batch",
-            params=(
-                ParamSpec("parent_path", "path", "parent dir", default="."),
-                ParamSpec("force_preprocessing", "bool", "Force preprocessing", default=False),
-            ),
-            execute_fn=_exec_batch_analyze,
         ),
     }
 
@@ -564,16 +556,12 @@ def _build_actions() -> dict[str, Action]:
             title=label,
             description=(
                 f"Render the {label} plot. When ``Faceted`` is checked, calls the "
-                f"_facet variant using the project's facet_cutoffs; otherwise plots "
-                f"over the full recording."
+                f"_facet variant; cutoffs below override the project's facet_cutoffs."
             ),
             category=Category.PLOTS,
             icon_name=_PLOT_ICON_BY_LABEL.get(label, "plot"),
-            params=(
-                ParamSpec(
-                    "facet", "bool", "Faceted (use config cutoffs)", default=True,
-                ),
-            ),
+            params=_facet_param_pair(),
+            validate_fn=_validate_cutoffs,
             execute_fn=_make_plot_executor(base_method),
             applicable_types=applies,
         )
