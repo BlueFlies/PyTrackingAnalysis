@@ -1,0 +1,161 @@
+# Verification Review — PyTrackingAnalysis
+
+*Reviewed: 2026-04-25. Scope: the single initial commit (2eec537) that added all source files.*
+
+---
+
+## Summary
+
+The diff is a large initial commit of the full PyTrackingAnalysis codebase (~23,000 lines across 77 files). The core analysis modules are generally well-structured, but there are **three runtime-breaking bugs** that will crash the program on common code paths, plus two additional bugs causing silent data corruption and two missing imports that produce `NameError` at runtime. The GUI/UI layer is solid and the subprocess launching is done safely. Recommendation: **fix issues first** — the critical bugs in `PairwiseInteractionCounter`, `PairwiseInteractionTracker.summarize()`, `Arena.analyze_rle_data()`, and `SpecialFunctions` (missing imports + duplicate definitions) will surface immediately in normal use.
+
+---
+
+## Top Issues
+
+### 1. `PairwiseInteractionCounter.py:19` — NumPy array treated as pandas DataFrame
+**Severity: CRITICAL | Confidence: HIGH**
+
+`object_ids = self.rawdata['ObjectID'].unique()` returns a **numpy array**, but line 19 calls `.drop(object_ids.index[-1])` — both `.drop()` and `.index` are pandas DataFrame/Series methods that do not exist on numpy arrays. This raises `AttributeError: 'numpy.ndarray' object has no attribute 'drop'` every time a pairwise counter is initialized with more than 2 object IDs.
+
+**Suggested fix:** Replace with a numpy slice: `object_ids = object_ids[:2]` (keep only the first two) instead of trying to drop the last one.
+
+---
+
+### 2. `SpecialFunctions.py:208,211,265` — `os` and `glob` never imported; used in `stack_summary_files` and `stack_summary_facet_files`
+**Severity: CRITICAL | Confidence: HIGH**
+
+The file only imports `numpy`, `pandas`, `Arena`, and `Parameters`. `stack_summary_files()` (line 208: `os.walk(...)`, line 211: `glob.glob(...)`) and `stack_summary_facet_files()` (lines 262, 265) call `os` and `glob` without either being imported anywhere. Both functions raise `NameError: name 'os' is not defined` on first call.
+
+**Suggested fix:** Add `import os` and `import glob` at the top of the file.
+
+---
+
+### 3. `Arena.py:1361` — Non-relative import inside package method
+**Severity: CRITICAL | Confidence: HIGH**
+
+Inside `analyze_rle_data()`, line 1361 uses `from Parameters import TrackingType` (bare absolute import). All other imports in this file use `from . import Parameters` (relative). When `Arena.py` is used as part of the `pytrackinganalysis` package, `Parameters` is not on `sys.path` and this raises `ModuleNotFoundError: No module named 'Parameters'`.
+
+**Suggested fix:** Change to `from .Parameters import TrackingType` (relative import).
+
+---
+
+### 4. `PairwiseInteractionTracker.py:112` — Division by zero in `summarize()` not guarded
+**Severity: CRITICAL | Confidence: HIGH**
+
+`summarize()` at line 112 computes `percent_frames_interacting = [x/total_valid_frames for x in frames_interacting]` without checking whether `total_valid_frames == 0`. The helper method `get_percent_frames_interacting()` (lines 80–84) correctly guards against this, but `summarize()` calls `get_total_frames_with_valid_neighbor()` directly and skips the guard, causing `ZeroDivisionError` whenever all neighbor observations are invalid.
+
+**Suggested fix:** Call `self.get_percent_frames_interacting(range_minutes)` instead of the manual division, or add an identical `if total_valid_frames == 0` guard.
+
+---
+
+### 5. `PairwiseInteractionTracker.py:52` — Logical error in validity filter (OR vs AND)
+**Severity: HIGH | Confidence: MEDIUM**
+
+```python
+final_quality = (quality | one_blob) & ((~neg_one_distance) | (~null_observations))
+```
+
+The intent is to reject frames where the distance is `-1` **or** null. "Neither -1 nor null" requires `AND`, not `OR`. With `OR`, a frame where `ClosestNeighbor == -1` (but not null) satisfies `~null_observations == True`, so the frame is incorrectly marked valid. The same applies for null-but-not-negative-one frames. This causes downstream interaction calculations to include corrupted distance values.
+
+**Suggested fix:** Change to `((~neg_one_distance) & (~null_observations))`.
+
+---
+
+## All Findings
+
+### `pytrackinganalysis/PairwiseInteractionCounter.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 19 | `object_ids.drop(object_ids.index[-1])` — `.drop()` and `.index` do not exist on numpy arrays (result of `.unique()`). Crashes with `AttributeError` whenever `len(object_ids) > 2`. | CRITICAL | HIGH |
+
+---
+
+### `pytrackinganalysis/PairwiseInteractionTracker.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 52 | `((~neg_one_distance) \| (~null_observations))` — OR logic should be AND. Invalid frames with distance=-1 (non-null) or null distance (non-negative) will be incorrectly marked valid. | HIGH | MEDIUM |
+| 112 | `[x/total_valid_frames for x in frames_interacting]` — no guard for `total_valid_frames == 0`; raises `ZeroDivisionError` in `summarize()` even though `get_percent_frames_interacting()` handles this correctly. | CRITICAL | HIGH |
+| 28–29 | Commented-out frame-alignment check: `if(sum(self.rawdata['Frame'] - self.neighbor_tracker.rawdata['Frame'])!=0): raise ValueError(...)`. The comment says it "might not actually be needed," but if frames do not align, the vector arithmetic on lines 32–36 silently calculates distances between mismatched frames. | MEDIUM | MEDIUM |
+| 200, 202, 204 | `"Fipped"` should be `"Flipped"` in all three axis-flip title strings. | LOW | HIGH |
+
+---
+
+### `pytrackinganalysis/Arena.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 1361 | `from Parameters import TrackingType` — bare absolute import inside a package method. Should be `from .Parameters import TrackingType`. Will raise `ModuleNotFoundError` in normal package usage. | CRITICAL | HIGH |
+| 283 | `pass` inside `elif(len(object_ids)==PAIRWISEINTERACTIONCOUNTER)` block — the commented-out preprocessing call `rawdata=self.calculate_distances_for_pairwise_tracker(rawdata)` was disabled. It is unclear whether the stub is intentional or whether this preprocessing step was unintentionally removed, leaving the Counter without pre-calculated distances. | MEDIUM | LOW |
+
+---
+
+### `pytrackinganalysis/SpecialFunctions.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 208, 211 | `os.walk(...)` and `glob.glob(...)` used in `stack_summary_files()` but neither `os` nor `glob` is imported. Raises `NameError` on first call. | CRITICAL | HIGH |
+| 262, 265 | Same missing `os`/`glob` imports affect `stack_summary_facet_files()`. | CRITICAL | HIGH |
+| 33–35 | `analyze_distance_by_light` defined as a thin delegation wrapper (calls `arena.analyze_distance_by_light()`). Immediately overridden by the full standalone implementation at line 49. The first definition is silently dead code. | MEDIUM | HIGH |
+| 38–45 | `analyze_distance_by_light_facet` defined as a delegation wrapper (line 38), then overridden by the full standalone implementation at line 152. Same issue as above — first definition is dead code. | MEDIUM | HIGH |
+| 143 | `import numpy as np` inside function body (deferred import). Benign but redundant — `numpy` is already imported as `np` at line 7. | LOW | HIGH |
+
+---
+
+### `pytrackinganalysis/TwoChoiceCounter.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 40 | `cumpi = (a - b)/(a + b)` — no guard for `(a + b) == 0` (both treatment counts zero). Produces `inf`/`NaN` silently propagated into results. | HIGH | HIGH |
+| 52 | `pi = (trts[0]... - trts[1]...)/(trts[0]... + trts[1]...)` — same zero-denominator risk in `calculate_pi_data()`. | HIGH | HIGH |
+| 53 | `perc = trts[0].astype(int)/(trts[0].astype(int) + trts[1].astype(int))` — same zero-denominator risk. | HIGH | HIGH |
+
+---
+
+### `pytrackinganalysis/TwoChoiceTracker.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 90 | `cumpi = cumpi_n/cumpi_d` where `cumpi_d = data_subset['PI'].abs().cumsum()`. If no frames have non-zero PI, `cumpi_d` is zero at those points, producing `inf`/`NaN`. Unlike the similar code in `TwoChoiceCounter`, this operates on a per-row basis so only some rows are affected. | HIGH | HIGH |
+| 45 | `## TODO: Maybe make sure the transitions happen only between counting regions that` — incomplete TODO comment; the validation described is not implemented in `get_number_of_transitions()`. | LOW | HIGH |
+
+---
+
+### `pytrackinganalysis/Experiment.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 527 | `except Exception as err:` in the QC plot facet loop catches all exceptions and silently substitutes an error title. This is intentional UI resilience, but errors during scatter plotting (e.g., missing columns) will not surface to the caller. | LOW | HIGH |
+| 769, 793, 833 | Multiple bare `except Exception: pass`-style blocks in `_report_section_*` methods suppress all plot generation errors silently. | LOW | MEDIUM |
+| 1058 | `except Exception: pass` silences errors when computing QC data quality summary for the report cover page. A corrupt QC result would be silently omitted from the report. | LOW | HIGH |
+
+---
+
+### `pytrackinganalysis/ui/settings.py`
+
+| Line | Description | Severity | Confidence |
+|------|-------------|----------|------------|
+| 47 | `except Exception: pass` silences all errors when saving user settings to disk. If the config directory is unwritable or the JSON serialization fails, the failure is silently dropped and settings are lost. | MEDIUM | HIGH |
+
+---
+
+## Unknowns
+
+1. **`Arena.py:283`** — The commented-out `calculate_distances_for_pairwise_tracker(rawdata)` call for `PAIRWISEINTERACTIONCOUNTER`. It is unclear whether `PairwiseInteractionCounter` can operate correctly without pre-calculated `ClosestNeighbor` distances, or whether that step was intentionally deferred to a different code path. Verifying requires running the counter end-to-end with real data to see if `ClosestNeighbor` is always present in the input CSV.
+
+2. **`PairwiseInteractionTracker.py:28–29`** — The frame-alignment assumption. If all data sources always produce matching frame indices (guaranteed by the upstream tracking software), the commented-out check is unnecessary. If any source can produce mismatched frames, the check is essential. Requires inspection of the expected data format or upstream tracker output.
+
+3. **`TwoChoiceTracker.py:90` cumulative PI denominator** — Whether `cumpi_d` can ever be exactly zero depends on whether PI values are always non-zero across all frames. Worth verifying with edge-case data (e.g., animal never visits either choice arm).
+
+4. **`SpecialFunctions.py` duplicate function bodies** — The standalone implementations at lines 49–149 and 152–182 duplicate logic found in `Arena`. It is unclear whether these were intentionally kept for use without an `Arena` instance or are artifacts of an incomplete refactor. The module docstring says "simply delegates" but the code does not.
+
+---
+
+## What Looked Good
+
+- **`Arena.py` subprocess safety** (`hub.py:1119–1123`): `subprocess.Popen` is called with an explicit argument list (never `shell=True`), eliminating injection risk.
+- **`__init__.py` lazy loading**: The PEP-562 `__getattr__` pattern correctly defers module imports so the GUI can call `matplotlib.use("Agg")` before pyplot is touched — a non-obvious but correct solution to the Qt/matplotlib backend conflict.
+- **`PairwiseInteractionTracker.get_percent_frames_interacting()` (lines 80–84)**: The `total_valid_frames == 0` guard is correctly implemented here; the oversight is only in `summarize()` which bypasses this method.
+- **`Arena.py` config validation (lines 95–101)**: KeyError on unknown tracking type is caught and re-raised as a descriptive `ValueError` with valid options listed — good defensive practice.
+- **`Experiment.py` QC plots**: The broad exception handling in rendering loops is acceptable for a reporting context; the error is surfaced in the plot title rather than dropped silently.
