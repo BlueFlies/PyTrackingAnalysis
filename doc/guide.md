@@ -10,10 +10,10 @@
 3. [Project directory structure](#3-project-directory-structure)
 4. [The tracking\_config.yaml reference](#4-the-tracking_configyaml-reference)
 5. [The desktop UI](#5-the-desktop-ui)
-   - [Launching the UI](#51-launching-the-ui)
-   - [Config tab](#52-config-tab)
-   - [Run tab](#53-run-tab)
-   - [Outputs tab](#54-outputs-tab)
+   - [Launching the apps](#51-launching-the-apps)
+   - [Analysis Hub](#52-analysis-hub-ptrack-hub)
+   - [Config Editor](#53-config-editor-ptrack-config)
+   - [QC Viewer](#54-qc-viewer-ptrack-qc)
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
 8. [Batch analysis across multiple experiments](#8-batch-analysis-across-multiple-experiments)
@@ -562,14 +562,12 @@ used in `Notebooks/SimpleTracker.ipynb`.
 ### Setup
 
 ```python
-import os
-# If running from the Notebooks/ sub-directory, step up to the repo root first:
-os.chdir("../")
-
 import warnings
 warnings.filterwarnings("ignore")
 
-from Experiment import Experiment, batch_analyze
+# PyTrackingAnalysis is installed as a package by `uv sync`, so import it by its
+# full dotted path. This works from any working directory — no os.chdir needed.
+from pytrackinganalysis.Experiment import Experiment, batch_analyze
 ```
 
 ### Single experiment
@@ -692,16 +690,16 @@ ParentFolder/
 
 ### Running in the UI
 
-1. Set the **Batch parent** field in the Run tab to `ParentFolder/`.
-2. Click **Run Batch Analysis**.
-3. Results appear in each experiment's own `analysis/` and `qc/` folders.
-4. The Outputs tab shows files from all experiments, prefixed with the
-   sub-directory name (e.g. `Experiment_A/analysis/Experiment_A_report.pdf`).
+1. In the Hub's **Load** card, choose **Batch parent** and select `ParentFolder/`.
+2. In the **Analyze** card, click **Run Batch…**.
+3. The task runs on a background thread; progress streams to the **Output** tab.
+4. Results are written into each experiment's own `analysis/` and `qc/` folders
+   (e.g. `Experiment_A/analysis/Experiment_A_report.pdf`).
 
 ### Running from Python
 
 ```python
-from Experiment import batch_analyze
+from pytrackinganalysis.Experiment import batch_analyze
 
 results = batch_analyze("./ParentFolder/")
 ```
@@ -759,7 +757,7 @@ tracking_regions:
 ### One-line pipeline (Python)
 
 ```python
-from Experiment import Experiment
+from pytrackinganalysis.Experiment import Experiment
 exp = Experiment("/path/to/project/")
 exp.run_analysis()
 exp.create_report()
