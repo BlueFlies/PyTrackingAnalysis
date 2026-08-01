@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -274,6 +275,8 @@ class ActionButton(QPushButton):
 class OutputLog(QPlainTextEdit):
     """Read-only log panel with a capped scrollback."""
 
+    line_appended = pyqtSignal(str)
+
     def __init__(self, parent: QWidget | None = None, *, max_lines: int = 5000) -> None:
         super().__init__(parent)
         self.setObjectName("PtrackLog")
@@ -284,6 +287,7 @@ class OutputLog(QPlainTextEdit):
         self.appendPlainText(text.rstrip())
         self.moveCursor(QTextCursor.MoveOperation.End)
         self.ensureCursorVisible()
+        self.line_appended.emit(text)
 
 
 # ---------------------------------------------------------------------------
@@ -293,23 +297,72 @@ class OutputLog(QPlainTextEdit):
 class PlotDock(QTabWidget):
     """Tabbed dock for matplotlib figures.
 
-    The first tab is always *Output* (the supplied :class:`OutputLog`);
-    subsequent tabs are added by :meth:`add_figure` and are individually
-    closable.
+    The first tab is always *Output* (the supplied :class:`OutputLog`); an
+    optional second permanent *Errors* tab (``error_log``) collects warnings
+    and errors so they aren't lost in the normal output. Subsequent tabs are
+    added by :meth:`add_figure` and are individually closable.
     """
 
-    def __init__(self, output_log: OutputLog, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        output_log: OutputLog,
+        error_log: OutputLog | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setTabsClosable(True)
         self.setMovable(True)
         self.setDocumentMode(True)
         self.tabCloseRequested.connect(self._on_close)
 
+        no_btn = self.tabBar().ButtonPosition.RightSide
+        self._output_log = output_log
+        self._error_log = error_log
+        self._unseen_issues = 0
         self.addTab(output_log, icon("info"), "Output")
-        self.tabBar().setTabButton(0, self.tabBar().ButtonPosition.RightSide, None)
+        self.tabBar().setTabButton(0, no_btn, None)
+        if error_log is not None:
+            idx = self.addTab(error_log, icon("warning"), "Errors")
+            self.tabBar().setTabButton(idx, no_btn, None)
+            # Badge the Errors tab when lines arrive while it isn't visible.
+            error_log.line_appended.connect(self._on_issue_logged)
+            self.currentChanged.connect(self._on_tab_changed)
+
+        clear_btn = QToolButton(self)
+        clear_btn.setText("Clear plots")
+        clear_btn.setIcon(icon("clear"))
+        clear_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        clear_btn.setAutoRaise(True)
+        clear_btn.setToolTip("Close all plot tabs and show the Output tab.")
+        clear_btn.clicked.connect(self.clear_figures)
+        self.setCornerWidget(clear_btn, Qt.Corner.TopRightCorner)
+
+    def _on_issue_logged(self, _text: str) -> None:
+        idx = self.indexOf(self._error_log)
+        if idx < 0 or self.currentWidget() is self._error_log:
+            return
+        self._unseen_issues += 1
+        self.setTabText(idx, f"Errors ({self._unseen_issues})")
+
+    def _on_tab_changed(self, _idx: int) -> None:
+        if self.currentWidget() is self._error_log:
+            self._unseen_issues = 0
+            self.setTabText(self.indexOf(self._error_log), "Errors")
+
+    def clear_figures(self) -> None:
+        """Close every figure tab (everything but Output/Errors), show Output."""
+        fixed = (self._output_log, self._error_log)
+        for idx in range(self.count() - 1, -1, -1):
+            w = self.widget(idx)
+            if w in fixed:
+                continue
+            self.removeTab(idx)
+            if w is not None:
+                w.deleteLater()
+        self.setCurrentWidget(self._output_log)
 
     def _on_close(self, idx: int) -> None:
-        if idx == 0:
+        if self.widget(idx) in (self._output_log, self._error_log):
             return
         w = self.widget(idx)
         self.removeTab(idx)

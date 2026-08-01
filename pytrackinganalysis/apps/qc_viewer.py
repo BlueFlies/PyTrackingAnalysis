@@ -55,6 +55,7 @@ from ..ui import (
     PlotDock,
     TopBar,
     ZoomableImageView,
+    app_icon,
     apply_theme,
     icon,
     resolved_mode,
@@ -179,7 +180,8 @@ class QcViewerWindow(QMainWindow):
 
         # Right: PlotDock
         self._log = OutputLog()
-        self._plot_dock = PlotDock(self._log)
+        self._err_log = OutputLog()
+        self._plot_dock = PlotDock(self._log, self._err_log)
         self._plot_dock.setMinimumWidth(520)
         splitter.addWidget(self._plot_dock)
 
@@ -212,13 +214,19 @@ class QcViewerWindow(QMainWindow):
     # Project loading
     # ==================================================================
 
+    def _log_issue(self, msg: str) -> None:
+        """Log *msg* to the Errors tab as well as the chronological Output tab."""
+        self._log.append_line(msg)
+        self._err_log.append_line(msg)
+
     def _reload(self) -> None:
         if self._project_dir:
             self._load_project(self._project_dir)
 
     def _load_project(self, path: Path) -> None:
         self._project_dir = path
-        self._path_lbl.setText(str(path))
+        self._path_lbl.setText(path.name or str(path))
+        self._path_lbl.setToolTip(str(path))
         self.setWindowTitle(f"PyTrackingAnalysis — QC Viewer — {path.name}")
         self._log.append_line(f"Loading experiment from {path}…")
         try:
@@ -226,7 +234,7 @@ class QcViewerWindow(QMainWindow):
         except Exception as err:  # noqa: BLE001
             import traceback
 
-            self._log.append_line(traceback.format_exc())
+            self._log_issue(traceback.format_exc())
             QMessageBox.critical(self, "Load failed", str(err))
             return
         ui_settings.add_recent_project(path)
@@ -243,7 +251,7 @@ class QcViewerWindow(QMainWindow):
             return
         pngs = sorted(qc_dir.glob("*_qc_*.png"))
         if not pngs:
-            self._log.append_line(
+            self._log_issue(
                 f"[qc] no QC artifacts found in {qc_dir} "
                 "(re-load via the Hub to regenerate)"
             )
@@ -255,7 +263,7 @@ class QcViewerWindow(QMainWindow):
         """Embed a PNG as a zoomable tab in the PlotDock."""
         view = ZoomableImageView(png_path)
         if view.is_empty():
-            self._log.append_line(f"[qc] failed to load {png_path}")
+            self._log_issue(f"[qc] failed to load {png_path}")
             return
         # Drop the leading "<exp>_qc_" prefix and the ".png" suffix to keep tab titles short.
         title = png_path.stem
@@ -338,12 +346,12 @@ class QcViewerWindow(QMainWindow):
                     tracker = t
                     break
         if tracker is None:
-            self._log.append_line(f"[qc] tracker {tracker_name!r} not found")
+            self._log_issue(f"[qc] tracker {tracker_name!r} not found")
             return
 
         rawdata = getattr(tracker, "rawdata", None)
         if rawdata is None or rawdata.empty:
-            self._log.append_line(f"[qc] tracker {tracker_name} has no raw data")
+            self._log_issue(f"[qc] tracker {tracker_name} has no raw data")
             return
 
         dq = tracker.get_data_quality()
@@ -439,6 +447,7 @@ class QcViewerWindow(QMainWindow):
         try:
             self._dq.to_csv(path, index=False)
         except Exception as err:  # noqa: BLE001
+            self._log_issue(f"[qc] export failed: {err}")
             QMessageBox.critical(self, "Export failed", str(err))
             return
         self._log.append_line(f"[qc] wrote {path}")
@@ -475,6 +484,10 @@ def _scalar(value) -> float:
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    # Wayland uses the desktop-file name as the app id for taskbar icons;
+    # setWindowIcon covers X11/Windows/macOS and window title bars.
+    app.setDesktopFileName("pytrack-qc")
+    app.setWindowIcon(app_icon())
     mode = ui_settings.get("theme", "auto")
     apply_theme(app, mode=mode)
 

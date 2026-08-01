@@ -60,6 +60,7 @@ from ..ui import (
     TopBar,
     ZoomableImageView,
     ZoomableTextView,
+    app_icon,
     apply_theme,
     icon,
     resolved_mode,
@@ -219,7 +220,8 @@ class HubWindow(QMainWindow):
 
         # Right: plot dock
         self._log = OutputLog()
-        self._plot_dock = PlotDock(self._log)
+        self._err_log = OutputLog()
+        self._plot_dock = PlotDock(self._log, self._err_log)
         self._plot_dock.setMinimumWidth(420)
         splitter.addWidget(self._plot_dock)
 
@@ -311,9 +313,32 @@ class HubWindow(QMainWindow):
         mode_group.addButton(self._mode_batch)
         mode_group.buttonClicked.connect(self._on_mode_changed)
 
+        batch_help = QToolButton()
+        batch_help.setText("?")
+        batch_help.setFixedSize(18, 18)
+        batch_help.setToolTip("How batch analyses work")
+        batch_help.setCursor(Qt.CursorShape.PointingHandCursor)
+        batch_help.setStyleSheet(
+            "QToolButton {"
+            "  border: 1px solid palette(mid);"
+            "  border-radius: 9px;"          # half of the fixed size → circle
+            "  background: palette(button);"
+            "  color: palette(button-text);"
+            "  font-size: 11px;"
+            "  font-weight: 600;"
+            "  padding: 0px;"
+            "}"
+            "QToolButton:hover {"
+            "  background: palette(midlight);"
+            "  border-color: palette(highlight);"
+            "}"
+        )
+        batch_help.clicked.connect(self._show_batch_help)
+
         mode_row = QHBoxLayout()
         mode_row.addWidget(self._mode_single)
         mode_row.addWidget(self._mode_batch)
+        mode_row.addWidget(batch_help)
         mode_row.addStretch(1)
         card.add_body(mode_row)
 
@@ -539,7 +564,10 @@ class HubWindow(QMainWindow):
     def _set_project_dir(self, path: str | Path) -> None:
         p = Path(path).expanduser().resolve()
         self._project_dir = p
-        self._project_edit.setText(str(p))
+        # Show only the folder name; the full path lives in self._project_dir
+        # and is surfaced via the tooltip.
+        self._project_edit.setText(p.name or str(p))
+        self._project_edit.setToolTip(str(p))
         ui_settings.add_recent_project(p)
         # Populate config combo
         self._config_combo.blockSignals(True)
@@ -577,7 +605,7 @@ class HubWindow(QMainWindow):
             try:
                 scripts = load_scripts(cfg)
             except Exception as err:  # noqa: BLE001
-                self._log.append_line(f"[scripts] failed to read {cfg}: {err}")
+                self._log_issue(f"[scripts] failed to read {cfg}: {err}")
         self._scripts = scripts
         self._scripts_combo.blockSignals(True)
         self._scripts_combo.clear()
@@ -645,7 +673,7 @@ class HubWindow(QMainWindow):
         def _on_fail(msg: str) -> None:
             for ln in worker_log:
                 self._log.append_line(ln)
-            self._log.append_line(msg)
+            self._log_issue(msg)
 
         # Dispatch through our regular TaskWorker for thread safety + log redirect
         self._spawn_task_with_callbacks("Script run", _run, _on_ok, _on_fail)
@@ -683,7 +711,7 @@ class HubWindow(QMainWindow):
             self._log.append_line(msg)
 
         def _on_fail(msg: str) -> None:
-            self._log.append_line(msg)
+            self._log_issue(msg)
             self._warn("Failed to load experiment — see Output for details.")
 
         self._log.append_line(f"Loading experiment from {project_dir}…")
@@ -767,7 +795,7 @@ class HubWindow(QMainWindow):
             return
         fn = getattr(self._exp.arena, method_name, None)
         if fn is None:
-            self._log.append_line(f"Unknown plot method: arena.{method_name}")
+            self._log_issue(f"Unknown plot method: arena.{method_name}")
             return
         self._log.append_line(f"[plot] arena.{method_name}({_fmt_kwargs(kwargs)})")
         with capture_figures() as figs:
@@ -776,11 +804,11 @@ class HubWindow(QMainWindow):
             except Exception as err:  # noqa: BLE001
                 import traceback
 
-                self._log.append_line(traceback.format_exc())
+                self._log_issue(traceback.format_exc())
                 self._warn(f"Plot failed: {err}")
                 return
         if not figs:
-            self._log.append_line(f"[plot] {method_name} produced no figures.")
+            self._log_issue(f"[plot] {method_name} produced no figures.")
             return
         interactive = self._interactive_checkbox.isChecked()
         for i, fig in enumerate(figs):
@@ -891,6 +919,46 @@ class HubWindow(QMainWindow):
 
             self._spawn_task("Pairwise", _do)
 
+    def _show_batch_help(self) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle("Batch experiments — how it works")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
+            "<h3>Running batch analyses</h3>"
+            "<p>In <b>Batch experiments</b> mode the chosen project directory is "
+            "treated as a <b>parent folder</b>: every immediate subdirectory is "
+            "run as its own independent experiment. Click "
+            "<b>Run batch script</b> (the Load button changes its label in "
+            "batch mode) to start.</p>"
+            "<p><b>Each subfolder needs:</b></p>"
+            "<ul>"
+            "<li>a <code>tracking_config.yaml</code> (any capitalisation) with "
+            "the usual experiment configuration, and</li>"
+            "<li>inside that YAML, a <code>scripts:</code> entry containing a "
+            "script named <code>batch</code> (case-insensitive).</li>"
+            "</ul>"
+            "<p><b>What runs:</b> for each subfolder, only its script named "
+            "<code>batch</code> is executed, with that subfolder as the "
+            "project directory (a <code>load_experiment</code> step with "
+            "<code>path: \".\"</code> loads the subfolder's own data). Scripts "
+            "are authored in the Script Editor (Config Editor → Script "
+            "Editor) and saved into each subfolder's YAML.</p>"
+            "<p><b>Skips and failures:</b></p>"
+            "<ul>"
+            "<li>No <code>tracking_config.yaml</code> → subfolder is skipped "
+            "with a warning in the Output tab.</li>"
+            "<li>YAML has no script named <code>batch</code> → skipped with a "
+            "warning.</li>"
+            "<li>A script error in one subfolder is logged; the remaining "
+            "subfolders still run.</li>"
+            "</ul>"
+            "<p>When finished, a summary line reports how many subfolders ran, "
+            "were skipped, or failed. Any figures the scripts produce open as "
+            "plot tabs.</p>"
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
     def _run_batch_scripts_per_subdir(self) -> None:
         """Run the script named ``batch`` against every immediate subdirectory
         of the project directory. Each subdir is treated as its own project:
@@ -913,9 +981,14 @@ class HubWindow(QMainWindow):
 
         figures: list[tuple[str, object]] = []
         worker_log: list[str] = []
+        issues: list[str] = []  # warning/error lines, mirrored to the Errors tab
 
         def _log_cb(msg: str) -> None:
             worker_log.append(str(msg))
+
+        def _issue(msg: str) -> None:
+            worker_log.append(msg)
+            issues.append(msg)
 
         def _fig_cb(title: str, fig) -> None:
             figures.append((title, fig))
@@ -940,18 +1013,18 @@ class HubWindow(QMainWindow):
             for sub in subdirs:
                 cfg = _find_config(sub)
                 if cfg is None:
-                    worker_log.append(f"[batch] {sub.name}: no tracking_config.yaml — skipped.")
+                    _issue(f"[batch] {sub.name}: no tracking_config.yaml — skipped.")
                     skipped_no_config += 1
                     continue
                 try:
                     scripts = load_scripts(cfg)
                 except Exception as err:  # noqa: BLE001
-                    worker_log.append(f"[batch] {sub.name}: failed to read scripts ({err}) — skipped.")
+                    _issue(f"[batch] {sub.name}: failed to read scripts ({err}) — skipped.")
                     failed += 1
                     continue
                 script = _find_batch_script(scripts)
                 if script is None:
-                    worker_log.append(
+                    _issue(
                         f"[batch] {sub.name}: no script named 'batch' in {cfg.name} — skipped."
                     )
                     skipped_no_script += 1
@@ -967,7 +1040,7 @@ class HubWindow(QMainWindow):
                     )
                     ran += 1
                 except Exception as err:  # noqa: BLE001
-                    worker_log.append(f"[batch] {sub.name}: script failed: {err}")
+                    _issue(f"[batch] {sub.name}: script failed: {err}")
                     failed += 1
             return (
                 f"Batch script complete: {ran} ran, "
@@ -979,6 +1052,8 @@ class HubWindow(QMainWindow):
         def _on_ok(msg: str) -> None:
             for ln in worker_log:
                 self._log.append_line(ln)
+            for ln in issues:
+                self._err_log.append_line(ln)
             interactive = self._interactive_checkbox.isChecked()
             for title, fig in figures:
                 self._plot_dock.add_figure(title, fig, interactive=interactive)
@@ -987,7 +1062,9 @@ class HubWindow(QMainWindow):
         def _on_fail(msg: str) -> None:
             for ln in worker_log:
                 self._log.append_line(ln)
-            self._log.append_line(msg)
+            for ln in issues:
+                self._err_log.append_line(ln)
+            self._log_issue(msg)
 
         self._spawn_task_with_callbacks("Batch script", _do, _on_ok, _on_fail)
 
@@ -1073,7 +1150,7 @@ class HubWindow(QMainWindow):
         self._log.append_line(msg)
 
     def _on_task_failed(self, msg: str) -> None:
-        self._log.append_line(msg)
+        self._log_issue(msg)
 
     def _on_task_finished(self, worker: TaskWorker) -> None:
         if self._worker is worker:
@@ -1113,14 +1190,14 @@ class HubWindow(QMainWindow):
                 yaml.safe_load(f)
             self._log.append_line(f"[validate] {path} parses cleanly.")
         except Exception as err:  # noqa: BLE001
-            self._log.append_line(f"[validate] {path}: {err}")
+            self._log_issue(f"[validate] {path}: {err}")
 
     def _open_folder(self, subfolder: str) -> None:
         if not self._project_dir:
             return
         target = self._project_dir / subfolder
         if not target.exists():
-            self._log.append_line(f"[open] {target} does not exist yet.")
+            self._log_issue(f"[open] {target} does not exist yet.")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
@@ -1144,7 +1221,7 @@ class HubWindow(QMainWindow):
         project = self._project_dir
         subdirs = sorted(d for d in project.iterdir() if d.is_dir())
         if not subdirs:
-            self._log.append_line(f"[convert] no subdirectories under {project}")
+            self._log_issue(f"[convert] no subdirectories under {project}")
             return
 
         def _do_convert() -> str:
@@ -1210,7 +1287,7 @@ class HubWindow(QMainWindow):
         project = self._project_dir
         subdirs = sorted(d for d in project.iterdir() if d.is_dir())
         if not subdirs:
-            self._log.append_line(f"[rename] no subdirectories under {project}")
+            self._log_issue(f"[rename] no subdirectories under {project}")
             return
 
         # Compute new names up front so we can detect collisions and skip
@@ -1232,7 +1309,7 @@ class HubWindow(QMainWindow):
             if not new or new == old:
                 continue
             if new in existing or new in seen_targets:
-                self._log.append_line(
+                self._log_issue(
                     f"[rename] skip {old} → {new} (collides with existing name)"
                 )
                 continue
@@ -1269,7 +1346,7 @@ class HubWindow(QMainWindow):
         project = self._project_dir
         subdirs = sorted(d for d in project.iterdir() if d.is_dir())
         if not subdirs:
-            self._log.append_line(f"[copy-yaml] no subdirectories under {project}")
+            self._log_issue(f"[copy-yaml] no subdirectories under {project}")
             return
 
         def _do_copy() -> str:
@@ -1306,7 +1383,7 @@ class HubWindow(QMainWindow):
         project = self._project_dir
         subdirs = sorted(d for d in project.iterdir() if d.is_dir())
         if not subdirs:
-            self._log.append_line(f"[combine] no subdirectories under {project}")
+            self._log_issue(f"[combine] no subdirectories under {project}")
             return
 
         def _do_combine() -> str:
@@ -1359,7 +1436,7 @@ class HubWindow(QMainWindow):
             args.append(str(self._project_dir))
         try:
             subprocess.Popen(args, close_fds=True)
-            self._log.append_line(f"[tools] launched ptrack-{which}")
+            self._log.append_line(f"[tools] launched pytrack-{which}")
         except Exception as err:  # noqa: BLE001
             self._warn(f"Failed to launch {which}: {err}")
 
@@ -1382,7 +1459,13 @@ class HubWindow(QMainWindow):
     # Helpers
     # ==================================================================
 
+    def _log_issue(self, msg: str) -> None:
+        """Log *msg* to the Errors tab as well as the chronological Output tab."""
+        self._log.append_line(msg)
+        self._err_log.append_line(msg)
+
     def _warn(self, msg: str) -> None:
+        self._err_log.append_line(f"[warning] {msg}")
         QMessageBox.warning(self, "PyTrackingAnalysis", msg)
 
 
@@ -1566,6 +1649,10 @@ class BatchToolsDialog(QDialog):
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    # Wayland uses the desktop-file name as the app id for taskbar icons;
+    # setWindowIcon covers X11/Windows/macOS and window title bars.
+    app.setDesktopFileName("pytrack-hub")
+    app.setWindowIcon(app_icon())
     mode = ui_settings.get("theme", "auto")
     apply_theme(app, mode=mode)
 

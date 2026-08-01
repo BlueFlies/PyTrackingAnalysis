@@ -1,6 +1,6 @@
 """Dev shortcut: ``python -m pytrackinganalysis {hub,config,qc} [args...]``.
 
-Mirrors the ``ptrack-hub`` / ``ptrack-config`` / ``ptrack-qc`` console
+Mirrors the ``pytrack-hub`` / ``pytrack-config`` / ``pytrack-qc`` console
 scripts registered in ``pyproject.toml``; useful when the package is
 installed in editable mode without the scripts on PATH.
 """

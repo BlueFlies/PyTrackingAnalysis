@@ -9,7 +9,8 @@ color.  Use ``icon("load")`` for a category icon, or
 from __future__ import annotations
 
 import qtawesome as qta
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 from .theme import Category, category_color, resolved_mode
 
@@ -96,3 +97,48 @@ def icon(name: str, category: Category | None = None) -> QIcon:
         glyph, default_category = name, None
     color = _tint_for(category if category is not None else default_category)
     return qta.icon(glyph, color=color)
+
+
+def render_app_badge(size: int) -> QPixmap:
+    """Render the application badge — a fly inside a tracking reticle — at *size* px."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    s = float(size)
+    c = s / 2
+
+    # Rounded-square badge background (dark slate, reads on any taskbar).
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#1e293b"))
+    corner = s * 0.22
+    p.drawRoundedRect(QRectF(0, 0, s, s), corner, corner)
+
+    # Tracking reticle: ring + N/S/E/W tick marks in the accent color.
+    accent = QColor("#38bdf8")
+    p.setPen(QPen(accent, max(1.0, s * 0.05)))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    margin = s * 0.17
+    p.drawEllipse(QRectF(margin, margin, s - 2 * margin, s - 2 * margin))
+    r_ring = c - margin
+    for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+        p.drawLine(
+            QPointF(c + dx * (r_ring - s * 0.06), c + dy * (r_ring - s * 0.06)),
+            QPointF(c + dx * (r_ring + s * 0.06), c + dy * (r_ring + s * 0.06)),
+        )
+
+    # The fly, centered inside the reticle.
+    glyph = s * 0.44
+    bug_pm = qta.icon("fa5s.bug", color="#e2e8f0").pixmap(int(glyph), int(glyph))
+    target = QRectF(c - glyph / 2, c - glyph / 2, glyph, glyph)
+    p.drawPixmap(target, bug_pm, QRectF(bug_pm.rect()))
+    p.end()
+    return pm
+
+
+def app_icon() -> QIcon:
+    """Window/taskbar QIcon for all PyTrackingAnalysis apps, in multiple sizes."""
+    ico = QIcon()
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        ico.addPixmap(render_app_badge(size))
+    return ico

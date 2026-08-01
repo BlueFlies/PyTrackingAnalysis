@@ -1,38 +1,92 @@
-What was changed
-XChoiceTracker.py
+# PyTrackingAnalysis
 
-Bug fix: total_x_distance now uses data_subset (respects range_minutes) instead of the full self.rawdata
-Column renamed TotalXDistance → TotalXDistance_mm to match the name Arena's plotting code already expected
-Parameters.py
+A Python pipeline and desktop UI for analysing insect-tracking data exported
+from DTrack. Describe an experiment once in a single `tracking_config.yaml` —
+the tracking hardware, the experimental design, and how each physical tracking
+region maps to a treatment group — and the pipeline produces summary CSVs,
+pairwise statistics, publication-quality plots, and a multi-page PDF report.
 
-Removed the duplicate __str__ (was defined twice; second silently overwrote first)
-Extracted _set_rig_values() and _set_pairwise_rig_values() private helpers — all 11 preset methods now delegate to these, eliminating ~100 lines of repeated boilerplate
-Fixed mutable default argument (micromove_speed_mm_sec=None with internal default list)
-Tracker.py
+## What's included
 
-__str__ no longer references the nonexistent TotalDistanceDTrack column (would have crashed on print(tracker))
-Removed dead total_distance_dtrack calculation from summarize()
-Fixed six "Fipped" → "Flipped" typos in plot titles
-SpecialFunctions.py
+Three PyQt6 desktop apps sharing a common theme, plus a full Python API:
 
-Replaced ~250 lines of duplicated logic with thin delegation wrappers that call the new Arena methods, preserving backward compatibility
-ExperimentalDesign.py
+| Interface | Purpose |
+|-----------|---------|
+| **Analysis Hub** (`pytrack`) | Day-to-day driver — load experiments, run single or batch analyses, view plots in a tabbed dock |
+| **Config Editor** (`pytrack-config`) | Structured editor for `tracking_config.yaml`, with a visual Script Editor for saved analysis recipes |
+| **QC Viewer** (`pytrack-qc`) | Per-tracker data-quality tables with XY, distance, and quality-timeline plots |
+| **Python API** | Everything scriptable from a notebook or script (`Experiment`, `batch_analyze`, …) |
 
-Replaced two bare except blocks with FileNotFoundError, KeyError/ValueError, and Exception handlers that emit proper logging.warning() messages
-read_yaml_config now raises directly (no silent suppression) so the caller gets meaningful messages
-Arena.py
+Supported assay types: plain position tracking, two-choice (tracker or
+counter), X-choice, and pairwise-interaction (tracker or counter), with
+built-in calibration presets for the small arena, arena max, colosseum, and
+obscura rigs.
 
-Added import logging / logger
-get_experimental_design bare except replaced with specific ValueError + Exception catches with logger.warning()
-Fixed the duplicate plot_adjusted_x_position_facet definition — the backend implementation is now correctly named plot_adj_x_pos_facet_xchoicetracker, restoring the type-checking public dispatcher
-Added four new methods ported from SpecialFunctions: analyze_rle_data(), analyze_rle_data_facet(), analyze_distance_by_light(), analyze_distance_by_light_facet() — CSV paths now use self.data_path/experiment_name instead of hardcoded ./Data/
-Experiment.py — six new user-facing methods plus facet_cutoffs:
+## Installation
 
-Method / attribute	What it does
-facet_cutoffs	Set once (from yaml global.facet_cutoffs or default (10,70)), used everywhere
-info()	Prints experiment name, rig, tracker count/quality, time range, paths
-qc(cutoff, save)	Prints quality report; saves {name}_data_quality.csv to qc/
-save_summary(cutoffs)	Saves flat + faceted summary CSVs to analysis/
-stats(cutoffs, save)	Runs all appropriate pairwise comparisons; saves {name}_Stats.txt
-save_plots(cutoffs)	Intercepts plt.show() calls and saves all relevant plots as PNGs to analysis/
-run_analysis()	Calls all four above in sequence — full pipeline in one line
+Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/spletcher1/PyTrackingAnalysis.git
+cd PyTrackingAnalysis
+uv sync
+```
+
+`uv sync` creates the virtual environment and installs everything, including
+the `pytrack*` commands below.
+
+On Linux, optionally install launcher/taskbar entries for the apps:
+
+```bash
+uv run pytrack-install-desktop
+```
+
+## Quick start
+
+### Desktop UI
+
+```bash
+uv run pytrack                        # Analysis Hub
+uv run pytrack /path/to/MyExperiment  # Hub with a project pre-loaded
+uv run pytrack-config                 # Config Editor
+uv run pytrack-qc /path/to/MyExperiment
+```
+
+A *project* is a folder containing a `tracking_config.yaml` plus a `data/`
+sub-folder with the DTrack export. In the Hub: pick the project folder, click
+**Load experiment**, then run analyses from the cards — output streams to the
+dock on the right, and every plot opens as a tab.
+
+### Python
+
+```python
+from pytrackinganalysis.Experiment import Experiment
+
+exp = Experiment("/path/to/MyExperiment/")
+exp.run_analysis()      # summary → QC → CSVs → statistics → plots
+exp.create_report()     # multi-page PDF in analysis/
+
+# Or the same fixed pipeline over every experiment under a parent folder:
+from pytrackinganalysis.Experiment import batch_analyze
+results = batch_analyze("/path/to/AllExperiments/")
+```
+
+Results are written into each project's own `analysis/` and `qc/` folders.
+
+## Documentation
+
+- **[User guide](doc/guide.md)** — environment setup per OS, project
+  directory layout, the complete `tracking_config.yaml` reference, all three
+  desktop apps, the Python API, batch analysis, and a quick reference.
+- **[Scripts & the Script Editor](doc/scripts_guide.md)** — saved analysis
+  recipes: authoring them visually, every available action and its
+  parameters, faceting rules, and the special `batch` script that powers
+  batch mode.
+
+## Repository layout
+
+```
+pytrackinganalysis/    the package: analysis pipeline, PyQt6 apps, script engine
+doc/                   user guides (start with doc/guide.md)
+Testing/               sample projects and test data
+```

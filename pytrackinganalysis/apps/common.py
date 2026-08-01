@@ -68,8 +68,7 @@ class TaskWorker(QThread):
             msg = str(result) if result is not None else f"{self.task_name} complete."
             self.finished_ok.emit(msg)
         except Exception:  # noqa: BLE001
-            self.log_text.emit(traceback.format_exc())
-            self.failed.emit(f"{self.task_name} failed — see log above for details.")
+            self.failed.emit(f"{self.task_name} failed:\n{traceback.format_exc()}")
 
 
 # ---------------------------------------------------------------------------

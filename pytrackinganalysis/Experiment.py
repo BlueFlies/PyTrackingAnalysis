@@ -296,6 +296,7 @@ class Experiment:
             f"  Sleep threshold       : {p.sleep_threshold_min} min",
             f"  Interaction distances : {p.interaction_distance_mm} mm",
             "",
+            *self._design_summary_lines(W),
             f"── Data Overview {'─' * (W - 17)}",
             f"  Total trackers        : {n_total}",
             f"  Passing ≥90% quality  : {n_good} / {n_total}",
@@ -337,6 +338,76 @@ class Experiment:
             print(f"\nSaved: {path}")
 
         return text
+
+    def _design_summary_lines(self, W: int) -> list:
+        """Formatted description of the tracking_config.yaml design for the
+        experiment summary: factors and their levels, factor assignments to
+        tracking regions, non-unit location multipliers, counting regions with
+        their aliases, and facet cutoffs."""
+        import textwrap
+
+        def _wrap(prefix: str, items: list) -> list:
+            """One entry as ``prefix item, item, …`` wrapped to the summary width,
+            continuation lines aligned under the first item."""
+            return textwrap.wrap(
+                prefix + ', '.join(str(i) for i in items),
+                width=78,
+                subsequent_indent=' ' * len(prefix),
+            )
+
+        lines = [f"── Experimental Design {'─' * (W - 23)}"]
+
+        factors = self.config.get('global', {}).get('experimental_design_factors') or {}
+        if factors:
+            lines.append("  Factors:")
+            name_w = max(len(str(n)) for n in factors)
+            for name, levels in factors.items():
+                if isinstance(levels, (list, tuple)):
+                    levels_str = ', '.join(str(v) for v in levels)
+                else:
+                    levels_str = str(levels)
+                lines.append(f"    {str(name):<{name_w}} : {levels_str}")
+        else:
+            lines.append("  Factors : none defined in config")
+
+        ed = self.experimental_design
+        tr = ed.tracking_regions if ed is not None else None
+        if tr is not None and not tr.empty:
+            lines.append("  Factor assignments (tracking regions):")
+            for treatment, grp in tr.groupby('Treatment', sort=False):
+                label = str(treatment).strip() or '(unassigned)'
+                names = list(grp['RegionName'])
+                lines.extend(_wrap(f"    {label} ({len(names)}): ", names))
+
+            flipped = tr[(tr['XLocationMultiplier'] != 1) | (tr['YLocationMultiplier'] != 1)]
+            if flipped.empty:
+                lines.append("  Location multipliers : all 1 (no flips)")
+            else:
+                lines.append("  Location multipliers ≠ 1:")
+                for (xm, ym), grp in flipped.groupby(
+                    ['XLocationMultiplier', 'YLocationMultiplier'], sort=False
+                ):
+                    names = list(grp['RegionName'])
+                    lines.extend(_wrap(f"    x={xm:+d}, y={ym:+d} ({len(names)}): ", names))
+        else:
+            lines.append("  Tracking regions : none defined in config")
+
+        counting = ed.counting_regions if ed is not None else None
+        if counting:
+            lines.append("  Counting regions:")
+            name_w = max(len(str(n)) for n in counting)
+            for name, aliases in counting.items():
+                lines.append(f"    {str(name):<{name_w}} : aliases {', '.join(aliases)}")
+        else:
+            lines.append("  Counting regions : none defined in config")
+
+        if self.facet_cutoffs is not None:
+            cutoffs_str = ', '.join(str(c) for c in self.facet_cutoffs) + ' min'
+        else:
+            cutoffs_str = 'not set'
+        lines.append(f"  Facet cutoffs : {cutoffs_str}")
+        lines.append("")
+        return lines
 
     def _col_distribution(self, col: str) -> 'pd.DataFrame | None':
         """Return fraction-of-frames per unique value of *col*, one row per tracker.

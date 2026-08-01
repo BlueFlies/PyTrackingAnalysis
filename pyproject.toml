@@ -27,9 +27,11 @@ dependencies = [
 ]
 
 [project.scripts]
-ptrack-hub    = "pytrackinganalysis.apps.hub:main"
-ptrack-config = "pytrackinganalysis.apps.config_editor:main"
-ptrack-qc     = "pytrackinganalysis.apps.qc_viewer:main"
+pytrack        = "pytrackinganalysis.apps.hub:main"
+pytrack-hub    = "pytrackinganalysis.apps.hub:main"
+pytrack-config = "pytrackinganalysis.apps.config_editor:main"
+pytrack-qc     = "pytrackinganalysis.apps.qc_viewer:main"
+pytrack-install-desktop = "pytrackinganalysis.install_desktop:main"
 
 [build-system]
 requires = ["hatchling"]

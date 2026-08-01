@@ -34,6 +34,7 @@ from ..ui import (
     Card,
     Category,
     TopBar,
+    app_icon,
     apply_theme,
     icon,
     resolved_mode,
@@ -249,9 +250,11 @@ class ConfigEditorWindow(QMainWindow):
         if path is None:
             self.setWindowTitle("PyTrackingAnalysis — Config Editor")
             self._path_label.setText("No file loaded")
+            self._path_label.setToolTip("")
         else:
             self.setWindowTitle(f"PyTrackingAnalysis — Config Editor — {path.name}")
-            self._path_label.setText(str(path))
+            self._path_label.setText(path.name)
+            self._path_label.setToolTip(str(path))
 
     # ==================================================================
     # Theme toggle / Script Editor launcher
@@ -295,6 +298,8 @@ class ConfigEditorWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setDesktopFileName("pytrack-config")
+    app.setWindowIcon(app_icon())
     mode = ui_settings.get("theme", "auto")
     apply_theme(app, mode=mode)
 

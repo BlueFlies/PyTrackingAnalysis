@@ -11,13 +11,16 @@
 4. [The tracking\_config.yaml reference](#4-the-tracking_configyaml-reference)
 5. [The desktop UI](#5-the-desktop-ui)
    - [Launching the apps](#51-launching-the-apps)
-   - [Analysis Hub](#52-analysis-hub-ptrack-hub)
-   - [Config Editor](#53-config-editor-ptrack-config)
-   - [QC Viewer](#54-qc-viewer-ptrack-qc)
+   - [Analysis Hub](#52-analysis-hub-pytrack-hub)
+   - [Config Editor](#53-config-editor-pytrack-config)
+   - [QC Viewer](#54-qc-viewer-pytrack-qc)
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
 8. [Batch analysis across multiple experiments](#8-batch-analysis-across-multiple-experiments)
 9. [Quick reference](#9-quick-reference)
+
+> Scripts (saved analysis recipes) and the visual Script Editor have their own
+> dedicated guide: **[scripts_guide.md](scripts_guide.md)**.
 
 ---
 
@@ -34,9 +37,9 @@ There are three ways to drive the pipeline:
 
 | Interface | Best for |
 |-----------|----------|
-| **Analysis Hub** (`ptrack-hub`) | Day-to-day use; loads experiments, runs analyses, shows plots in a tabbed dock |
-| **Config Editor** (`ptrack-config`) | Authoring `tracking_config.yaml` + visual Script Editor for saved recipes |
-| **QC Viewer** (`ptrack-qc`) | Per-tracker data-quality tables + XY / distance / timeline plots |
+| **Analysis Hub** (`pytrack-hub`) | Day-to-day use; loads experiments, runs analyses, shows plots in a tabbed dock |
+| **Config Editor** (`pytrack-config`) | Authoring `tracking_config.yaml` + visual Script Editor for saved recipes |
+| **QC Viewer** (`pytrack-qc`) | Per-tracker data-quality tables + XY / distance / timeline plots |
 | **Jupyter notebook** (`Notebooks/SimpleTracker.ipynb`) | Exploratory work; custom plots |
 | **Python script / REPL** | Automation; integration with other tools |
 
@@ -83,15 +86,16 @@ uv sync
 
 ```powershell
 # With the environment activated:
-ptrack-hub                    # Analysis Hub (default entry point)
-ptrack-config                 # Config Editor
-ptrack-qc                     # QC Viewer
+pytrack                        # Analysis Hub (default entry point)
+pytrack-hub                    # Analysis Hub (same as pytrack)
+pytrack-config                 # Config Editor
+pytrack-qc                     # QC Viewer
 
 # Or without activating, using uv run:
-uv run ptrack-hub
+uv run pytrack-hub
 
 # With an explicit project directory:
-uv run ptrack-hub "C:\Users\you\Experiments\Trial1"
+uv run pytrack-hub "C:\Users\you\Experiments\Trial1"
 ```
 
 > **PyQt6 note on Windows:** If a "platform plugin not found" error appears,
@@ -127,15 +131,16 @@ source .venv/bin/activate
 
 ```bash
 # With environment activated:
-ptrack-hub                    # Analysis Hub (default entry point)
-ptrack-config                 # Config Editor
-ptrack-qc                     # QC Viewer
+pytrack                        # Analysis Hub (default entry point)
+pytrack-hub                    # Analysis Hub (same as pytrack)
+pytrack-config                 # Config Editor
+pytrack-qc                     # QC Viewer
 
 # Without activating:
-uv run ptrack-hub
+uv run pytrack-hub
 
 # With a project directory:
-uv run ptrack-hub /path/to/Trial1
+uv run pytrack-hub /path/to/Trial1
 ```
 
 > **macOS display server note:** PyQt6 requires a display.  Confirm XQuartz is
@@ -186,11 +191,11 @@ source .venv/bin/activate
 **Run the UI**
 
 ```bash
-ptrack-hub                          # Analysis Hub
-uv run ptrack-hub                   # works from any directory
-uv run ptrack-hub /path/to/Trial1   # open a specific project
-uv run ptrack-config                # Config Editor
-uv run ptrack-qc /path/to/Trial1    # QC Viewer
+pytrack-hub                          # Analysis Hub
+uv run pytrack-hub                   # works from any directory
+uv run pytrack-hub /path/to/Trial1   # open a specific project
+uv run pytrack-config                # Config Editor
+uv run pytrack-qc /path/to/Trial1    # QC Viewer
 ```
 
 > **Headless / SSH note:** PyQt6 requires an X11 or Wayland display.  If running
@@ -256,7 +261,7 @@ MyExperiment/                        ← project directory (pass this to the UI)
 For batch analysis, place multiple project directories under a common parent:
 
 ```
-AllExperiments/                      ← pass this as the "Batch parent" in the UI
+AllExperiments/                      ← select this as the project dir in Batch experiments mode
 ├── Trial1/
 │   ├── tracking_config.yaml
 │   └── data/ ...
@@ -268,15 +273,47 @@ AllExperiments/                      ← pass this as the "Batch parent" in the 
     └── data/ ...
 ```
 
-Each sub-directory is processed independently.  Directories that lack either
-`tracking_config.yaml` or a `.xlsx` file inside `data/` are silently skipped.
+Each sub-directory is processed independently.  Directories that don't qualify
+are skipped: the Hub's batch mode reports each skip in the Output and Errors
+tabs, while the Python `batch_analyze()` helper skips quietly.  See §8 for the
+full batch procedure.
 
 ---
 
 ## 4. The tracking\_config.yaml reference
 
-`tracking_config.yaml` has three top-level sections: `global`, `tracking_regions`,
-and `counting_regions`.  Only `global` and `tracking_regions` are required.
+`tracking_config.yaml` has four possible top-level sections: `global`,
+`tracking_regions`, `counting_regions`, and `scripts`.  `global` and
+`tracking_regions` are required for every experiment; `counting_regions` is
+required for the two-choice and counter tracking types; `scripts` is optional.
+
+### Creating a valid file
+
+There are three equally valid ways to create one:
+
+1. **Config Editor** (recommended) — `pytrack-config` gives you structured
+   forms for every section, bulk region generation, and a live YAML preview,
+   so the file is valid by construction.
+2. **Copy an existing config** — copy a working `tracking_config.yaml` into
+   the new project directory and edit it.  The Hub's **Batch tools → Copy
+   YAML** can push one file into every sub-directory of a batch parent.
+3. **Write it by hand** — any text editor works; the file is plain YAML.
+
+Rules that make a file *valid*:
+
+- The file must be named `tracking_config.yaml` and live in the project
+  directory (next to `data/`, not inside it).  Batch mode matches the name
+  case-insensitively; everywhere else use the exact lowercase name.
+- An experimental design is **required** — an experiment will refuse to load
+  without a parseable config.
+- `tracking_type` must be one of the values in §4.1 (only a *missing* key
+  falls back to `TRACKER`; a wrong value is an error).
+- `TWOCHOICETRACKER` and `TWOCHOICECOUNTER` must define **exactly two**
+  `counting_regions` entries.
+- Every `counting_regions` entry must have an `alias` key.
+
+Check a file at any time with the Hub's **Tools → Validate YAML** button —
+parse errors are reported in the Output and Errors tabs.
 
 ### 4.1 `global` — required fields
 
@@ -289,7 +326,9 @@ global:
 #### `tracking_type`
 
 Selects the analysis mode.  Choose the one that matches how DTrack recorded
-your data.
+your data.  The value is upper-cased before matching, so `twochoicetracker`
+works too.  If the key is missing entirely, `TRACKER` is assumed; an
+unrecognized value is an error that lists the valid choices.
 
 | Value | Description |
 |-------|-------------|
@@ -304,7 +343,12 @@ your data.
 #### `tracking_rig`
 
 Selects the hardware calibration preset.  `fps` and `mm_per_pixel` are set
-automatically from the preset; all other parameters use the defaults shown below.
+automatically from the preset; all other parameters use the defaults shown
+below.  The value is matched case-insensitively with spaces/hyphens treated as
+underscores (`Arena Max` → `arena_max`), and the common misspelling
+`colloseum` is accepted for `colosseum`.  An unknown rig name is not an
+error — the tracking type is still applied but all calibration values stay at
+their generic defaults, so double-check the spelling.
 
 | Value | mm per pixel | Notes |
 |-------|-------------|-------|
@@ -331,7 +375,7 @@ global:
 
 List every factor and its levels.  These are used for axis labels and plot titles.
 The actual assignment of factors to each physical tracking region is made in
-`tracking_regions` (see §4.3).
+`tracking_regions` (see §4.4).
 
 ---
 
@@ -365,6 +409,19 @@ global:
   interaction_distances: [8]
 ```
 
+**How overrides are interpreted:** the rig preset is applied first, then any of
+the recognized parameter keys present in `global:` override the preset value.
+Exactly these keys are recognized as overrides — `fps`, `mm_per_pixel`,
+`speed_window_seconds`, `micromove_speed_mm_sec`, `walking_speed_mm_sec`,
+`sleep_threshold_min`, `interaction_distances`.  Any other key in `global:` is
+carried along but ignored by the parameter system, so a typo like
+`walking_speed` will not error — it simply won't take effect.
+
+`facet_cutoffs` is read separately (not a parameter override): it becomes the
+default for every faceted plot, summary, and statistics run, and is inherited
+by script steps whose own `cutoffs` field is blank (see
+[scripts_guide.md](scripts_guide.md)).
+
 ---
 
 ### 4.4 `tracking_regions`
@@ -387,31 +444,78 @@ tracking_regions:
   # ... one entry per region
 ```
 
-`x_location_multiplier` and `y_location_multiplier` correct for physical
-differences in camera orientation between regions.  Use `1` for no correction
-and `-1` to mirror an axis.
+**How each field is interpreted:**
+
+- `experimental_factors` — a free-form string that becomes the region's
+  *Treatment* label used in grouping, plots, and statistics.  For multi-factor
+  designs list the levels comma-separated in the same order as
+  `experimental_design_factors` (e.g. `Starved, Female`).  Regions sharing the
+  same string are analysed as one group.  A missing key means the region has
+  an empty treatment (it still loads, but groups as blank — the experiment
+  summary lists such regions as *(unassigned)*).
+- `x_location_multiplier` / `y_location_multiplier` — correct for physical
+  differences in camera orientation between regions.  Use `1` for no
+  correction and `-1` to mirror an axis.  Only `1` and `-1` are meaningful:
+  any other value (or a missing key) is silently treated as `1`.
+
+The experiment summary text file (§7) includes a formatted description of the
+loaded design — factors, region assignments, non-unit multipliers, counting
+regions, and cutoffs — so you can verify the YAML was interpreted the way you
+intended.
 
 ---
 
-### 4.5 `counting_regions` (counter types only)
+### 4.5 `counting_regions`
 
-Required when `tracking_type` is `COUNTER`, `TWOCHOICECOUNTER`, or
-`PAIRWISEINTERACTIONCOUNTER`.  Maps the region labels used inside the DTrack
-`.xlsx` workbook to canonical treatment names.
+Maps the region labels used inside the DTrack data to canonical choice names.
+Required for the counter types (`COUNTER`, `TWOCHOICECOUNTER`,
+`PAIRWISEINTERACTIONCOUNTER`) **and** for `TWOCHOICETRACKER` — both two-choice
+types are validated to have **exactly two** counting regions and will refuse
+to load otherwise.
 
 ```yaml
 counting_regions:
   Light:
-    alias: Light, LL, L      # any of these strings in the workbook = "Light"
+    alias: Light, LL, L      # any of these strings in the data = "Light"
   NoLight:
     alias: NoLight, NL, N
 ```
 
-`TWOCHOICECOUNTER` must have **exactly two** counting regions.
+**How it is interpreted:** each key (`Light`, `NoLight`) is a canonical
+characteristic name; `alias` is a comma-separated list of the raw region
+labels that map to it (whitespace around each alias is stripped).  Matching is
+exact and case-sensitive after stripping.  Every entry **must** have an
+`alias` key — omitting it is a config error that prevents the design from
+loading.
 
 ---
 
-### 4.6 Complete minimal example
+### 4.6 `scripts` — saved analysis recipes (optional)
+
+Saved, re-runnable step lists that the Hub's **Scripts** card and batch mode
+execute.  Normally you author these visually in the Script Editor rather than
+by hand:
+
+```yaml
+scripts:
+- name: nightly            # free-form, except 'batch' which is special (§8)
+  steps:
+  - action: load_experiment
+    params: {path: '.', force_preprocessing: false}
+  - action: run_analysis
+    params: {facet: true, cutoffs: ''}
+```
+
+Each script is `{name, steps}`; each step is `{action, params}` where `action`
+is one of the registered action keys and `params` matches that action's
+schema.  A script named **`batch`** (case-insensitive) is what **Batch
+experiments** mode runs in each sub-folder.  See
+**[scripts_guide.md](scripts_guide.md)** for the full action reference,
+validation rules, and hand-editing guidance.
+
+---
+
+### 4.7 Complete minimal example
 
 ```yaml
 global:
@@ -442,25 +546,26 @@ bar, PlotDock) so the visual language is consistent across all three.
 
 | Command | Window | Purpose |
 |---------|--------|---------|
-| `ptrack-hub`    | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC |
-| `ptrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
-| `ptrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
+| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC |
+| `pytrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
+| `pytrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
 
 ### 5.1 Launching the apps
 
 ```bash
 # With the environment active:
-ptrack-hub                              # Hub
-ptrack-hub /path/to/MyExperiment        # Hub, pre-loaded project
+pytrack                                  # Hub (shorthand)
+pytrack-hub                              # Hub
+pytrack-hub /path/to/MyExperiment        # Hub, pre-loaded project
 
-ptrack-config                           # Config Editor (opens last-used or ./tracking_config.yaml)
-ptrack-config /path/to/MyExperiment     # Config Editor, pre-loaded project YAML
+pytrack-config                           # Config Editor (opens last-used or ./tracking_config.yaml)
+pytrack-config /path/to/MyExperiment     # Config Editor, pre-loaded project YAML
 
-ptrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded project
+pytrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded project
 
 # Without activating, through uv:
-uv run ptrack-hub
-uv run ptrack-config /path/to/Trial1
+uv run pytrack-hub
+uv run pytrack-config /path/to/Trial1
 
 # Dev shortcut (equivalent to the console scripts above):
 python -m pytrackinganalysis hub /path/to/Trial1
@@ -468,24 +573,40 @@ python -m pytrackinganalysis config /path/to/Trial1
 python -m pytrackinganalysis qc /path/to/Trial1
 ```
 
+**Desktop launcher / taskbar icon (Linux).** The apps set their own window
+icon (a fly in a tracking reticle), but on Wayland/GNOME the *taskbar* icon
+comes from a `.desktop` entry. Install entries for all three apps once per
+environment with:
+
+```bash
+uv run pytrack-install-desktop
+```
+
+This also adds the apps to your desktop's application launcher. Re-run it if
+you move the project or recreate `.venv` (the entries embed absolute paths).
+
 All three apps persist the light/dark theme choice to
 `~/.config/pytrackinganalysis/ui.json`.  Recent projects are tracked there too.
 
 ---
 
-### 5.2 Analysis Hub (`ptrack-hub`)
+### 5.2 Analysis Hub (`pytrack-hub`)
 
 Six cards, each on a sidebar entry:
 
-- **Project** — pick the experiment folder, choose a YAML config, launch the
-  Config Editor or QC Viewer in their own windows.
-- **Load** — radio toggle between **Single project** and **Batch parent**, then
-  click **Load experiment**.  The Experiment is cached so subsequent analyses
-  re-use the parsed CSVs.
-- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** (single
-  mode).  **Run Batch…** runs the full pipeline over every valid sub-folder.
-  All tasks run on a background thread; stdout/stderr streams to the **Output**
-  tab in real time.
+- **Project** — pick the experiment folder (the text box shows just the folder
+  name to stay readable; hover it for the full path), choose a YAML config,
+  launch the Config Editor or QC Viewer in their own windows, and **Reload**
+  to re-scan the folder.
+- **Load** — radio toggle between **Single project** and **Batch experiments**
+  (the round **?** button next to the radio opens an in-app explanation of the
+  batch procedure — see §8).  In single mode the button reads **Load
+  experiment** and caches the Experiment so subsequent analyses re-use the
+  parsed data; in batch mode it becomes **Run batch script** and runs the
+  script named `batch` in every sub-folder.
+- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report**
+  (single mode only).  All tasks run on a background thread; stdout/stderr
+  streams to the **Output** tab in real time.
 - **Plots** — dynamically populated with the faceted plots valid for the loaded
   tracking type (`plot_pi_facet`, `plot_totaldistance_facet`, etc.).  Each click
   adds a new tab to the PlotDock.  Toggle **Interactive plots** in the top bar
@@ -494,13 +615,29 @@ Six cards, each on a sidebar entry:
 - **Scripts** — lists saved analysis recipes from the active YAML's `scripts:`
   section.  **Run Script** / **Run All** executes them and routes each step's
   log output to the Output tab and each figure to a PlotDock tab.  Author
-  scripts from the Config Editor (see 5.3).
+  scripts from the Config Editor (see 5.3 and
+  [the scripts guide](scripts_guide.md)).
 - **Tools** — validate YAML, open the `analysis/` or `qc/` folder in the system
-  file browser, clear the matplotlib cache.
+  file browser, open the **Batch tools** dialog (convert sub-directory layouts,
+  bulk-rename sub-directories, copy a YAML into every sub-directory, combine
+  summary CSVs across sub-directories), and clear the matplotlib cache.
+
+#### The plot dock (right-hand side)
+
+- The first tab is always **Output** — the chronological log of everything the
+  Hub does.
+- The second tab is **Errors** — a permanent tab that collects only warnings
+  and errors (failed tasks with tracebacks, skipped batch sub-folders, YAML
+  validation problems, dismissed warning pop-ups, …) so they can't get lost in
+  the normal output.  When issues arrive while you're on another tab, the tab
+  title shows an unseen count, e.g. **Errors (3)**; viewing the tab resets it.
+- Every plot or artifact opens as an additional closable tab.  The
+  **Clear plots** button in the tab-bar corner closes all of them at once and
+  returns to the Output tab (Output and Errors are never closed).
 
 ---
 
-### 5.3 Config Editor (`ptrack-config`)
+### 5.3 Config Editor (`pytrack-config`)
 
 Structured editor for `tracking_config.yaml` with three tabs wrapped in a Card:
 
@@ -516,13 +653,13 @@ trust / debugging; an amber `●` dirty indicator surfaces unsaved edits.
 
 #### Visual Script Editor
 
-Open via the scripts icon in the top bar.  A non-modal `QMainWindow` with three
-panes (pyflic-style):
+Open via the scripts icon in the top bar.  A non-modal window with three panes:
 
-- **Palette** (left) — searchable, category-grouped tile list of all registered
-  actions (`load_experiment`, `filter_by_quality`, `run_qc`, `run_analysis`,
-  `save_summary_csv`, `run_tukey_stats`, `plot`, `create_report`,
-  `batch_analyze`, …).  Double-click to add.
+- **Palette** (left) — category-grouped tile list of the registered actions
+  (`load_experiment`, `filter_by_quality`, `filter_by_region`, `run_qc`,
+  `run_analysis`, `summarize`, `run_pairwise_comparisons`, `create_report`,
+  plus one plot action per plot valid for the project's tracking type).
+  Double-click to add a step.
 - **Canvas** (center) — ordered step cards with the action's icon, a
   parameter-summary chip, and move-up / move-down / delete buttons.
 - **Inspector** (right) — dynamic form for the selected step with widgets
@@ -533,10 +670,14 @@ panes (pyflic-style):
 Scripts are stored under the `scripts:` key of the surrounding
 `tracking_config.yaml`.  The Hub's **Scripts** card reads the same file, so
 saving in the Script Editor makes scripts immediately runnable from the Hub.
+A script named **`batch`** has a special role in batch mode (§8).
+
+**Full documentation — every action, its parameters, faceting rules, and the
+`batch` special case — lives in [scripts_guide.md](scripts_guide.md).**
 
 ---
 
-### 5.4 QC Viewer (`ptrack-qc`)
+### 5.4 QC Viewer (`pytrack-qc`)
 
 - Left pane — **Trackers** table with columns `Tracker, HighQuality, NotFound,
   Indiscernible, StartMinutes, EndMinutes`.  Rows auto-tint green (≥ cutoff)
@@ -653,7 +794,7 @@ All outputs are written relative to the project directory.
 
 | File | Contents |
 |------|----------|
-| `*_experiment_summary.txt` | Rig settings, tracker count, data quality overview, time range |
+| `*_experiment_summary.txt` | Rig settings, parameters, a formatted description of the experimental design (factors, region assignments, non-unit multipliers, counting regions, cutoffs), data quality overview, per-tracker table |
 | `*_Summary.csv` | Per-tracker summary statistics (one row per tracker) |
 | `*_Summary_Facet.csv` | Same, split into the time phases defined by `facet_cutoffs` |
 | `*_Stats.txt` | Pairwise statistical comparisons (Mann-Whitney U) across treatment groups |
@@ -670,47 +811,99 @@ All outputs are written relative to the project directory.
 
 ## 8. Batch analysis across multiple experiments
 
-### Requirement
+There are two ways to process many experiments in one go: **Batch experiments
+mode in the Hub**, which runs a *script* of your choosing per sub-folder, and
+the Python **`batch_analyze()`** function, which runs the fixed full pipeline
+per sub-folder.
 
-Each experiment sub-directory must be a self-contained project directory:
+### Layout requirement (both methods)
+
+Each experiment sub-directory must be a self-contained project directory under
+one common parent:
 
 ```
-ParentFolder/
+ParentFolder/                         ← select this as the project directory
 ├── Experiment_A/
-│   ├── tracking_config.yaml      ← required
+│   ├── tracking_config.yaml          ← required (with a 'batch' script for UI batch mode)
 │   └── data/
-│       ├── Experiment_A.xlsx     ← required
+│       ├── Experiment_A.xlsx         ← required
 │       └── Experiment_A_Data_*.csv
 └── Experiment_B/
     ├── tracking_config.yaml
-    └── data/
-        ├── Experiment_B.xlsx
-        └── Experiment_B_Data_*.csv
+    └── data/ ...
 ```
 
-### Running in the UI
+Each sub-directory uses its **own** `tracking_config.yaml`, so different
+experiments can have different tracking types, rigs, designs, and batch
+scripts.
 
-1. In the Hub's **Load** card, choose **Batch parent** and select `ParentFolder/`.
-2. In the **Analyze** card, click **Run Batch…**.
-3. The task runs on a background thread; progress streams to the **Output** tab.
-4. Results are written into each experiment's own `analysis/` and `qc/` folders
-   (e.g. `Experiment_A/analysis/Experiment_A_report.pdf`).
+### 8.1 Batch experiments mode in the Hub
 
-### Running from Python
+This is the flexible method: *you* decide what runs in each sub-folder by
+authoring a script named **`batch`** in each sub-folder's YAML (Script Editor
+→ new script → name it `batch`; the name is matched case-insensitively).  The
+round **?** button next to the radio in the Load card shows this same
+procedure in-app.
+
+Step by step:
+
+1. In the **Project** card, browse to `ParentFolder/` (the *parent*, not one
+   of the experiments).
+2. In the **Load** card, select **Batch experiments**.  The load button
+   relabels to **Run batch script**; the single-project analysis buttons and
+   the Scripts card grey out since they don't apply.
+3. Click **Run batch script**.  For every immediate sub-directory (processed
+   in sorted order) the Hub:
+   - looks for `tracking_config.yaml` (case-insensitive).  Missing → the
+     sub-folder is **skipped** with a warning;
+   - reads its `scripts:` list.  Unreadable YAML → **skipped**, counted as
+     failed;
+   - finds the script named `batch` (case-insensitive).  Absent → **skipped**
+     with a warning;
+   - runs that script with the sub-directory as its project dir.  A
+     `load_experiment` step with `path: "."` therefore loads *that*
+     sub-folder's data.
+4. When the run finishes, all per-folder log lines flush to the **Output**
+   tab, every skip/failure also lands in the **Errors** tab, any figures the
+   scripts produced open as plot tabs, and a summary line reports the counts:
+   `Batch script complete: N ran, N without 'batch' script, N without config,
+   N failed (of N subdirs).`
+
+Because scripts start from a clean slate in each folder, a `batch` script
+**must begin with a `load_experiment` step** (leave its path as `.`).  A
+typical `batch` script is: `load_experiment` → `filter_by_quality` →
+`run_analysis` → `create_report`.
+
+An error inside one sub-folder's script never stops the others — it is
+logged, counted as failed, and the run moves on.
+
+**Preparing many folders at once:** the Hub's **Tools → Batch tools** dialog
+can copy one master YAML (including its `batch` script) into every
+sub-directory, bulk-rename sub-directories, convert flat layouts into the
+`data/` structure, and afterwards combine every `*_Summary.csv` /
+`*_Summary_Facet.csv` across sub-folders into one CSV per type tagged by
+sub-directory name.
+
+### 8.2 Fixed pipeline from Python
 
 ```python
 from pytrackinganalysis.Experiment import batch_analyze
 
-results = batch_analyze("./ParentFolder/")
+results = batch_analyze("./ParentFolder/")   # {path: 'ok' | error message}
 ```
 
-### Notes
+`batch_analyze` runs `run_analysis()` + `create_report()` on every immediate
+sub-directory that contains a `tracking_config.yaml` and a `data/` folder with
+at least one `.xlsx`; other directories are skipped.  Optional arguments:
+`cutoffs` (override every experiment's facet cutoffs), `qc_cutoff` (default
+0.9), and `force_preprocessing`.  No `batch` script is involved — use this
+when every experiment should get the identical standard pipeline.
 
-- Each sub-directory uses its **own** `tracking_config.yaml`, so different
-  experiments can have different tracking types, rigs, and experimental designs.
-- Sub-directories that are missing `tracking_config.yaml` or a `.xlsx` file
-  inside `data/` are silently skipped.
-- A failure in one experiment does not stop the others.
+### Results
+
+Either way, results are written into each experiment's own `analysis/` and
+`qc/` folders (e.g. `Experiment_A/analysis/Experiment_A_report.pdf`) — batch
+runs never mix outputs across experiments.
 
 ---
 
@@ -720,18 +913,21 @@ results = batch_analyze("./ParentFolder/")
 
 ```bash
 # Analysis Hub (the default entry point):
-ptrack-hub
-ptrack-hub /absolute/path/to/project
+pytrack                       # shorthand for pytrack-hub
+pytrack-hub /absolute/path/to/project
 
 # Via uv (works from any directory, no activation needed):
-uv run ptrack-hub /absolute/path/to/project
+uv run pytrack-hub /absolute/path/to/project
 
 # Standalone Config Editor (with visual Script Editor):
-ptrack-config
-ptrack-config /path/to/project
+pytrack-config
+pytrack-config /path/to/project
 
 # Standalone QC Viewer:
-ptrack-qc /path/to/project
+pytrack-qc /path/to/project
+
+# One-time: install launcher entries + taskbar icon (Linux):
+pytrack-install-desktop
 ```
 
 ### Minimal tracking\_config.yaml
