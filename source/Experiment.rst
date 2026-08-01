@@ -1,7 +1,7 @@
-Parameters module
+Experiment module
 =================
 
-.. automodule:: pytrackinganalysis.Parameters
+.. automodule:: pytrackinganalysis.Experiment
    :members:
    :undoc-members:
    :show-inheritance:

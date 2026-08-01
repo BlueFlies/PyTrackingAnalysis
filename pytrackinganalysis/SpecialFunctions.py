@@ -39,8 +39,13 @@ def analyze_distance_by_light(arena: Arena, range_minutes=(0, 0)):
 
 
 def analyze_distance_by_light_facet(arena: Arena, cutoffs=(10, 70),
-                                    copy_to_clipboard=False, write_to_csvfile=True):
-    """Deprecated: call arena.analyze_distance_by_light_facet() instead."""
+                                    copy_to_clipboard=False, write_to_csvfile=False):
+    """Deprecated: call arena.analyze_distance_by_light_facet() instead.
+
+    ``write_to_csvfile`` defaults to False to match the Arena method. It used to
+    default to True here, so the wrapper silently wrote a file its target would
+    not have — pass ``write_to_csvfile=True`` explicitly to keep that behaviour.
+    """
     return arena.analyze_distance_by_light_facet(
         cutoffs=cutoffs,
         copy_to_clipboard=copy_to_clipboard,
@@ -97,9 +102,9 @@ def stack_summary_files(data_dir='./Data/', output_dir='./'):
             results[prefix] = output_file
             print(f"Created {output_file} with {len(combined_df)} rows from {len(found_files)} files")
         else:
-            print(f"No files found matching pattern '{prefix}*_Summary_Facet.csv' in {data_dir}")
+            print(f"No files found matching pattern '{prefix}*_Summary.csv' in {data_dir}")
             results[prefix] = None
-    
+
     return results
 
 def stack_summary_facet_files(data_dir='./Data/', output_dir='./'):

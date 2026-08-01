@@ -1,7 +1,7 @@
 ExperimentalDesign module
 =========================
 
-.. automodule:: ExperimentalDesign
+.. automodule:: pytrackinganalysis.ExperimentalDesign
    :members:
    :undoc-members:
    :show-inheritance:

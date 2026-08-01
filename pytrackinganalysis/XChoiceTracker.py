@@ -61,6 +61,9 @@ class XChoiceTracker(Tracker.Tracker):
         var_raw_x = data_subset['Xpos_mm'].var()
         avg_adjusted_x = self.get_x_positions(range_minutes).mean() 
         var_adjusted_x = self.get_x_positions(range_minutes).var()
-        total_x_distance = data_subset['Xpos_mm'].diff().abs().sum()
+        ## XDist_mm is windowed by get_data_subset with the same step-attribution
+        ## rule as Dist_mm; diffing the slice here would drop the step that
+        ## crosses into the window and disagree with TotalDistance.
+        total_x_distance = data_subset['XDist_mm'].sum()
         result = pd.concat([tmp, pd.Series({'AvgX_mm': avg_raw_x}), pd.Series({"VarX_mm" : var_raw_x}), pd.Series({"AvgAdjX_mm" : avg_adjusted_x}), pd.Series({"VarAdjX_mm" : var_adjusted_x}), pd.Series({'TotalXDistance_mm': total_x_distance})])
         return result

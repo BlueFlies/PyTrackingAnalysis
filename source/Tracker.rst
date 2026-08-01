@@ -1,7 +1,7 @@
 Tracker module
 ==============
 
-.. automodule:: Tracker
+.. automodule:: pytrackinganalysis.Tracker
    :members:
    :undoc-members:
    :show-inheritance:

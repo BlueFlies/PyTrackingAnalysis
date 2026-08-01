@@ -5,6 +5,7 @@ PyTrackingAnalysis
    :maxdepth: 4
 
    Arena
+   Experiment
    Counter
    ExperimentalDesign
    PairwiseInteractionCounter
@@ -14,3 +15,5 @@ PyTrackingAnalysis
    TwoChoiceCounter
    TwoChoiceTracker
    XChoiceTracker
+   config_validation
+   windowing

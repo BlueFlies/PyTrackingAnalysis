@@ -2,6 +2,55 @@
 
 Date: 2026-08-01
 
+---
+
+## Resolution log (2026-08-01)
+
+Every finding below was re-verified against the code before being acted on. A
+`pytest` suite (86 tests, `tests/`) now pins the numerical behaviour, and CI runs
+it (`.github/workflows/tests.yml`).
+
+**Fixed:** 1–7 (all critical), 9–12, 14–19, 20, 21, 23, 24, 25, 26.
+
+**Corrected diagnosis — finding 1.** The double-counting was real but the stated
+cause and impact were not. Reusing the whole-recording `Dist_mm` on a window is
+*correct*: each value is the step arriving at its row, so the first in-window row
+should carry the movement that crossed into the window. The report's suggested
+fix (zeroing that first delta) would have *discarded* one step per window — a
+test written against it caught this. The genuine defect was the inclusive upper
+bound `Minutes <= end`, which put a frame landing exactly on a cutoff in both
+adjacent phases. Impact depends on the time base: with `fps: 0` (every rig
+preset) minutes come from `MSec` and never hit a cutoff exactly, so those results
+were already right — regenerating the `Testing/TestProject` outputs reproduces
+the checked-in `_Summary.csv` and `_Summary_Facet.csv` to within 1e-9 on all 21
+columns and 84 facet rows. With an explicit `fps`, minutes are
+`Frame/(fps*60)` and do land exactly on integer cutoffs, so one frame per
+boundary was double-counted. `XChoiceTracker.TotalXDistance_mm` had the opposite
+bug and *lost* one step per window. Windows are now uniformly half-open and
+phase totals sum to the flat total exactly.
+
+**Deliberately not changed:**
+
+- **13 (stats vs guide).** The code runs a Student's t-test for two groups and
+  Tukey HSD for more. Switching to Mann-Whitney U would change published numbers,
+  so `doc/guide.md` was corrected to describe what the code actually does. Moving
+  to a non-parametric test remains a scientific decision for the maintainer.
+- **8 (absolute `MSec` time).** Normalising `Minutes` to start at zero would
+  shift every existing facet boundary and change results for all MSec-based
+  experiments. Left as-is pending a decision; the half-open windowing fix is
+  independent of it.
+- **22 (global `sys.stdout` / `plt.show` interception).** Needs the plotting
+  layer to return `Figure` objects instead of calling `plt.show()`; that is the
+  refactor in item 3 of the plan below, not a bug fix.
+
+**19 (colosseum calibration).** The two values disagreed (0.108 generic vs 0.1106
+pairwise-specific). They are now read from one table, `Parameters.RIG_MM_PER_PIXEL`,
+which uses **0.108** — the value every YAML-driven analysis already applied.
+Notebooks calling `set_pairwise_interaction_values_colloseum()` directly will see
+distances change by 2.4%. **Confirm which calibration is correct for your rig.**
+
+---
+
 ## Summary
 
 PyTrackingAnalysis has a usable shape: the domain concepts are recognizable, the package imports are mostly relative, the desktop apps share common UI helpers, and the current working tree has already fixed several issues from the older `REVIEW.md`. The highest-risk problem is not in the UI, though: time-windowed summaries use distances computed before filtering, and faceted windows include the shared edge row in both phases. That can silently overstate `TotalDistance` and `TotalDistancePerMin`, including in QC and plots, so I would not ask a scientist to trust faceted distance numbers until that is fixed and pinned with tests. The next most important fixes are the movie/fps crash, counter alias aggregation, pairwise validity mask, and counter-QC paths. The Config Editor also has a real data-loss path: saving from the main editor reconstructs only the visible config sections and drops top-level keys such as `scripts`. There is no automated test suite or CI test job, so several subtle pandas and numerical assumptions are unguarded. The codebase can get to a trustworthy state without a rewrite, but the first pass should focus on shared windowing, config round-tripping, and small synthetic DataFrame tests.
@@ -386,9 +435,32 @@ except IndexError as err:
 - Incorrect behavior: generic colosseum uses `mm_per_pixel=0.108`; pairwise-specific colosseum methods use `0.1106`. That is a 2.4% distance-scale difference.
 - Suggested fix: define one rig calibration table and let every setter read from it.
 
+### 20. `SpecialFunctions.analyze_distance_by_light_facet` changes default save behavior
+
+- Location: `pytrackinganalysis/SpecialFunctions.py:41`, `pytrackinganalysis/SpecialFunctions.py:42`, `pytrackinganalysis/Arena.py:1511`, `pytrackinganalysis/Arena.py:1512`
+- Severity: medium
+- Confidence: high
+- Trigger: notebook user keeps using the legacy wrapper without passing `write_to_csvfile`.
+- Incorrect behavior: the legacy wrapper says it delegates to Arena, but its default is `write_to_csvfile=True`; the Arena method defaults to `False`. Calling the wrapper therefore writes `*_DistanceByLight_Facet.csv` by default while the target method does not.
+- Suggested fix: make wrapper signatures mirror the target exactly and add a small introspection test for all wrappers.
+
+```python
+def analyze_distance_by_light_facet(
+    arena: Arena,
+    cutoffs=(10, 70),
+    copy_to_clipboard=False,
+    write_to_csvfile=False,
+):
+    return arena.analyze_distance_by_light_facet(
+        cutoffs=cutoffs,
+        copy_to_clipboard=copy_to_clipboard,
+        write_to_csvfile=write_to_csvfile,
+    )
+```
+
 ## UI And Robustness Issues
 
-### 20. QC Viewer loads full experiments on the Qt main thread
+### 21. QC Viewer loads full experiments on the Qt main thread
 
 - Location: `pytrackinganalysis/apps/qc_viewer.py:226`, `pytrackinganalysis/apps/qc_viewer.py:233`, `pytrackinganalysis/apps/qc_viewer.py:242`
 - Severity: medium
@@ -397,7 +469,7 @@ except IndexError as err:
 - Incorrect behavior: `Experiment(...)` reads config/data and constructs trackers synchronously in the UI thread, so the window can freeze during load.
 - Suggested fix: reuse `TaskWorker` from `apps/common.py`, disable controls while loading, then populate the table from the worker result.
 
-### 21. Selecting trackers in QC Viewer keeps adding plot tabs
+### 22. Selecting trackers in QC Viewer keeps adding plot tabs
 
 - Location: `pytrackinganalysis/apps/qc_viewer.py:365`, `pytrackinganalysis/apps/qc_viewer.py:386`, `pytrackinganalysis/apps/qc_viewer.py:398`, `pytrackinganalysis/apps/qc_viewer.py:413`, `pytrackinganalysis/apps/qc_viewer.py:429`
 - Severity: medium
@@ -406,7 +478,7 @@ except IndexError as err:
 - Incorrect behavior: four new plot tabs are added for every selection. Figures are converted and closed by `PlotDock`, but the tabs and pixmaps accumulate until the user manually closes them.
 - Suggested fix: replace existing per-tracker diagnostic tabs, or group them under one reusable tracker-detail view.
 
-### 22. Global `sys.stdout` and `plt.show` mutation is fragile in threaded UI runs
+### 23. Global `sys.stdout` and `plt.show` mutation is fragile in threaded UI runs
 
 - Location: `pytrackinganalysis/apps/common.py:66`, `pytrackinganalysis/apps/common.py:101`, `pytrackinganalysis/Experiment.py:710`, `pytrackinganalysis/Experiment.py:640`, `pytrackinganalysis/script_editor/actions.py:329`
 - Severity: medium
@@ -415,7 +487,7 @@ except IndexError as err:
 - Incorrect behavior: stdout/stderr and pyplot show are process-global. The Hub mostly prevents concurrent tasks, but the library helpers are still fragile when reused outside that single-task assumption.
 - Suggested fix: move library code toward explicit `Figure` returns and `logging` callbacks; keep stdout/plt interception as a UI Adapter only.
 
-### 23. Hub YAML validation only checks syntax
+### 24. Hub YAML validation only checks syntax
 
 - Location: `pytrackinganalysis/apps/hub.py:1182`, `pytrackinganalysis/apps/hub.py:1190`
 - Severity: medium
@@ -424,7 +496,7 @@ except IndexError as err:
 - Incorrect behavior: the tool reports "parses cleanly" even when the config will fail or silently fall back during analysis.
 - Suggested fix: call the same config validation Interface proposed below, not just `yaml.safe_load()`.
 
-### 24. Main Config Editor silently drops invalid numeric fields
+### 25. Main Config Editor silently drops invalid numeric fields
 
 - Location: `pytrackinganalysis/apps/_config_tabs.py:340`, `pytrackinganalysis/apps/_config_tabs.py:345`, `pytrackinganalysis/apps/_config_tabs.py:363`, `pytrackinganalysis/apps/_config_tabs.py:365`, `pytrackinganalysis/apps/_config_tabs.py:376`
 - Severity: medium
@@ -433,7 +505,7 @@ except IndexError as err:
 - Incorrect behavior: `ValueError` is caught with `pass`, so the bad value disappears from the saved config without an inline error.
 - Suggested fix: validate tab data before write and block save with field-specific messages.
 
-### 25. Data table sorting is advertised by views but the model does not sort
+### 26. Data table sorting is advertised by views but the model does not sort
 
 - Location: `pytrackinganalysis/ui/table_model.py:16`, `pytrackinganalysis/ui/table_model.py:33`
 - Severity: low
@@ -442,7 +514,7 @@ except IndexError as err:
 - Incorrect behavior: the model has no `sort()` implementation, so sorting either does nothing or depends on view behavior.
 - Suggested fix: implement `sort(column, order)` by sorting `self._df` and resetting the model.
 
-### 26. Subapp processes are launched without lifecycle tracking
+### 27. Subapp processes are launched without lifecycle tracking
 
 - Location: `pytrackinganalysis/apps/hub.py:1432`, `pytrackinganalysis/apps/hub.py:1438`
 - Severity: low

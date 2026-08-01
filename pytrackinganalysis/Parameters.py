@@ -40,6 +40,21 @@ class TrackingTypeDetails:
         return self.tracking_class
 
 
+## Single source of truth for rig calibration. The pairwise-specific setters used
+## to carry their own copy of these numbers, and their colosseum value (0.1106)
+## disagreed with the generic one (0.108) — a 2.4% difference in every distance
+## depending on which entry point the caller happened to use.
+RIG_MM_PER_PIXEL = {
+    'small_arena': 0.056,
+    'arena_max': 0.145,
+    'colosseum': 0.108,
+    'obscura': 0.131,
+}
+
+## Every rig preset reads frame timing from the DTrack MSec column.
+RIG_FPS = 0
+
+
 class Parameters:
     def __init__(self, tracking_type=TrackingType.TRACKER, fps=0, mm_per_pixel=0.1,
                  speed_window_seconds=1, micromove_speed_mm_sec=None,
@@ -96,17 +111,29 @@ class Parameters:
     # Rig presets  (standard tracking)
     # ------------------------------------------------------------------
 
+    def set_rig(self, rig_name, tracking_type):
+        """Apply the calibration for a named rig from :data:`RIG_MM_PER_PIXEL`."""
+        if rig_name not in RIG_MM_PER_PIXEL:
+            raise ValueError(
+                f"Unknown rig '{rig_name}'. Known rigs: {sorted(RIG_MM_PER_PIXEL)}."
+            )
+        self._set_rig_values(
+            fps=RIG_FPS,
+            mm_per_pixel=RIG_MM_PER_PIXEL[rig_name],
+            tracking_type=tracking_type,
+        )
+
     def set_small_arena_values(self, tracking_type):
-        self._set_rig_values(fps=0, mm_per_pixel=0.056, tracking_type=tracking_type)
+        self.set_rig('small_arena', tracking_type)
 
     def set_arena_max_values(self, tracking_type):
-        self._set_rig_values(fps=0, mm_per_pixel=0.145, tracking_type=tracking_type)
+        self.set_rig('arena_max', tracking_type)
 
     def set_colloseum_values(self, tracking_type):
-        self._set_rig_values(fps=0, mm_per_pixel=0.108, tracking_type=tracking_type)
+        self.set_rig('colosseum', tracking_type)
 
     def set_obscura_values(self, tracking_type):
-        self._set_rig_values(fps=0, mm_per_pixel=0.131, tracking_type=tracking_type)
+        self.set_rig('obscura', tracking_type)
 
     def set_movie_values(self, tracking_type, fps, mm_per_pixel):
         self._set_rig_values(fps=fps, mm_per_pixel=mm_per_pixel, tracking_type=tracking_type)
@@ -115,47 +142,36 @@ class Parameters:
     # Rig presets  (pairwise interaction tracking)
     # ------------------------------------------------------------------
 
-    def set_pairwise_interaction_values_small_arena(self, interaction_distances):
+    def set_pairwise_rig(self, rig_name, tracking_type, interaction_distances):
+        """Apply a rig calibration plus the interaction-distance thresholds."""
+        if rig_name not in RIG_MM_PER_PIXEL:
+            raise ValueError(
+                f"Unknown rig '{rig_name}'. Known rigs: {sorted(RIG_MM_PER_PIXEL)}."
+            )
         self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.056,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONTRACKER,
+            fps=RIG_FPS,
+            mm_per_pixel=RIG_MM_PER_PIXEL[rig_name],
+            tracking_type=tracking_type,
             interaction_distances=interaction_distances,
         )
+
+    def set_pairwise_interaction_values_small_arena(self, interaction_distances):
+        self.set_pairwise_rig('small_arena', TrackingType.PAIRWISEINTERACTIONTRACKER, interaction_distances)
 
     def set_pairwise_interaction_values_arena_max(self, interaction_distances):
-        self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.145,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONTRACKER,
-            interaction_distances=interaction_distances,
-        )
+        self.set_pairwise_rig('arena_max', TrackingType.PAIRWISEINTERACTIONTRACKER, interaction_distances)
 
     def set_pairwise_interaction_values_colloseum(self, interaction_distances):
-        self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.1106,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONTRACKER,
-            interaction_distances=interaction_distances,
-        )
+        self.set_pairwise_rig('colosseum', TrackingType.PAIRWISEINTERACTIONTRACKER, interaction_distances)
 
     def set_pairwise_interactioncounter_values_small_arena(self, interaction_distances):
-        self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.056,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONCOUNTER,
-            interaction_distances=interaction_distances,
-        )
+        self.set_pairwise_rig('small_arena', TrackingType.PAIRWISEINTERACTIONCOUNTER, interaction_distances)
 
     def set_pairwise_interactioncounter_values_arena_max(self, interaction_distances):
-        self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.145,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONCOUNTER,
-            interaction_distances=interaction_distances,
-        )
+        self.set_pairwise_rig('arena_max', TrackingType.PAIRWISEINTERACTIONCOUNTER, interaction_distances)
 
     def set_pairwise_interactioncounter_values_colloseum(self, interaction_distances):
-        self._set_pairwise_rig_values(
-            fps=0, mm_per_pixel=0.1106,
-            tracking_type=TrackingType.PAIRWISEINTERACTIONCOUNTER,
-            interaction_distances=interaction_distances,
-        )
+        self.set_pairwise_rig('colosseum', TrackingType.PAIRWISEINTERACTIONCOUNTER, interaction_distances)
 
     # ------------------------------------------------------------------
     # Generic setter / utilities

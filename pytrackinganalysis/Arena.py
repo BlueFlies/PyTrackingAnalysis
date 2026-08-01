@@ -10,6 +10,7 @@ from . import PairwiseInteractionTracker
 from . import PairwiseInteractionCounter
 from . import Parameters
 from . import ExperimentalDesign
+from . import windowing
 import glob
 from natsort import natsorted
 import seaborn as sns
@@ -111,9 +112,16 @@ class Arena:
         elif rig == 'obscura':
             p.set_obscura_values(tracking_type)
         elif rig == 'movie':
-            fps = global_cfg.get('fps', 30)
-            mm_per_pixel = global_cfg.get('mm_per_pixel', 0.1)
-            p.set_movie_values(tracking_type, fps, mm_per_pixel)
+            ## A movie has no rig preset to fall back on. Guessing 30 fps / 0.1 mm
+            ## per pixel would silently rescale every time and distance in the
+            ## experiment, so require the real calibration instead.
+            missing = [k for k in ('fps', 'mm_per_pixel') if global_cfg.get(k) is None]
+            if missing:
+                raise ValueError(
+                    "tracking_rig 'movie' requires explicit calibration in the global: "
+                    f"section of tracking_config.yaml. Missing: {', '.join(missing)}."
+                )
+            p.set_movie_values(tracking_type, global_cfg['fps'], global_cfg['mm_per_pixel'])
         else:
             p.set_tracking_type(tracking_type)
         overrides = {k: v for k, v in global_cfg.items() if k in _PARAMETER_KEYS}
@@ -176,8 +184,25 @@ class Arena:
         :meta private:
         """
         self.trackers.pop(f'{region}_{object_id}')
-        
-    
+        self.invalidate_summaries()
+
+    def set_trackers(self, trackers):
+        """Replace the tracker collection and drop any cached summaries.
+
+        Cached summaries are keyed only by time range, so they would otherwise
+        keep returning rows for trackers that have since been filtered out.
+        Route every mutation of ``self.trackers`` through here.
+        """
+        self.trackers = OrderedDict(trackers)
+        self.invalidate_summaries()
+
+    def invalidate_summaries(self):
+        """Forget cached summaries — call after anything that changes the tracker set."""
+        ## create_trackers runs before __init__ sets up the cache.
+        if hasattr(self, 'computed_summaries'):
+            self.computed_summaries.clear()
+
+
     def create_trackers(self, force_preprocessing):
         """
         Create trackers based on the experimental parameters.
@@ -254,11 +279,24 @@ class Arena:
 
         :meta private:
         """
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):             
+        if(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+            ## Pair each tracker with the other occupant of its region. With three or
+            ## more objects in a region the old loop silently kept whichever partner
+            ## came last in dictionary order, so the reported "neighbour" depended on
+            ## key sort order rather than on a declared pair.
+            by_region = {}
             for key, tracker in self.trackers.items():
-                for key2, tracker2 in self.trackers.items():
-                    if(key!=key2 and tracker.get_tracking_region_id()==tracker2.get_tracking_region_id()):
-                        tracker.set_neighbor(tracker2)
+                by_region.setdefault(tracker.get_tracking_region_id(), []).append((key, tracker))
+            for region, members in by_region.items():
+                if len(members) != 2:
+                    raise ValueError(
+                        f"Tracking region '{region}' has {len(members)} object(s): "
+                        f"{[k for k, _ in members]}. PAIRWISEINTERACTIONTRACKER requires "
+                        "exactly two objects per tracking region."
+                    )
+                (_, first), (_, second) = members
+                first.set_neighbor(second)
+                second.set_neighbor(first)
         
     def check_for_preprocessing(self,rawdata, force_preprocessing=False):
         """
@@ -300,31 +338,32 @@ class Arena:
         ## This works but it's pretty slow.
         # Group the data by 'TrackingRegion', 'ObjectID', and 'Frame'
         print("Calculating pairwise distances will take awhile...")
-        grouped_data = rawdata.groupby(['Frame', 'TrackingRegion'])
-        
-        distances = []
-        
+        grouped_data = rawdata.groupby(['Frame', 'TrackingRegion'], sort=False)
+
+        ## Write each group's distance back through its own row labels. Collecting
+        ## the values into a flat list and assigning positionally assumed the raw
+        ## rows were already in groupby order, and appended a fixed two values for
+        ## the collapsed-blob case regardless of how many rows the group held.
+        rawdata['ClosestNeighbor'] = np.nan
+
         counter = 1
-        print(f'Analyzing group {counter} of {len(grouped_data)}')
+        n_groups = len(grouped_data)
+        print(f'Analyzing group {counter} of {n_groups}')
         for (frame, region), group in grouped_data:
             if(counter % 1000 == 0):
-                print(f'Analyzing group {counter} of {len(grouped_data)}')
+                print(f'Analyzing group {counter} of {n_groups}')
             counter += 1
             if len(group) == 2:
                 if((group.iloc[0]['DataQuality']=="High") and (group.iloc[1]['DataQuality']=="High")):
                     x1, y1 = group.iloc[0][['X', 'Y']]
                     x2, y2 = group.iloc[1][['X', 'Y']]
                     distance = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-                    distances.extend([distance, distance])
-                else:
-                    distances.extend([np.nan] * len(group))
+                    rawdata.loc[group.index, 'ClosestNeighbor'] = distance
             elif group['NObjects'].sum() == 2:
-                distance = 0
-                distances.extend([distance, distance])  # Add the distance for both observations
-            else:
-                distances.extend([np.nan] * len(group))  # Add NaN for groups that don't have exactly 2 observations
+                ## The two animals were resolved as a single blob: zero separation.
+                rawdata.loc[group.index, 'ClosestNeighbor'] = 0
+            # Anything else stays NaN — not a usable pair observation.
 
-        rawdata['ClosestNeighbor'] = distances
         return rawdata
         
 #endregion ########### Initialization Functions ############
@@ -354,6 +393,15 @@ class Arena:
         """
         return self.trackers.get(key,None)
 
+    def supports_data_quality(self):
+        """True when this experiment's trackers can report per-frame data quality.
+
+        Counter-class experiments count blobs per region and have no per-frame
+        DataQuality to summarize, so QC callers should branch on this rather
+        than discovering the missing method through an AttributeError.
+        """
+        return self.parameters.get_tracking_class() == Parameters.TrackingClass.TRACKING
+
     def get_random_tracker(arena):
         """
         Returns a random tracker from the arena's trackers.
@@ -375,7 +423,8 @@ class Arena:
         Summarize data in facets.
 
         Parameters:
-        cutoffs (tuple): Cutoff values for facets.
+        cutoffs (number|sequence): Facet boundary minutes. Windows are half-open,
+            so every row of the recording belongs to exactly one phase.
         copy_to_clipboard (bool): Flag to copy results to clipboard.
         write_to_csvfile (bool): Flag to write results to CSV file.
         remove_partners (bool): Flag to remove partners from the summary. This is relevant for pairwise data where pairs may have identical values (e.g., interaction percentage).
@@ -383,18 +432,10 @@ class Arena:
         Returns:
         DataFrame: Summarized data.
         """
-        if(isinstance(cutoffs, tuple)):
-            cutoffs = list(cutoffs)
-        elif(isinstance(cutoffs, int)):
-            cutoffs = [cutoffs]
-        else:
-            raise ValueError("Invalid cutoffs. Must be a tuple or asingle integer")
-        cutoffs.insert(0,0)
-        cutoffs.append(float('inf'))
         results = []
-        for i in range(len(cutoffs)-1):
-            tmp = self.summarize(range_minutes=tuple([cutoffs[i],cutoffs[i+1]]),remove_partners=remove_partners)
-            tmp['FacetRange']=[tuple([cutoffs[i],cutoffs[i+1]])]*len(tmp)
+        for window in windowing.facet_windows(cutoffs):
+            tmp = self.summarize(range_minutes=window,remove_partners=remove_partners)
+            tmp['FacetRange']=[window]*len(tmp)
             results.append(tmp)
         all_summaries = pd.concat(results, ignore_index=True)        
         if(copy_to_clipboard):            
@@ -438,6 +479,12 @@ class Arena:
         :meta private:
         """
         
+        if not self.supports_data_quality():
+            raise ValueError(
+                f"Data-quality reporting is not available for {self.parameters.get_tracking_type()}. "
+                "Counter-class experiments record region occupancy, not per-frame tracking quality."
+            )
+
         combined_results = []
 
         for key, tracker in self.trackers.items():
@@ -468,10 +515,12 @@ class Arena:
         DataFrame: Summarized data.
         """
         ## Remember when returning partners we don't take shortcuts to avoid confustion.
+        cache_key = tuple(range_minutes)
         if(remove_partners==False):
-            if(range_minutes in self.computed_summaries):
-                return self.computed_summaries[range_minutes]
-        
+            if(cache_key in self.computed_summaries):
+                return self.computed_summaries[cache_key]
+
+
         summaries = []
         for key, tracker in self.trackers.items():
             summary = tracker.summarize(range_minutes)
@@ -485,7 +534,7 @@ class Arena:
             all_summaries.reset_index(drop=True, inplace=True)
         else:
             ## To avoid confusion, if we remove partners, we won't save a copy to speed things up.
-            self.computed_summaries[range_minutes] = all_summaries
+            self.computed_summaries[cache_key] = all_summaries
 
    
         ## Note that for the this function to work in linux, you need to install xclip or xsel (verified with xclip)
@@ -568,36 +617,44 @@ class Arena:
             self.plot_adj_x_pos_facet_xchoicetracker(cutoffs)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
-    def plot_totaldistance(self, range_minutes=(0,0)):      
+    ## Every tracking type whose summary carries TotalDistancePerMin. The Hub,
+    ## the Script Editor and Experiment.save_plots all advertise a total-distance
+    ## plot for these; leaving one out here made the button silently do nothing.
+    _DISTANCE_TRACKING_TYPES = (
+        Parameters.TrackingType.TRACKER,
+        Parameters.TrackingType.TWOCHOICETRACKER,
+        Parameters.TrackingType.XCHOICETRACKER,
+        Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER,
+    )
+
+    def plot_totaldistance(self, range_minutes=(0,0)):
         """
         Plot total distance moved (mm).
 
         Parameters:
         range_minutes (tuple): Range of minutes to plot.
         """
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_totaldistance_generaltracker(range_minutes)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
-            self.plot_totaldistance_generaltracker(range_minutes)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+        if(self.parameters.get_tracking_type() in self._DISTANCE_TRACKING_TYPES):
             self.plot_totaldistance_generaltracker(range_minutes)
         else:
-            pass
+            raise ValueError(
+                f"Invalid tracking type: {self.parameters.get_tracking_type()}. "
+                "Total distance requires a tracker-class experiment."
+            )
     def plot_totaldistance_facet(self,cutoffs=(10,70)):
         """
         Plot total distance moved (mm) in facets.
 
         Parameters:
-        cutoffs (tuple): Cutoff values for facets.
+        cutoffs (number|sequence): Facet boundary minutes.
         """
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.TWOCHOICETRACKER):
-            self.plot_totaldistance_facet_generaltracker(cutoffs)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.TRACKER):
-            self.plot_totaldistance_facet_generaltracker(cutoffs)
-        elif(self.parameters.get_tracking_type()==Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER):
+        if(self.parameters.get_tracking_type() in self._DISTANCE_TRACKING_TYPES):
             self.plot_totaldistance_facet_generaltracker(cutoffs)
         else:
-            pass
+            raise ValueError(
+                f"Invalid tracking type: {self.parameters.get_tracking_type()}. "
+                "Total distance requires a tracker-class experiment."
+            )
 
     def plot_trackers_percentages(self,window_size_min=10,step_size_min=5,range_minutes=(0,0), show_light=False):
         """
@@ -1419,23 +1476,14 @@ class Arena:
         Returns:
         DataFrame: RLE statistics with a FacetRange column.
         """
-        if isinstance(cutoffs, tuple):
-            cutoffs = list(cutoffs)
-        elif isinstance(cutoffs, int):
-            cutoffs = [cutoffs]
-        else:
-            raise ValueError("cutoffs must be a tuple or a single integer.")
-        cutoffs.insert(0, 0)
-        cutoffs.append(float('inf'))
-
         results = []
-        for i in range(len(cutoffs) - 1):
+        for window in windowing.facet_windows(cutoffs):
             tmp = self.analyze_rle_data(
                 change_none_to_light=change_none_to_light,
                 min_duration_frames=min_duration_frames,
-                range_minutes=(cutoffs[i], cutoffs[i + 1]),
+                range_minutes=window,
             )
-            tmp['FacetRange'] = [tuple([cutoffs[i], cutoffs[i + 1]])] * len(tmp)
+            tmp['FacetRange'] = [window] * len(tmp)
             results.append(tmp)
 
         all_results = pd.concat(results, ignore_index=True)
@@ -1521,19 +1569,10 @@ class Arena:
         Returns:
         DataFrame: Distance/time statistics with a FacetRange column.
         """
-        if isinstance(cutoffs, tuple):
-            cutoffs = list(cutoffs)
-        elif isinstance(cutoffs, int):
-            cutoffs = [cutoffs]
-        else:
-            raise ValueError("cutoffs must be a tuple or a single integer.")
-        cutoffs.insert(0, 0)
-        cutoffs.append(float('inf'))
-
         results = []
-        for i in range(len(cutoffs) - 1):
-            tmp = self.analyze_distance_by_light(range_minutes=(cutoffs[i], cutoffs[i + 1]))
-            tmp['FacetRange'] = [tuple([cutoffs[i], cutoffs[i + 1]])] * len(tmp)
+        for window in windowing.facet_windows(cutoffs):
+            tmp = self.analyze_distance_by_light(range_minutes=window)
+            tmp['FacetRange'] = [window] * len(tmp)
             results.append(tmp)
 
         all_results = pd.concat(results, ignore_index=True)

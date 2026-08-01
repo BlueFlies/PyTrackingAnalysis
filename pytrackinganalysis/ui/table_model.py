@@ -68,6 +68,24 @@ class DataFrameModel(QAbstractTableModel):
             return str(self._df.index[section])
         return None
 
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:  # noqa: N802
+        """Sort by *column*.
+
+        Views that call ``setSortingEnabled(True)`` expect the model to
+        implement this; without it, clicking a header did nothing.
+        """
+        if not (0 <= column < len(self._df.columns)):
+            return
+        name = self._df.columns[column]
+        self.beginResetModel()
+        self._df = self._df.sort_values(
+            by=name,
+            ascending=(order == Qt.SortOrder.AscendingOrder),
+            kind="stable",
+            na_position="last",
+        ).reset_index(drop=True)
+        self.endResetModel()
+
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         if not index.isValid():
             return None

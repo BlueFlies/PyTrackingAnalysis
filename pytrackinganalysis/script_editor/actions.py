@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import pandas as pd
+
 from ..ui import Category
 
 
@@ -178,14 +180,25 @@ def _exec_filter_by_quality(params: dict, ctx: RunContext) -> None:
     _require_exp(ctx, "filter_by_quality")
     threshold = float(params.get("min_high_quality", 0.8))
     arena = ctx.exp.arena
+    if not arena.supports_data_quality():
+        ctx.log(
+            "[filter_by_quality] per-frame data quality is not available for "
+            f"{arena.parameters.get_tracking_type().name}; no trackers were filtered."
+        )
+        return
+
     before = len(arena.trackers)
     keep: dict = {}
     for key, tracker in arena.trackers.items():
+        # get_data_quality returns a one-row DataFrame; pull the scalar out of it.
         dq = tracker.get_data_quality()
-        hq = float(dq.get("HighQuality", 0.0))
-        if hq >= threshold:
+        hq = dq["HighQuality"].iloc[0]
+        if pd.isna(hq):
+            ctx.log(f"[filter_by_quality] {key}: no quality data; dropped")
+            continue
+        if float(hq) >= threshold:
             keep[key] = tracker
-    arena.trackers = type(arena.trackers)(keep.items())  # preserve OrderedDict-ness
+    arena.set_trackers(keep)
     ctx.log(
         f"[filter_by_quality] threshold={threshold:.2f} kept {len(keep)}/{before} trackers"
     )
@@ -207,7 +220,7 @@ def _exec_filter_by_region(params: dict, ctx: RunContext) -> None:
     # Fallback simple match: key prefix
     if not keep:
         keep = {k: t for k, t in arena.trackers.items() if any(k.startswith(r) for r in regions)}
-    arena.trackers = type(arena.trackers)(keep.items())
+    arena.set_trackers(keep)
     ctx.log(f"[filter_by_region] kept {len(keep)}/{before} trackers matching {regions}")
 
 

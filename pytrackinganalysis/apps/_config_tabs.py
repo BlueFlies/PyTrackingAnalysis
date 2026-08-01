@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import Parameters as _ParametersMod
+
 
 # (display_label, yaml/enum_value). The dropdowns show the label; we read and
 # write the value so the YAML stays unchanged.
@@ -52,13 +54,11 @@ TRACKING_RIGS: list[tuple[str, str]] = [
 
 _RIG_LABELS: dict[str, str] = {value: label for label, value in TRACKING_RIGS}
 
-# mm_per_pixel calibrations baked into Parameters.set_*_values. Used to drive
-# placeholder text on the parameter-override fields when a rig is selected.
+# mm_per_pixel calibrations, read from the single source of truth in Parameters so
+# the editor's placeholders cannot drift from what the analysis actually applies.
+# A movie has no preset — the user must supply its calibration.
 RIG_MM_PER_PIXEL: dict[str, float | None] = {
-    "small_arena": 0.056,
-    "arena_max": 0.145,
-    "colosseum": 0.108,
-    "obscura": 0.131,
+    **_ParametersMod.RIG_MM_PER_PIXEL,
     "movie": None,
 }
 
@@ -316,6 +316,92 @@ class GlobalTab(QWidget):
         idist = g.get("interaction_distances")
         if idist:
             self.interaction_distances.setText(", ".join(str(d) for d in idist))
+
+    # Keys this tab owns. The window uses these to tell "the user cleared this
+    # field" apart from "this key was hand-added and is none of our business".
+    _OWNED_KEYS = (
+        "tracking_type",
+        "tracking_rig",
+        "experimental_design_factors",
+        "facet_cutoffs",
+        "fps",
+        "mm_per_pixel",
+        "speed_window_seconds",
+        "walking_speed_mm_sec",
+        "sleep_threshold_min",
+        "micromove_speed_mm_sec",
+        "interaction_distances",
+    )
+
+    def owned_keys(self) -> tuple[str, ...]:
+        """The ``global:`` keys this tab is responsible for."""
+        return self._OWNED_KEYS
+
+    def validation_errors(self) -> list[str]:
+        """Field-level problems that must be fixed before the config can be saved.
+
+        A malformed number used to be dropped on the floor by ``dump()``, so the
+        value silently vanished from the saved file and the analysis quietly ran
+        with a rig default instead.
+        """
+        errors: list[str] = []
+
+        def _check_number(label, text, *, positive=False):
+            text = text.strip()
+            if not text:
+                return
+            try:
+                value = float(text)
+            except ValueError:
+                errors.append(f"{label}: '{text}' is not a number")
+                return
+            if positive and value <= 0:
+                errors.append(f"{label}: must be greater than zero")
+
+        _check_number("FPS", self.fps.text())
+        _check_number("mm per pixel", self.mm_per_pixel.text(), positive=True)
+        _check_number("Speed window (s)", self.speed_window.text(), positive=True)
+        _check_number("Walking speed (mm/s)", self.walking_speed.text())
+        _check_number("Sleep threshold (min)", self.sleep_threshold.text())
+
+        mn, mx = self.micromove_min.text().strip(), self.micromove_max.text().strip()
+        if bool(mn) != bool(mx):
+            errors.append("Micro-move speed: set both the minimum and the maximum, or neither")
+        elif mn and mx:
+            try:
+                if float(mn) >= float(mx):
+                    errors.append("Micro-move speed: the minimum must be below the maximum")
+            except ValueError:
+                errors.append(f"Micro-move speed: '{mn}, {mx}' is not a pair of numbers")
+
+        if self.use_facets.isChecked():
+            text = self.facet_cutoffs.text().strip()
+            if not text:
+                errors.append("Facet cutoffs: enter at least one minute boundary, or untick faceting")
+            else:
+                try:
+                    values = [float(x.strip()) for x in text.split(",") if x.strip()]
+                except ValueError:
+                    errors.append(f"Facet cutoffs: '{text}' is not a comma-separated list of numbers")
+                else:
+                    if sorted(values) != values:
+                        errors.append("Facet cutoffs: values must increase from left to right")
+                    if len(set(values)) != len(values):
+                        errors.append("Facet cutoffs: values must be distinct")
+
+        idist = self.interaction_distances.text().strip()
+        if idist:
+            try:
+                [float(x.strip()) for x in idist.split(",") if x.strip()]
+            except ValueError:
+                errors.append(f"Interaction distances: '{idist}' is not a comma-separated list of numbers")
+
+        if self.tracking_rig.currentData() == "movie":
+            for label, widget in (("FPS", self.fps), ("mm per pixel", self.mm_per_pixel)):
+                if not widget.text().strip():
+                    errors.append(f"{label}: required when the rig is Movie (there is no preset to fall back on)")
+
+        return errors
 
     def dump(self) -> dict:
         g = {

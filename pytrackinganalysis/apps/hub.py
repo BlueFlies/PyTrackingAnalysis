@@ -24,7 +24,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from PyQt6.QtCore import QSize, Qt, QUrl
+from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication,
@@ -126,6 +126,9 @@ class HubWindow(QMainWindow):
         self._exp: ExperimentMod.Experiment | None = None
         self._project_dir: Path | None = None
         self._worker: TaskWorker | None = None
+        # (app_name, Popen) for child apps launched from the Tools card. They run
+        # independently of the Hub; tracked only so an immediate failure is visible.
+        self._subapps: list[tuple[str, object]] = []
         # Maps a Plots-card ActionButton to its Arena method name; rebuilt whenever
         # an experiment is loaded so the buttons always reflect the tracking type.
         self._plot_buttons: list[ActionButton] = []
@@ -1183,14 +1186,18 @@ class HubWindow(QMainWindow):
         if not self._project_dir:
             return
         path = self._project_dir / self._config_combo.currentText()
-        try:
-            import yaml
+        # Parsing cleanly is not the same as being usable — check the semantics
+        # too, so an unknown rig or a missing movie calibration is reported here
+        # rather than surfacing mid-analysis or silently falling back to defaults.
+        from ..config_validation import validate_config_file
 
-            with open(path) as f:
-                yaml.safe_load(f)
-            self._log.append_line(f"[validate] {path} parses cleanly.")
-        except Exception as err:  # noqa: BLE001
-            self._log_issue(f"[validate] {path}: {err}")
+        problems = validate_config_file(str(path))
+        if not problems:
+            self._log.append_line(f"[validate] {path} is valid.")
+            return
+        self._log_issue(f"[validate] {path}: {len(problems)} problem(s) found:")
+        for problem in problems:
+            self._log_issue(f"[validate]   • {problem}")
 
     def _open_folder(self, subfolder: str) -> None:
         if not self._project_dir:
@@ -1430,15 +1437,35 @@ class HubWindow(QMainWindow):
         self._spawn_task("Combine summaries", _do_combine)
 
     def _launch_subapp(self, which: str) -> None:
-        """Launch the Config or QC viewer in a separate process."""
+        """Launch the Config or QC viewer in a separate process.
+
+        The child outlives the Hub on purpose, so the user can close the Hub and
+        keep editing. We keep the handles only so a child that dies immediately
+        (bad install, import error) gets reported instead of vanishing silently.
+        """
         args = [sys.executable, "-m", "pytrackinganalysis", which]
         if self._project_dir:
             args.append(str(self._project_dir))
         try:
-            subprocess.Popen(args, close_fds=True)
-            self._log.append_line(f"[tools] launched pytrack-{which}")
+            process = subprocess.Popen(args, close_fds=True)
         except Exception as err:  # noqa: BLE001
             self._warn(f"Failed to launch {which}: {err}")
+            return
+
+        self._subapps.append((which, process))
+        self._log.append_line(f"[tools] launched pytrack-{which} (pid {process.pid})")
+        QTimer.singleShot(2000, lambda: self._check_subapp(which, process))
+
+    def _check_subapp(self, which: str, process) -> None:
+        """Report a child app that exited right after launch."""
+        code = process.poll()
+        if code not in (None, 0):
+            self._log_issue(
+                f"[tools] pytrack-{which} exited immediately with code {code}. "
+                "Run it from a terminal to see the error."
+            )
+        if code is not None:
+            self._subapps = [entry for entry in self._subapps if entry[1] is not process]
 
     # ==================================================================
     # Theme toggle

@@ -1,7 +1,7 @@
 Arena module
 ============
 
-.. automodule:: Arena
+.. automodule:: pytrackinganalysis.Arena
    :members:
    :undoc-members:
    :show-inheritance:

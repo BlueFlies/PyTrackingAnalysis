@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np 
 from . import Counter
+from . import windowing
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -11,13 +12,8 @@ class TwoChoiceCounter(Counter.Counter):
         self.calculate_pi_data()    
 
     def get_pi_subset(self, range_minutes):
-        if(len(range_minutes)!=2):            
-            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
-        if(sum(range_minutes)==0):
-            return self.pi_data.copy()
-        data_subset = self.pi_data[(self.pi_data['Minutes']>=range_minutes[0]) & (self.pi_data['Minutes']<=range_minutes[1])]
-        data_subset.reset_index(drop=True, inplace=True)
-        return data_subset
+        """Per-minute PI rows within ``[start, end)``; ``(0, 0)`` means the whole recording."""
+        return windowing.slice_by_minutes(self.pi_data, range_minutes)
 
     def summarize(self, range_minutes=(0,0)):        
         tmp = Counter.Counter.summarize(self, range_minutes)
@@ -59,12 +55,16 @@ class TwoChoiceCounter(Counter.Counter):
         return
     
     def get_counting_region_counts(self,range_minutes=(0,0)):
-        data_subset = self.get_pi_subset(range_minutes)               
+        data_subset = self.get_pi_subset(range_minutes)
+        ## Select the canonical group columns by name — a positional slice would
+        ## silently pick up any column that happened to sit between them.
         keys = list(self.counting_regions_design.keys())
-        return data_subset.loc[:,keys[0]:keys[1]].sum()
+        return data_subset[keys].sum()
 
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=['StartMin','EndMin','PI'])
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iloc[-1])        
         pis =[]
@@ -81,6 +81,8 @@ class TwoChoiceCounter(Counter.Counter):
     
     def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=['StartMin','EndMin','Percentage'])
         earliest_min = round(data_subset['Minutes'].iloc[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iloc[-1])        
         pis =[]
@@ -102,30 +104,37 @@ class TwoChoiceCounter(Counter.Counter):
         return data_subset    
  
     def sum_counts_assign_treatments(self):
+        """Per-minute counts per counting region, aggregated into the canonical groups.
+
+        Every alias of a group contributes to that group's total. Summing (rather
+        than assigning) matters whenever more than one alias of the same group is
+        occupied in the same minute — assigning would keep only the last alias
+        seen and discard the rest.
+        """
         # Group the data by 'Minutes' and 'CountingRegion' and count the number of rows in each group
         counts = self.rawdata.groupby(['Minutes', 'CountingRegion']).size().reset_index(name='Count')
-        
+
         # Pivot the table to have 'Minutes' as rows and 'CountingRegion' as columns
         pivot_table = counts.pivot(index='Minutes', columns='CountingRegion', values='Count').fillna(0)
         pivot_table.reset_index(inplace=True)
         pivot_table.columns.name = None
         avg_indicator = self.rawdata.groupby('Minutes')['Indicator'].mean().reset_index()
         pivot_table['Indicator'] = avg_indicator['Indicator']
-        
-        for key, value in self.counting_regions_design.items():
-            found=False # This is to cover in case counting regions are never visited.
-            for column in pivot_table.columns:
-                if column in value:
-                    found=True
-                    if(column==key):
-                        pivot_table["tmp"] = pivot_table[column]
-                        newname = column +"_CountingRegion"
-                        pivot_table.rename(columns={column: newname}, inplace=True)
-                        pivot_table.rename(columns={"tmp": key}, inplace=True)
-                    else:
-                        pivot_table[key] = pivot_table[column]        
-            if(not found):
-                pivot_table[key] = 0
+
+        for key, aliases in self.counting_regions_design.items():
+            ## A raw region column named after the group itself would be shadowed
+            ## by the aggregate, so move it aside before building the aggregate.
+            if key in pivot_table.columns:
+                pivot_table.rename(columns={key: f"{key}_CountingRegion"}, inplace=True)
+
+            alias_columns = []
+            for alias in aliases:
+                column = f"{alias}_CountingRegion" if alias == key else alias
+                if column in pivot_table.columns and column not in alias_columns:
+                    alias_columns.append(column)
+
+            # No alias was ever visited — the group is legitimately empty.
+            pivot_table[key] = pivot_table[alias_columns].sum(axis=1) if alias_columns else 0
         return pivot_table
     
     def plot_cumulative_pi(self, range_minutes=(0,0),show_light=False):

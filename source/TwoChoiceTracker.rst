@@ -1,7 +1,7 @@
 TwoChoiceTracker module
 =======================
 
-.. automodule:: TwoChoiceTracker
+.. automodule:: pytrackinganalysis.TwoChoiceTracker
    :members:
    :undoc-members:
    :show-inheritance:

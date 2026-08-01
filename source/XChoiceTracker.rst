@@ -1,7 +1,7 @@
 XChoiceTracker module
 =====================
 
-.. automodule:: XChoiceTracker
+.. automodule:: pytrackinganalysis.XChoiceTracker
    :members:
    :undoc-members:
    :show-inheritance:

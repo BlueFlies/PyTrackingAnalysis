@@ -189,9 +189,16 @@ class Experiment:
         elif rig == 'obscura':
             p.set_obscura_values(tracking_type)
         elif rig == 'movie':
-            fps = global_cfg.get('fps', 30)
-            mm_per_pixel = global_cfg.get('mm_per_pixel', 0.1)
-            p.set_movie_values(tracking_type, fps, mm_per_pixel)
+            ## A movie has no rig preset to fall back on. Guessing 30 fps / 0.1 mm
+            ## per pixel would silently rescale every time and distance in the
+            ## experiment, so require the real calibration instead.
+            missing = [k for k in ('fps', 'mm_per_pixel') if global_cfg.get(k) is None]
+            if missing:
+                raise ValueError(
+                    "tracking_rig 'movie' requires explicit calibration in the global: "
+                    f"section of tracking_config.yaml. Missing: {', '.join(missing)}."
+                )
+            p.set_movie_values(tracking_type, global_cfg['fps'], global_cfg['mm_per_pixel'])
         else:
             p.set_tracking_type(tracking_type)
 
@@ -259,11 +266,22 @@ class Experiment:
         str
             The full info text.
         """
-        dq         = self.arena.get_data_quality()
-        n_total    = len(dq)
-        n_good     = int((dq['HighQuality'] >= 0.9).sum())
-        t_min      = dq['StartMinutes'].min()
-        t_max      = dq['EndMinutes'].max()
+        ## Counter-class experiments have no per-frame DataQuality; the overview
+        ## still reports timing and tracker counts for them.
+        supports_dq = self.arena.supports_data_quality()
+        dq         = self.arena.get_data_quality() if supports_dq else None
+        if supports_dq:
+            n_total = len(dq)
+            n_good  = int((dq['HighQuality'] >= 0.9).sum())
+            t_min   = dq['StartMinutes'].min()
+            t_max   = dq['EndMinutes'].max()
+        else:
+            n_total = len(self.arena.trackers)
+            n_good  = None
+            minutes = [t.rawdata['Minutes'] for t in self.arena.trackers.values()
+                       if 'Minutes' in t.rawdata.columns and len(t.rawdata)]
+            t_min   = min((m.min() for m in minutes), default=float('nan'))
+            t_max   = max((m.max() for m in minutes), default=float('nan'))
         global_cfg = self.config.get('global', {})
         p          = self.parameters
         cutoffs_str = str(self.facet_cutoffs) if self.facet_cutoffs is not None else 'Not set'
@@ -299,33 +317,48 @@ class Experiment:
             *self._design_summary_lines(W),
             f"── Data Overview {'─' * (W - 17)}",
             f"  Total trackers        : {n_total}",
-            f"  Passing ≥90% quality  : {n_good} / {n_total}",
+            (f"  Passing ≥90% quality  : {n_good} / {n_total}" if supports_dq
+             else "  Passing ≥90% quality  : n/a (no per-frame quality for this tracking type)"),
             f"  Recording range       : {t_min:.1f} – {t_max:.1f} min",
             f"  Total data points     : {total_frames:,}",
             "",
             f"── Per-Tracker Summary {'─' * (W - 23)}",
         ]
 
-        # Table header
-        h = (f"  {'Tracker':<12}  {'Treatment':<22}  {'OK':<2}"
-             f"  {'HighQuality':>11}  {'NotFound':>8}  {'Indiscernible':>13}"
-             f"  {'Start':>6}  {'End':>6}")
-        lines.append(h)
-        lines.append(f"  {'-'*12}  {'-'*22}  {'-'*2}  {'-'*11}  {'-'*8}  {'-'*13}  {'-'*6}  {'-'*6}")
-
-        for _, row in dq.iterrows():
-            key     = row['Tracker']
+        def _treatment_of(key):
             tracker = self.arena.trackers.get(key)
-            treatment = ''
             if tracker is not None and tracker.tracking_region_design is not None:
-                treatment = str(tracker.tracking_region_design['Treatment'].iat[0])
-            ok = '✓' if row['HighQuality'] >= 0.9 else '✗'
-            lines.append(
-                f"  {key:<12}  {treatment:<22}  {ok:<2}"
-                f"  {row['HighQuality']:>10.1%}  {row['NotFound']:>8.1%}"
-                f"  {row['Indiscernible']:>13.1%}"
-                f"  {row['StartMinutes']:>6.1f}  {row['EndMinutes']:>6.1f}"
-            )
+                return str(tracker.tracking_region_design['Treatment'].iat[0])
+            return ''
+
+        if supports_dq:
+            # Table header
+            h = (f"  {'Tracker':<12}  {'Treatment':<22}  {'OK':<2}"
+                 f"  {'HighQuality':>11}  {'NotFound':>8}  {'Indiscernible':>13}"
+                 f"  {'Start':>6}  {'End':>6}")
+            lines.append(h)
+            lines.append(f"  {'-'*12}  {'-'*22}  {'-'*2}  {'-'*11}  {'-'*8}  {'-'*13}  {'-'*6}  {'-'*6}")
+
+            for _, row in dq.iterrows():
+                key = row['Tracker']
+                ok = '✓' if row['HighQuality'] >= 0.9 else '✗'
+                lines.append(
+                    f"  {key:<12}  {_treatment_of(key):<22}  {ok:<2}"
+                    f"  {row['HighQuality']:>10.1%}  {row['NotFound']:>8.1%}"
+                    f"  {row['Indiscernible']:>13.1%}"
+                    f"  {row['StartMinutes']:>6.1f}  {row['EndMinutes']:>6.1f}"
+                )
+        else:
+            lines.append(f"  {'Region':<12}  {'Treatment':<22}  {'Rows':>10}  {'Start':>6}  {'End':>6}")
+            lines.append(f"  {'-'*12}  {'-'*22}  {'-'*10}  {'-'*6}  {'-'*6}")
+            for key, tracker in self.arena.trackers.items():
+                minutes = tracker.rawdata['Minutes'] if 'Minutes' in tracker.rawdata.columns else None
+                start = minutes.min() if minutes is not None and len(minutes) else float('nan')
+                end = minutes.max() if minutes is not None and len(minutes) else float('nan')
+                lines.append(
+                    f"  {key:<12}  {_treatment_of(key):<22}  {len(tracker.rawdata):>10,}"
+                    f"  {start:>6.1f}  {end:>6.1f}"
+                )
 
         text = '\n'.join(lines)
         print(text)
@@ -427,6 +460,9 @@ class Experiment:
         """
         Print the data quality report and optionally save it to qc_path.
 
+        Counter-class experiments have no per-frame tracking quality to report,
+        so this prints a note and returns instead of raising.
+
         Parameters
         ----------
         cutoff :
@@ -434,6 +470,10 @@ class Experiment:
         save :
             If True, writes ``{experiment_name}_data_quality.csv`` to qc_path.
         """
+        if not self.arena.supports_data_quality():
+            print("Skipping data-quality table (not supported for this tracking type).")
+            return
+
         dq = self.arena.get_data_quality()
         n_total = len(dq)
         n_good  = int((dq['HighQuality'] >= cutoff).sum())
@@ -517,11 +557,7 @@ class Experiment:
         print(f"=== Running QC for: {name} ===\n")
 
         # 1. Data-quality table (Tracker subclasses only — Counter has no get_data_quality).
-        first = next(iter(self.arena.trackers.values()), None)
-        if first is not None and hasattr(first, 'get_data_quality'):
-            self.qc(cutoff=qc_cutoff, save=True)
-        else:
-            print("Skipping data-quality table (not supported for this tracking type).")
+        self.qc(cutoff=qc_cutoff, save=True)
 
         # 2. Per-tracker XY plot grid.
         self._save_qc_xy_grid()
@@ -1117,6 +1153,8 @@ class Experiment:
 
         # QC summary line — green if everything passes, red otherwise.
         try:
+            if not self.arena.supports_data_quality():
+                raise ValueError("no per-frame data quality for this tracking type")
             dq = self.arena.get_data_quality()
             n = len(dq)
             n_good = int((dq["HighQuality"] >= qc_cutoff).sum())
@@ -1357,7 +1395,9 @@ class Experiment:
         self.experiment_summary(save=True)
 
         print("\n--- Quality Control ---")
-        self.qc(cutoff=qc_cutoff, save=True)
+        ## The full QC suite, not just the table: it is guarded for counter-class
+        ## experiments and writes the QC artifacts that create_report picks up.
+        self.run_qc(cutoffs=cutoffs, qc_cutoff=qc_cutoff)
 
         print("\n--- Saving Summaries ---")
         self.save_summary(cutoffs=cutoffs)

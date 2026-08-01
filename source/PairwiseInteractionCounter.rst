@@ -1,7 +1,7 @@
 PairwiseInteractionCounter module
 =================================
 
-.. automodule:: PairwiseInteractionCounter
+.. automodule:: pytrackinganalysis.PairwiseInteractionCounter
    :members:
    :undoc-members:
    :show-inheritance:

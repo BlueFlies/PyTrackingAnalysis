@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from .common import TaskWorker
 from ..ui import (
     ActionButton,
     Card,
@@ -65,6 +66,16 @@ from ..ui.table_model import DataFrameModel
 
 
 
+# Titles of the four per-tracker diagnostic tabs. They are reused as the user
+# clicks through the table — each selection re-renders these panels instead of
+# opening four more tabs, which used to grow without bound over a session. The
+# tracker name lives in the figure title, so nothing is ambiguous.
+_TAB_XY = "Tracker — XY"
+_TAB_DISTANCE = "Tracker — Distance"
+_TAB_XY_TIME = "Tracker — X/Y(t)"
+_TAB_QUALITY = "Tracker — Quality"
+
+
 class QcViewerWindow(QMainWindow):
     # Fixed thresholds for row colouring (HighQuality column).
     _THR_GREEN = 0.90
@@ -77,6 +88,9 @@ class QcViewerWindow(QMainWindow):
         self._exp: ExperimentMod.Experiment | None = None
         self._project_dir: Optional[Path] = None
         self._dq: pd.DataFrame = pd.DataFrame()
+        # Loading reads every CSV and builds all trackers; kept off the GUI
+        # thread so a large project doesn't freeze the window.
+        self._loader: TaskWorker | None = None
 
         self._build_ui()
 
@@ -99,13 +113,13 @@ class QcViewerWindow(QMainWindow):
         self._path_lbl = QLabel("(no project)")
         self._top_bar.add_right(self._path_lbl)
 
-        btn_reload = QToolButton()
-        btn_reload.setIcon(icon("refresh"))
-        btn_reload.setIconSize(QSize(18, 18))
-        btn_reload.setAutoRaise(True)
-        btn_reload.setToolTip("Reload")
-        btn_reload.clicked.connect(self._reload)
-        self._top_bar.add_right(btn_reload)
+        self._btn_reload = QToolButton()
+        self._btn_reload.setIcon(icon("refresh"))
+        self._btn_reload.setIconSize(QSize(18, 18))
+        self._btn_reload.setAutoRaise(True)
+        self._btn_reload.setToolTip("Reload")
+        self._btn_reload.clicked.connect(self._reload)
+        self._top_bar.add_right(self._btn_reload)
 
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(
@@ -224,23 +238,51 @@ class QcViewerWindow(QMainWindow):
             self._load_project(self._project_dir)
 
     def _load_project(self, path: Path) -> None:
+        if self._loader is not None and self._loader.isRunning():
+            self._log.append_line("A project is already loading; ignoring the request.")
+            return
+
         self._project_dir = path
         self._path_lbl.setText(path.name or str(path))
         self._path_lbl.setToolTip(str(path))
         self.setWindowTitle(f"PyTrackingAnalysis — QC Viewer — {path.name}")
         self._log.append_line(f"Loading experiment from {path}…")
-        try:
-            self._exp = ExperimentMod.Experiment(str(path))
-        except Exception as err:  # noqa: BLE001
-            import traceback
 
-            self._log_issue(traceback.format_exc())
-            QMessageBox.critical(self, "Load failed", str(err))
+        # The worker returns a message, so hand the Experiment back through a cell.
+        loaded: dict = {}
+
+        def _work() -> str:
+            loaded["exp"] = ExperimentMod.Experiment(str(path))
+            return f"Loaded {path.name}"
+
+        worker = TaskWorker("Load experiment", _work)
+        worker.log_text.connect(self._log.append_line)
+        worker.finished_ok.connect(lambda _msg: self._on_project_loaded(path, loaded.get("exp")))
+        worker.failed.connect(self._on_project_load_failed)
+        worker.finished.connect(lambda: self._set_loading(False))
+        self._loader = worker
+        self._set_loading(True)
+        worker.start()
+
+    def _set_loading(self, busy: bool) -> None:
+        """Disable the controls that need a loaded experiment while one is loading."""
+        for widget in (self._btn_reload, self._table, self._filter_edit):
+            if widget is not None:
+                widget.setEnabled(not busy)
+
+    def _on_project_loaded(self, path: Path, exp) -> None:
+        if exp is None:
+            self._log_issue("[qc] load finished but no experiment was produced")
             return
+        self._exp = exp
         ui_settings.add_recent_project(path)
         self._log.append_line(str(self._exp))
         self._refresh_table()
         self._show_qc_artifacts()
+
+    def _on_project_load_failed(self, message: str) -> None:
+        self._log_issue(message)
+        QMessageBox.critical(self, "Load failed", message.splitlines()[0] if message else "Load failed")
 
     def _show_qc_artifacts(self) -> None:
         """Add a PlotDock tab for every ``*_qc_*.png`` in the project's qc/ folder."""
@@ -276,6 +318,19 @@ class QcViewerWindow(QMainWindow):
     def _refresh_table(self) -> None:
         if self._exp is None:
             return
+        if not self._exp.arena.supports_data_quality():
+            # Counter-class experiments record region occupancy, not per-frame
+            # tracking quality, so there is no quality table to show.
+            self._dq = pd.DataFrame()
+            self._model.set_dataframe(self._dq)
+            self._summary_lbl.setText(
+                "No per-frame data quality for "
+                f"{self._exp.parameters.get_tracking_type().name} experiments."
+            )
+            self._log_issue(
+                "[qc] this experiment is counter-class; the data-quality table does not apply."
+            )
+            return
         df = self._exp.arena.get_data_quality().copy()
         df.reset_index(drop=True, inplace=True)
         self._dq = df
@@ -299,7 +354,10 @@ class QcViewerWindow(QMainWindow):
         df = self._model.dataframe()
         if df.empty or not (0 <= row_idx < len(df)):
             return None
-        hq = float(df.iloc[row_idx].get("HighQuality", 0.0))
+        raw_hq = df.iloc[row_idx].get("HighQuality", 0.0)
+        if pd.isna(raw_hq):
+            return None
+        hq = float(raw_hq)
         # Two alpha shades per band keep the visual cue of alternating rows
         # without leaking the default palette(alternateBase) through the tint.
         alpha = 42 if (row_idx % 2) else 22
@@ -383,7 +441,7 @@ class QcViewerWindow(QMainWindow):
         ax.set_aspect("equal", adjustable="datalim")
         fig.colorbar(sc, ax=ax, label="Minutes")
         fig.tight_layout()
-        self._plot_dock.add_figure(f"{name} — XY", fig)
+        self._plot_dock.add_figure(_TAB_XY, fig, replace_existing=True)
 
     def _plot_distance(self, name: str, df: pd.DataFrame) -> None:
         if not {"Minutes", "Dist_mm"}.issubset(df.columns):
@@ -395,7 +453,7 @@ class QcViewerWindow(QMainWindow):
         ax.set_ylabel("Cumulative distance (mm)")
         ax.set_title(f"{name} — Total distance over time")
         fig.tight_layout()
-        self._plot_dock.add_figure(f"{name} — Distance", fig)
+        self._plot_dock.add_figure(_TAB_DISTANCE, fig, replace_existing=True)
 
     def _plot_xy_vs_time(self, name: str, df: pd.DataFrame) -> None:
         if not {"Minutes", "RelX", "RelY"}.issubset(df.columns):
@@ -410,7 +468,7 @@ class QcViewerWindow(QMainWindow):
         ax2.set_ylabel("RelY")
         ax2.set_xlabel("Minutes")
         fig.tight_layout()
-        self._plot_dock.add_figure(f"{name} — X/Y(t)", fig)
+        self._plot_dock.add_figure(_TAB_XY_TIME, fig, replace_existing=True)
 
     def _plot_quality_timeline(self, name: str, df: pd.DataFrame) -> None:
         if not {"Minutes", "DataQuality"}.issubset(df.columns):
@@ -426,7 +484,7 @@ class QcViewerWindow(QMainWindow):
         ax.set_xlabel("Minutes")
         ax.set_title(f"{name} — Data quality timeline")
         fig.tight_layout()
-        self._plot_dock.add_figure(f"{name} — Quality", fig)
+        self._plot_dock.add_figure(_TAB_QUALITY, fig, replace_existing=True)
 
     # ==================================================================
     # Export / theme toggle

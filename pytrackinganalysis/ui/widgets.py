@@ -369,14 +369,25 @@ class PlotDock(QTabWidget):
         if w is not None:
             w.deleteLater()
 
-    def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> None:
-        """Embed *figure* (a matplotlib ``Figure``) as a new tab.
+    def add_figure(
+        self,
+        title: str,
+        figure: Any,
+        *,
+        interactive: bool = False,
+        replace_existing: bool = False,
+    ) -> None:
+        """Embed *figure* (a matplotlib ``Figure``) as a tab.
 
         ``interactive=True`` uses matplotlib's native Qt canvas + navigation
         toolbar; ``interactive=False`` (default) renders the figure to a PNG
         and shows it inside :class:`ZoomableImageView` so the user can pan,
         wheel-zoom, and use the +/−/Fit buttons just like the saved-artifact
         tabs in the QC viewer.
+
+        ``replace_existing=True`` reuses the tab that already carries *title*
+        instead of opening another one — for views that re-render the same
+        panel as the user clicks around, so tabs don't pile up unboundedly.
         """
         if not hasattr(figure, "savefig") and hasattr(figure, "draw"):
             figure = figure.draw()
@@ -418,5 +429,20 @@ class PlotDock(QTabWidget):
                 pass
             widget = ZoomableImageView(pix)
 
-        idx = self.addTab(widget, icon("plots", category=Category.PLOTS), title)
+        tab_icon = icon("plots", category=Category.PLOTS)
+        if replace_existing:
+            for existing in range(self.count()):
+                if self.tabText(existing) != title:
+                    continue
+                old = self.widget(existing)
+                if old in (self._output_log, self._error_log):
+                    break
+                self.removeTab(existing)
+                if old is not None:
+                    old.deleteLater()
+                idx = self.insertTab(existing, widget, tab_icon, title)
+                self.setCurrentIndex(idx)
+                return
+
+        idx = self.addTab(widget, tab_icon, title)
         self.setCurrentIndex(idx)

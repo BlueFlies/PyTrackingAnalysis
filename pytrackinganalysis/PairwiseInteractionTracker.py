@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np 
 from . import Tracker
+from . import windowing
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -13,10 +14,16 @@ class PairwiseInteractionTracker(Tracker.Tracker):
         
     def set_neighbor(self,neighbor_tracker):
         self.neighbor_tracker = neighbor_tracker
-        
-        if 'ClosestNeighbor' not in self.rawdata.columns:           
+
+        if 'ClosestNeighbor' not in self.rawdata.columns:
             self.set_neighbor_distance()
-        
+        if 'ClosestNeighbor' not in neighbor_tracker.rawdata.columns:
+            ## The validity mask reads both sides of the pair, so the partner needs
+            ## its distance column too — otherwise whichever tracker is paired first
+            ## raises KeyError on data that DTrack did not pre-compute.
+            neighbor_tracker.neighbor_tracker = self
+            neighbor_tracker.set_neighbor_distance()
+
         self.set_neighbor_quality_and_distance_mm()
         self.update_neighbor_interactions()
            
@@ -39,31 +46,29 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     ## This function is called in Arena post processing because it needs access
     ## to other trackers.       
     def set_neighbor_quality_and_distance_mm(self):
-        ## This will be a column that is true if the quality of the data is high for both trackers.
-        ## This will be used to filter out bad data.
-         ## Create a boolean column flagging measures that may not be valid.
-        ## If at least one of the two was not found.
-        ## Values are High, Low, Indiscrenable, and Not Found.  I don't know whether Low is ever used.
+        ## Flags the frames whose neighbour distance can be trusted.
+        ## DataQuality values are High, Low, Indiscernible, and NotFound.
+        ##
+        ## Both trackers must be High AND the pair must account for exactly two
+        ## blobs AND the distance must be a real measurement. The quality and
+        ## blob-count conditions were previously OR'd, which admitted frames
+        ## where one animal was NotFound but the object counts happened to sum
+        ## to two — a lost animal is not a valid distance observation.
         quality = (self.rawdata['DataQuality']=="High") & (self.neighbor_tracker.rawdata['DataQuality']=="High")
-        one_blob = (self.rawdata['NObjects'] + self.neighbor_tracker.rawdata['NObjects']) == 2
-        neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1) | (self.neighbor_tracker.rawdata['ClosestNeighbor'] == -1) 
-        null_observations = (self.rawdata['ClosestNeighbor'].isnull()) | (self.neighbor_tracker.rawdata['ClosestNeighbor'].isnull())    
-           
-        final_quality = (quality | one_blob) & (~neg_one_distance) & (~null_observations)
-        self.rawdata['IsNeighborValid'] = final_quality 
-        
+        two_objects = (self.rawdata['NObjects'] + self.neighbor_tracker.rawdata['NObjects']) == 2
+        neg_one_distance = (self.rawdata['ClosestNeighbor'] == -1) | (self.neighbor_tracker.rawdata['ClosestNeighbor'] == -1)
+        null_observations = (self.rawdata['ClosestNeighbor'].isnull()) | (self.neighbor_tracker.rawdata['ClosestNeighbor'].isnull())
+
+        final_quality = quality & two_objects & (~neg_one_distance) & (~null_observations)
+        self.rawdata['IsNeighborValid'] = final_quality
+
         self.rawdata['ClosestNeighbor_mm'] = self.rawdata['ClosestNeighbor']
         self.rawdata.loc[~self.rawdata['IsNeighborValid'], 'ClosestNeighbor_mm'] = np.nan
         self.rawdata['ClosestNeighbor_mm'] *= self.parameters.mm_per_pixel
 
     def get_interaction_subset(self, range_minutes):
-        if(len(range_minutes)!=2):            
-            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
-        if(sum(range_minutes)==0):
-            return self.interaction_data.copy()
-        data_subset = self.interaction_data[(self.interaction_data['Minutes']>=range_minutes[0]) & (self.interaction_data['Minutes']<=range_minutes[1])]
-        data_subset.reset_index(drop=True, inplace=True)
-        return data_subset
+        """Interaction rows within ``[start, end)``; ``(0, 0)`` means the whole recording."""
+        return windowing.slice_by_minutes(self.interaction_data, range_minutes)
 
     def get_frames_interacting(self, range_minutes=(0,0)):
         data = self.get_interaction_subset(range_minutes)
@@ -127,8 +132,11 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     
     def get_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_interaction_subset(range_minutes)
+        columns = ['StartMin','EndMin'] + [f'PercentInteractions_{dist}' for dist in self.parameters.interaction_distance_mm]
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=columns)
         earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
-        latest_min = round(data_subset['Minutes'].iat[-1])        
+        latest_min = round(data_subset['Minutes'].iat[-1])
         interactions =[]
 
         for end in range(earliest_min, latest_min + 1, step_size_min):
@@ -144,6 +152,8 @@ class PairwiseInteractionTracker(Tracker.Tracker):
     
     def get_time_dependent_distances(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=['StartMin','EndMin','MeanDistance','MedianDistance'])
         earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iat[-1])        
         results =[]

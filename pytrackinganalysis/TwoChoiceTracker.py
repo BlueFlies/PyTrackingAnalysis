@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np 
 from . import Tracker
+from . import windowing
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -11,13 +12,8 @@ class TwoChoiceTracker(Tracker.Tracker):
         self.calculate_pi_data()      
 
     def get_pi_subset(self, range_minutes):
-        if(len(range_minutes)!=2):            
-            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
-        if(sum(range_minutes)==0):
-            return self.pi_data.copy()
-        data_subset = self.pi_data[(self.pi_data['Minutes']>=range_minutes[0]) & (self.pi_data['Minutes']<=range_minutes[1])]
-        data_subset.reset_index(drop=True, inplace=True)
-        return data_subset
+        """Per-frame PI rows within ``[start, end)``; ``(0, 0)`` means the whole recording."""
+        return windowing.slice_by_minutes(self.pi_data, range_minutes)
 
     def rle(self, range_minutes=(0,0)):
         rd = self.get_data_subset(range_minutes)
@@ -36,9 +32,13 @@ class TwoChoiceTracker(Tracker.Tracker):
         
         return rle_df
 
-    def get_transitions(self, range_minutes=(0,0)):        
+    def get_transitions(self, range_minutes=(0,0)):
         rle_results = self.rle(range_minutes)
         rle_results = rle_results[rle_results['values'] != "None"]
+        if(len(rle_results)==0):
+            ## No visits to any counting region — "zero transitions" would be a
+            ## claim we cannot make from an empty window.
+            return pd.NA
 
         changes = rle_results['values'].ne(rle_results['values'].shift())
 
@@ -48,6 +48,8 @@ class TwoChoiceTracker(Tracker.Tracker):
 
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=['StartMin','EndMin','PI'])
         earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iat[-1])        
         pis =[]
@@ -60,6 +62,8 @@ class TwoChoiceTracker(Tracker.Tracker):
     
     def get_time_dependent_percentage(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)
+        if(len(data_subset)==0):
+            return pd.DataFrame(columns=['StartMin','EndMin','Percentage'])
         earliest_min = round(data_subset['Minutes'].iat[0])+window_size_min
         latest_min = round(data_subset['Minutes'].iat[-1])        
         pis =[]
@@ -71,9 +75,11 @@ class TwoChoiceTracker(Tracker.Tracker):
         return pd.DataFrame(pis, columns=['StartMin','EndMin','Percentage'])
     
     def get_counting_region_counts(self,range_minutes=(0,0)):
-        data_subset = self.get_pi_subset(range_minutes)               
+        data_subset = self.get_pi_subset(range_minutes)
+        ## Select the canonical group columns by name — a positional slice would
+        ## silently pick up any column that happened to sit between them.
         keys = list(self.counting_regions_design.keys())
-        return data_subset.loc[:,keys[0]:keys[1]].sum()
+        return data_subset[keys].sum()
 
     def get_final_pi(self,range_minutes=(0,0)):
         tmp = self.get_cumulative_pi(range_minutes).iloc[-1].at['CumulativePI']
@@ -263,27 +269,36 @@ class TwoChoiceTracker(Tracker.Tracker):
         plt.grid(True)
         plt.show()
     
-    def summarize(self, range_minutes=(0,0)):        
+    def summarize(self, range_minutes=(0,0)):
+        """Summary row for this tracker over ``range_minutes``.
+
+        An empty window reports NA for every choice metric. Anything else that
+        goes wrong is allowed to propagate with the tracker and window attached,
+        rather than being flattened into a plausible-looking NA — a silent NA
+        here is indistinguishable from a legitimately missing measurement.
+        """
         tmp = Tracker.Tracker.summarize(self, range_minutes)
-        try:
-            final_pi = self.get_final_pi(range_minutes)
-        except:
+        pi_subset = self.get_pi_subset(range_minutes)
+        ## Counts come back as a zero-filled Series even for an empty window,
+        ## which keeps the column set identical across facets.
+        counts = self.get_counting_region_counts(range_minutes)
+
+        if len(pi_subset) == 0:
             final_pi = pd.NA
-        try:
-            final_perc = self.get_final_percentage(range_minutes)
-        except:
             final_perc = pd.NA
-        try:
-            transitions = self.get_transitions(range_minutes)
-            transitions_min=transitions/tmp['ObsMinutes']
-        except:
             transitions = pd.NA
-            transitions_min=pd.NA
-        try:
-            counts = self.get_counting_region_counts(range_minutes)
-        except:
-            counts = pd.NA
-      
+            transitions_min = pd.NA
+        else:
+            try:
+                final_pi = self.get_final_pi(range_minutes)
+                final_perc = self.get_final_percentage(range_minutes)
+                transitions = self.get_transitions(range_minutes)
+            except (KeyError, IndexError, ValueError) as err:
+                raise ValueError(
+                    f"{self.name}: could not summarize choice metrics for range {tuple(range_minutes)}: {err}"
+                ) from err
+            transitions_min = windowing.safe_rate(transitions, tmp['ObsMinutes'])
+
         result = pd.concat([tmp,pd.Series({'FinalPI': final_pi}),pd.Series({"FinalPercentage" : final_perc}),counts,pd.Series({'Transitions': transitions}),pd.Series({'TransitionsPerMin': transitions_min})])
 
         return result

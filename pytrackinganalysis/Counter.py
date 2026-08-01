@@ -5,6 +5,8 @@ import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import time
 
+from . import windowing
+
 class Counter:
     def __init__(self, tracking_region_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
         ## These are the key identifiers for the tracker.  They are defined by the data file.
@@ -38,14 +40,19 @@ class Counter:
         if(self.parameters.fps==-1):
             fulltime = pd.to_datetime(self.rawdata['Time'])+pd.to_timedelta(self.rawdata['Millisec'],unit='ms')
             timediff = fulltime.diff().dt.total_seconds().copy()
-            timediff.iat[0]=0   
-            self.rawdata['Minutes']= timediff.cumsum()/60            
+            timediff.iat[0]=0
+            self.rawdata['Minutes']= timediff.cumsum()/60
         elif (self.parameters.fps==0):
-            self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)                      
-        else:
+            self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)
+        elif (self.parameters.fps>0):
             ## If there is a defined FPS we will use it directly with the frame number.
-            ## Can't trust the MSec column so we will base time on frames.           
+            ## Can't trust the MSec column so we will base time on frames.
             self.rawdata['Minutes'] = self.rawdata['Frame']/(self.parameters.fps*60)
+        else:
+            raise ValueError(
+                f"Invalid fps {self.parameters.fps} for counter {self.name}. "
+                "Use -1 (wall-clock timestamps), 0 (DTrack MSec column), or a positive frame rate."
+            )
         return
     
     def get_plot_limits(self):
@@ -54,13 +61,8 @@ class Counter:
         return xlims,ylims
         
     def get_data_subset(self, range_minutes):
-        if(len(range_minutes)!=2):
-            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
-        if(sum(range_minutes)==0):
-            return self.rawdata
-        data_subset = self.rawdata[(self.rawdata['Minutes']>=range_minutes[0]) & (self.rawdata['Minutes']<=range_minutes[1])]
-        data_subset.reset_index(drop=True, inplace=True)
-        return data_subset
+        """Rows within ``[start, end)`` minutes; ``(0, 0)`` means the whole recording."""
+        return windowing.slice_by_minutes(self.rawdata, range_minutes)
 
     def get_y_positions(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)        
@@ -131,14 +133,21 @@ class Counter:
       
     def summarize(self, range_minutes=(0,0)):
         data_subset = self.get_data_subset(range_minutes)
-        
-        lastrow = data_subset.shape[0]-1        
-        obs_minutes = data_subset.at[lastrow,'Minutes'] - data_subset.at[0,'Minutes']
-        start_minutes = data_subset.at[0,'Minutes']
-        end_minutes = data_subset.at[lastrow,'Minutes']
-     
+
+        if(len(data_subset)==0):
+            ## An empty window is reported as missing rather than crashing on .iat[0].
+            obs_minutes = pd.NA
+            start_minutes = pd.NA
+            end_minutes = pd.NA
+        else:
+            obs_minutes = windowing.observed_minutes(data_subset)
+            start_minutes = data_subset['Minutes'].iat[0]
+            end_minutes = data_subset['Minutes'].iat[-1]
+
         if(self.tracking_region_design is not None):
             treatment = self.tracking_region_design['Treatment'].iat[0]
+        else:
+            treatment = ''
 
         result = pd.Series([treatment, self.name,self.tracking_region_id,obs_minutes,start_minutes,end_minutes])
         result.index = ['Treatment','Name','TrackingRegion','ObsMinutes','StartMinutes','EndMinutes']

@@ -5,6 +5,8 @@ import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import time
 
+from . import windowing
+
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
         """
@@ -28,8 +30,8 @@ class Tracker:
         self.rawdata = rawdata        
         ## We are setting the index to Frame so that operations between trackers always line up with the Frame.
         ## Them make sure we are in ascending Frame order, which should be true anyway, but just to be sure.
-        self.rawdata.set_index('Frame', inplace=True)
-        self.rawdata = self.rawdata.sort_index()
+        ## drop=False keeps the Frame column available; calculate_minutes needs it when fps is set.
+        self.rawdata = self.rawdata.set_index('Frame', drop=False).sort_index()
         self.parameters =parameters        
         
         ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
@@ -57,14 +59,19 @@ class Tracker:
         if(self.parameters.fps==-1):
             fulltime = pd.to_datetime(self.rawdata['Time'])+pd.to_timedelta(self.rawdata['Millisec'],unit='ms')
             timediff = fulltime.diff().dt.total_seconds().copy()
-            timediff.iat[0]=0   
-            self.rawdata['Minutes']= timediff.cumsum()/60            
+            timediff.iat[0]=0
+            self.rawdata['Minutes']= timediff.cumsum()/60
         elif (self.parameters.fps==0):
-            self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)                      
-        else:
+            self.rawdata['Minutes'] = self.rawdata['MSec']/(1000*60)
+        elif (self.parameters.fps>0):
             ## If there is a defined FPS we will use it directly with the frame number.
-            ## Can't trust the MSec column so we will base time on frames.           
+            ## Can't trust the MSec column so we will base time on frames.
             self.rawdata['Minutes'] = self.rawdata['Frame']/(self.parameters.fps*60)
+        else:
+            raise ValueError(
+                f"Invalid fps {self.parameters.fps} for tracker {self.name}. "
+                "Use -1 (wall-clock timestamps), 0 (DTrack MSec column), or a positive frame rate."
+            )
         return
 
     def calculate_speeds_and_feeds(self):
@@ -72,17 +79,28 @@ class Tracker:
         Calculate the speeds and feeds for the tracked object.
         Generally not called by the user.
         """
+        if(len(self.rawdata)==0):
+            raise ValueError(f"Tracker {self.name} has no rows of data.")
         self.rawdata['Xpos_mm'] = self.rawdata['RelX']*self.parameters.mm_per_pixel
         self.rawdata['Ypos_mm'] = self.rawdata['RelY']*self.parameters.mm_per_pixel
-        deltax = self.rawdata['Xpos_mm'].diff() 
+        deltax = self.rawdata['Xpos_mm'].diff()
         deltay = self.rawdata['Ypos_mm'].diff()
         deltax.iat[0]=0
         deltay.iat[0]=0
         self.rawdata['Dist_mm'] = (deltax**2 + deltay**2)**0.5
+        ## X-only travel, kept alongside Dist_mm so windowed sums of the two use
+        ## the same step-attribution rule (see pytrackinganalysis.windowing).
+        self.rawdata['XDist_mm'] = deltax.abs()
         self.rawdata['DeltaSec'] = self.rawdata['Minutes'].copy().diff() * 60
-        self.rawdata.loc[self.rawdata.index[0],'DeltaSec']=0       
-        window_size = int(round(1/self.rawdata['DeltaSec'].mean(),0) * self.parameters.speed_window_seconds)
-        if(window_size<=1):            
+        self.rawdata.loc[self.rawdata.index[0],'DeltaSec']=0
+        ## A single-frame tracker (or one whose timestamps never advance) has no
+        ## sampling interval to derive a rolling window from; fall back to per-row speed.
+        mean_delta_sec = self.rawdata['DeltaSec'].mean()
+        if(pd.isna(mean_delta_sec) or mean_delta_sec<=0):
+            window_size = 1
+        else:
+            window_size = int(round(1/mean_delta_sec,0) * self.parameters.speed_window_seconds)
+        if(window_size<=1):
             self.rawdata['Speed_mm_sec'] = self.rawdata['Dist_mm']/self.rawdata['DeltaSec']
         else:
             self.rawdata['DistWindow_mm']  = self.rawdata['Dist_mm'].rolling(window=window_size).sum()
@@ -147,17 +165,30 @@ class Tracker:
         """
         Calculate the percentages of rows with each value in the DataQuality column.
 
+        An empty window yields a row of NA rather than a divide-by-zero, so a
+        tracker with no data in the requested range stays visible in the report
+        instead of aborting it.
+
         Returns:
         DataFrame: DataFrame containing the DataQuality values and their corresponding percentages.
         """
         data_subset = self.get_data_subset(range_minutes)
-        perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
-        perc_notfound = (data_subset['DataQuality']=='NotFound').sum()/len(data_subset)
-        perc_indiscernable = (data_subset['DataQuality']=='Indiscernible').sum()/len(data_subset)
-        lastrow = data_subset.shape[0]-1      
+        if(len(data_subset)==0):
+            return pd.DataFrame({
+                'HighQuality': [pd.NA],
+                'NotFound': [pd.NA],
+                'Indiscernible': [pd.NA],
+                'StartMinutes': [pd.NA],
+                'EndMinutes': [pd.NA]
+            })
+
+        nrows = len(data_subset)
+        perc_highquality = (data_subset['DataQuality']=='High').sum()/nrows
+        perc_notfound = (data_subset['DataQuality']=='NotFound').sum()/nrows
+        perc_indiscernable = (data_subset['DataQuality']=='Indiscernible').sum()/nrows
         start_minutes = data_subset['Minutes'].iat[0]
-        end_minutes = data_subset['Minutes'].iat[lastrow]
-        
+        end_minutes = data_subset['Minutes'].iat[-1]
+
         # Create a DataFrame with the results
         df_percentages = pd.DataFrame({
             'HighQuality': [perc_highquality],
@@ -173,19 +204,26 @@ class Tracker:
         """
         Get a subset of the raw data within the specified range of minutes.
 
+        The window is half-open — ``[start, end)`` — so consecutive facet
+        phases partition the recording instead of both claiming the row that
+        lands on their shared boundary. ``(0, 0)`` means the whole recording.
+
+        ``Dist_mm`` and ``DeltaSec`` are recomputed for the window. Each holds
+        the step *arriving* at its row, so the first row of a window measures
+        against the last row before the window. Facet phases therefore sum to
+        the whole-recording total: a step spanning a cutoff is counted once, in
+        the phase it arrives in.
+
+        ``Speed_mm_sec`` is deliberately left as computed over the full
+        recording — it is a rolling instantaneous measure, not an accumulation.
+
         Parameters:
-        range_minutes (tuple): Tuple of two integers specifying the start and end minutes.
+        range_minutes (tuple): Tuple of two numbers specifying the start and end minutes.
 
         Returns:
-        DataFrame: Subset of the raw data within the specified range.
+        DataFrame: Copy of the raw data within the specified range.
         """
-        if(len(range_minutes)!=2):
-            raise ValueError(f"Invalid range_minutes: {range_minutes}. Must be a list of two integers.")
-        if(sum(range_minutes)==0):
-            return self.rawdata
-        data_subset = self.rawdata[(self.rawdata['Minutes']>=range_minutes[0]) & (self.rawdata['Minutes']<=range_minutes[1])]
-        data_subset.reset_index(drop=True, inplace=True)
-        return data_subset
+        return windowing.slice_with_window_deltas(self.rawdata, range_minutes)
 
     def summarize(self, range_minutes=(0,0)):
         """
@@ -206,12 +244,12 @@ class Tracker:
 
             avg_speed = data_subset['Speed_mm_sec'].mean()
             total_distance = data_subset['Dist_mm'].sum()
-            lastrow = data_subset.shape[0]-1        
-            obs_minutes = data_subset['Minutes'].iat[lastrow] - data_subset['Minutes'].iat[0]
+            obs_minutes = windowing.observed_minutes(data_subset)
             start_minutes = data_subset['Minutes'].iat[0]
-            end_minutes = data_subset['Minutes'].iat[lastrow]
-            total_distance_min = total_distance/obs_minutes
-            
+            end_minutes = data_subset['Minutes'].iat[-1]
+            ## A single-row or zero-duration window has no rate to report.
+            total_distance_min = windowing.safe_rate(total_distance, obs_minutes)
+
             perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
         else:
             perc_sleeping = pd.NA

@@ -51,6 +51,10 @@ class ConfigEditorWindow(QMainWindow):
         self.resize(1200, 820)
         self._current_path: Optional[Path] = None
         self._disk_text: str = ""  # yaml serialized at last load/save
+        # The document as loaded. Saving edits only the sections this editor
+        # owns, so keys it does not display (scripts:, anything hand-added)
+        # survive a load/save round trip.
+        self._loaded_config: dict = {}
 
         self._build_ui()
 
@@ -185,6 +189,7 @@ class ConfigEditorWindow(QMainWindow):
         except Exception as err:  # noqa: BLE001
             QMessageBox.critical(self, "Error", f"Could not load file:\n{err}")
             return
+        self._loaded_config = config if isinstance(config, dict) else {}
         self._global_tab.load(config)
         self._tracking_tab.load(config)
         self._counting_tab.load(config)
@@ -211,6 +216,17 @@ class ConfigEditorWindow(QMainWindow):
             self._set_title(self._current_path)
 
     def _write(self, path: Path) -> None:
+        errors = self._global_tab.validation_errors()
+        if errors:
+            # Writing anyway would drop the offending fields from the file and
+            # leave the analysis running on rig defaults without telling anyone.
+            QMessageBox.warning(
+                self,
+                "Fix these fields first",
+                "The config was not saved:\n\n  • " + "\n  • ".join(errors),
+            )
+            return
+
         config = self._dump_config()
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -226,8 +242,28 @@ class ConfigEditorWindow(QMainWindow):
         QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
 
     def _dump_config(self) -> dict:
-        config: dict = {}
-        config.update(self._global_tab.dump())
+        """The document to write: the loaded YAML with this editor's sections replaced.
+
+        Rebuilding the document from the three visible tabs alone would drop every
+        top-level key the editor does not render — ``scripts:`` most importantly —
+        and any hand-added key inside ``global:``.
+        """
+        config: dict = dict(self._loaded_config)
+
+        dumped_global = self._global_tab.dump().get("global", {})
+        owned = self._global_tab.owned_keys()
+        # Walk the loaded keys first so the on-disk key order survives a save.
+        merged_global: dict = {}
+        for key, value in (config.get("global") or {}).items():
+            if key in dumped_global:
+                merged_global[key] = dumped_global[key]
+            elif key not in owned:
+                merged_global[key] = value  # not ours to touch — keep verbatim
+            # An owned key the tab no longer produces was cleared by the user.
+        for key, value in dumped_global.items():
+            merged_global.setdefault(key, value)
+        config["global"] = merged_global
+
         config.update(self._tracking_tab.dump())
         config.update(self._counting_tab.dump())
         return config

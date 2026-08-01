@@ -422,6 +422,27 @@ default for every faceted plot, summary, and statistics run, and is inherited
 by script steps whose own `cutoffs` field is blank (see
 [scripts_guide.md](scripts_guide.md)).
 
+**How time windows are defined.**  Every window — a `facet_cutoffs` phase or an
+explicit `range_minutes=(start, end)` — is *half-open*: it contains rows where
+`start ≤ Minutes < end`.  `facet_cutoffs: [10, 70]` therefore produces the
+phases `[0, 10)`, `[10, 70)`, and `[70, ∞)`, and each frame belongs to exactly
+one of them.  `range_minutes=(0, 0)` still means "the whole recording".
+
+Accumulated quantities such as `TotalDistance` are computed *within* the window.
+Each per-frame step is credited to the window containing the frame it arrives
+at, so a step spanning a cutoff is counted once, in the later phase.  The phase
+totals of a faceted summary therefore add up to the flat summary total exactly.
+
+Windows used to include *both* endpoints, so a frame landing exactly on a cutoff
+was counted in the phase before it and the phase after it.  How much that
+mattered depends on the time base.  With `fps: 0` (the default for every rig
+preset) minutes come from the DTrack `MSec` column and essentially never land on
+an exact cutoff, so those results were already correct.  With an explicit `fps`,
+minutes are `Frame / (fps × 60)` and hit integer cutoffs exactly — one frame per
+boundary was double-counted, inflating a faceted total by roughly one sampling
+interval of movement per cutoff.  `XChoiceTracker`'s `TotalXDistance_mm` had the
+mirror-image problem and lost one step per window.
+
 ---
 
 ### 4.4 `tracking_regions`
@@ -797,7 +818,7 @@ All outputs are written relative to the project directory.
 | `*_experiment_summary.txt` | Rig settings, parameters, a formatted description of the experimental design (factors, region assignments, non-unit multipliers, counting regions, cutoffs), data quality overview, per-tracker table |
 | `*_Summary.csv` | Per-tracker summary statistics (one row per tracker) |
 | `*_Summary_Facet.csv` | Same, split into the time phases defined by `facet_cutoffs` |
-| `*_Stats.txt` | Pairwise statistical comparisons (Mann-Whitney U) across treatment groups |
+| `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample t-test (Student's, equal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
 | `*_report.pdf` | Multi-page PDF: experiment summary → QC table → tracker grid plots → all plots |
 
