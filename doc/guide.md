@@ -433,6 +433,25 @@ Each per-frame step is credited to the window containing the frame it arrives
 at, so a step spanning a cutoff is counted once, in the later phase.  The phase
 totals of a faceted summary therefore add up to the flat summary total exactly.
 
+**Which frames count.**  `DataQuality` is reported, not enforced: `TotalDistance`
+sums every step in the window, including steps into and out of frames where
+tracking was lost.  Those frames carry real coordinate jumps rather than blanks,
+so on real recordings they inflate `TotalDistance` by up to ~19 % for the worst
+animal, in proportion to how poor the tracking was.  The summary therefore also
+reports **`TotalDistanceHighQualityOnly`**, which discards any step with a lost
+endpoint, alongside `PercHighQuality`.  Compare the two on your own data before
+reporting distances; if tracking quality correlates with treatment, part of a
+distance difference between arms is a tracking artifact rather than behaviour.
+
+A frame whose speed is undefined — a duplicate or stalled timestamp, or the
+lead-in rows of the rolling speed window — cannot be classified as walking,
+micro-moving or resting.  Such frames are counted in **`PercUnmeasurable`** and
+excluded from the denominator of the other four fractions, so those four still
+sum to 1 over the frames that were actually measurable.  Previously they fell
+through to `PercResting`, making "the animal was still" indistinguishable from
+"we could not tell".  A window in which *every* frame is unmeasurable reports
+`NA` for the activity fractions rather than 100 % resting.
+
 Windows used to include *both* endpoints, so a frame landing exactly on a cutoff
 was counted in the phase before it and the phase after it.  How much that
 mattered depends on the time base.  With `fps: 0` (the default for every rig
@@ -738,6 +757,11 @@ from pytrackinganalysis.Experiment import Experiment, batch_analyze
 # Pass the project directory — the one containing tracking_config.yaml and data/
 exp = Experiment("./Data/Trial1/")
 
+# To analyse a project against a second config in the same directory, name it.
+# Without this the filename tracking_config.yaml was joined on unconditionally,
+# so an alternative config could be validated but never actually used.
+exp_alt = Experiment("./Data/Trial1/", config_path="alt_config.yaml")
+
 # Human-readable summary of the loaded experiment
 print(exp)
 
@@ -776,6 +800,12 @@ exp.arena.plot_percentage_facet(cutoffs=[10, 70])
 exp.arena.plot_transitions_facet(cutoffs=[10, 70])
 exp.arena.plot_totaldistance_facet(cutoffs=[10, 70])
 ```
+
+Every `*_facet` method requires `cutoffs`, either explicitly or via
+`facet_cutoffs` in the config; calling one without them raises rather than
+guessing.  They previously defaulted to a literal `(10, 70)`, so a project with
+no cutoffs configured produced plots split at 10 and 70 minutes sitting beside
+whole-recording p-values, with nothing marking the discrepancy.
 
 The available plot methods depend on `tracking_type`:
 
@@ -818,7 +848,7 @@ All outputs are written relative to the project directory.
 | `*_experiment_summary.txt` | Rig settings, parameters, a formatted description of the experimental design (factors, region assignments, non-unit multipliers, counting regions, cutoffs), data quality overview, per-tracker table |
 | `*_Summary.csv` | Per-tracker summary statistics (one row per tracker) |
 | `*_Summary_Facet.csv` | Same, split into the time phases defined by `facet_cutoffs` |
-| `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample t-test (Student's, equal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more |
+| `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample **Welch's** t-test (unequal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more. Each line carries both groups' N, mean and SD, and any trackers dropped for having no numeric value in the window are counted explicitly. Faceted runs append a note stating how many uncorrected tests were run and the Bonferroni-adjusted threshold. Pass `equal_var=True` to `run_pairwise_comparisons` for the classic Student's test. |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
 | `*_report.pdf` | Multi-page PDF: experiment summary → QC table → tracker grid plots → all plots |
 

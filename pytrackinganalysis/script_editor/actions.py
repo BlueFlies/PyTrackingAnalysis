@@ -204,6 +204,19 @@ def _exec_filter_by_quality(params: dict, ctx: RunContext) -> None:
     )
 
 
+def _region_prefix(name: Any) -> str:
+    """``'T_0_3'`` → ``'T_0'``; anything with fewer than two ``_`` parts is returned as-is.
+
+    Region ids are conventionally ``<letter>_<index>[_<object>]``, but nothing
+    enforces it: a rig configured with a plain region name like ``Chamber``
+    used to raise ``IndexError`` here and kill the whole script run.
+    """
+    parts = str(name).split("_")
+    if len(parts) < 2:
+        return str(name)
+    return f"{parts[0]}_{parts[1]}"
+
+
 def _exec_filter_by_region(params: dict, ctx: RunContext) -> None:
     _require_exp(ctx, "filter_by_region")
     regions_raw = params.get("regions", "")
@@ -214,7 +227,7 @@ def _exec_filter_by_region(params: dict, ctx: RunContext) -> None:
     before = len(arena.trackers)
     keep = {
         key: t for key, t in arena.trackers.items()
-        if getattr(t, "tracking_region_id", key).split("_")[0] + "_" + getattr(t, "tracking_region_id", key).split("_")[1] in regions
+        if _region_prefix(getattr(t, "tracking_region_id", None) or key) in regions
         or getattr(t, "tracking_region_id", None) in regions
     }
     # Fallback simple match: key prefix

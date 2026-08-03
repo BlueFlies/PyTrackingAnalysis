@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..io_utils import atomic_write_text
+
 _CONFIG_DIR = (
     Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
     / "pytrackinganalysis"
@@ -39,10 +41,14 @@ def load() -> dict[str, Any]:
 
 
 def save(data: dict[str, Any]) -> None:
+    # Written through a temp file + rename: a plain write truncates the file
+    # first, so an interruption used to leave a half-written ui.json that
+    # load() then silently replaced with the bare defaults, losing the theme
+    # and every recent project.
     try:
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        _CONFIG_FILE.write_text(
-            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_text(
+            _CONFIG_FILE,
+            lambda handle: handle.write(json.dumps(data, indent=2, sort_keys=True)),
         )
     except Exception:  # noqa: BLE001
         pass

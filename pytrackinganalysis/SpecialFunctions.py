@@ -22,7 +22,7 @@ def analyze_rle_data(arena: Arena, change_none_to_light=True, min_duration_frame
     )
 
 
-def analyze_rle_data_facet(arena: Arena, cutoffs=(10, 70), change_none_to_light=True,
+def analyze_rle_data_facet(arena: Arena, cutoffs=None, change_none_to_light=True,
                            min_duration_frames=1, write_to_csvfile=False):
     """Deprecated: call arena.analyze_rle_data_facet() instead."""
     return arena.analyze_rle_data_facet(
@@ -38,7 +38,7 @@ def analyze_distance_by_light(arena: Arena, range_minutes=(0, 0)):
     return arena.analyze_distance_by_light(range_minutes=range_minutes)
 
 
-def analyze_distance_by_light_facet(arena: Arena, cutoffs=(10, 70),
+def analyze_distance_by_light_facet(arena: Arena, cutoffs=None,
                                     copy_to_clipboard=False, write_to_csvfile=False):
     """Deprecated: call arena.analyze_distance_by_light_facet() instead.
 

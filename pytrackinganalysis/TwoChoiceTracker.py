@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np 
 from . import Tracker
+from . import ExperimentalDesign
 from . import windowing
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -33,18 +34,27 @@ class TwoChoiceTracker(Tracker.Tracker):
         return rle_df
 
     def get_transitions(self, range_minutes=(0,0)):
+        """Count alternations between the two counting *groups* in the window.
+
+        Out-of-region runs ("None") are dropped rather than treated as a third
+        state, so a brief excursion outside both regions does not break a visit
+        into two.
+
+        The comparison is made on the group, not the raw cell: those cells hold
+        region *aliases* (``Light, LL, L``), so moving from "L" to "LL" — the
+        same group under two spellings — used to be counted as a transition.
+        """
         rle_results = self.rle(range_minutes)
-        rle_results = rle_results[rle_results['values'] != "None"]
-        if(len(rle_results)==0):
+        region_to_group = ExperimentalDesign.alias_to_group_map(self.counting_regions_design)
+        groups = rle_results['values'].map(region_to_group)
+        groups = groups[groups.notna()]
+        if(len(groups)==0):
             ## No visits to any counting region — "zero transitions" would be a
             ## claim we cannot make from an empty window.
             return pd.NA
 
-        changes = rle_results['values'].ne(rle_results['values'].shift())
-
-        ## TODO: Maybe make sure the transitions happen only between counting regions that 
-        ## should be part of this 
-        return sum(changes)-1
+        changes = groups.ne(groups.shift())
+        return int(changes.sum()) - 1
 
     def get_time_dependent_pi(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         data_subset = self.get_pi_subset(range_minutes)

@@ -294,6 +294,32 @@ class OutputLog(QPlainTextEdit):
 # Plot dock
 # ---------------------------------------------------------------------------
 
+def _close_figure(figure: Any) -> None:
+    """Unregister *figure* from pyplot, ignoring anything that goes wrong."""
+    try:
+        import matplotlib.pyplot as _plt
+
+        _plt.close(figure)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _close_figure_when_destroyed(widget: QWidget, figure: Any) -> None:
+    """Close *figure* once *widget*'s C++ object goes away.
+
+    ``destroyed`` fires after ``deleteLater`` has run, which is exactly when
+    the embedded canvas stops needing the figure. The slot touches no Qt
+    state, so it is safe at that point in the object's life.
+    """
+    # Bind both the figure and the helper as default arguments: the signal can
+    # fire from the garbage collector or at interpreter shutdown, when free
+    # variables and module globals are no longer reachable, and an exception
+    # raised inside a Qt slot takes the process down.
+    widget.destroyed.connect(
+        lambda *_args, fig=figure, close=_close_figure: close(fig)
+    )
+
+
 class PlotDock(QTabWidget):
     """Tabbed dock for matplotlib figures.
 
@@ -410,6 +436,11 @@ class PlotDock(QTabWidget):
                 host._mpl_cursor = cursor  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 pass
+            # The tab owns the figure from here on. Without this, an
+            # interactive figure stayed registered with pyplot forever —
+            # closing the tab (or "Clear plots") freed the widget but left the
+            # full RGBA buffer and the source dataframes alive.
+            _close_figure_when_destroyed(host, figure)
             widget: QWidget = host
         else:
             import io as _io
@@ -417,19 +448,35 @@ class PlotDock(QTabWidget):
             from .zoom import ZoomableImageView
 
             buf = _io.BytesIO()
-            figure.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            try:
+                figure.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            finally:
+                # Also close on a savefig failure, which used to leak the figure.
+                _close_figure(figure)
             buf.seek(0)
             pix = QPixmap()
             pix.loadFromData(buf.getvalue())
-            try:
-                import matplotlib.pyplot as _plt
-
-                _plt.close(figure)
-            except Exception:  # noqa: BLE001
-                pass
             widget = ZoomableImageView(pix)
 
-        tab_icon = icon("plots", category=Category.PLOTS)
+        self.add_widget(title, widget, replace_existing=replace_existing)
+
+    def add_widget(
+        self,
+        title: str,
+        widget: QWidget,
+        tab_icon: Any = None,
+        *,
+        replace_existing: bool = False,
+    ) -> int:
+        """Add *widget* as a tab titled *title* and make it current.
+
+        ``replace_existing=True`` reuses the tab that already carries *title*
+        (deleting the widget it held) instead of opening a second one, so
+        re-rendering the same panel doesn't grow the tab bar without bound.
+        Returns the tab index.
+        """
+        if tab_icon is None:
+            tab_icon = icon("plots", category=Category.PLOTS)
         if replace_existing:
             for existing in range(self.count()):
                 if self.tabText(existing) != title:
@@ -442,7 +489,8 @@ class PlotDock(QTabWidget):
                     old.deleteLater()
                 idx = self.insertTab(existing, widget, tab_icon, title)
                 self.setCurrentIndex(idx)
-                return
+                return idx
 
         idx = self.addTab(widget, tab_icon, title)
         self.setCurrentIndex(idx)
+        return idx

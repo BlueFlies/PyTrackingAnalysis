@@ -30,6 +30,27 @@ _APPS = [
 
 _ICON_NAME = "pytrackinganalysis"
 
+# Characters the freedesktop spec reserves inside an Exec= field. Any argument
+# containing one of them has to be quoted, or a venv living under e.g.
+# "~/My Projects/" produces an entry that launches nothing.
+_EXEC_RESERVED = set(' \t\n"\'\\><~|&;$*?#()`')
+
+
+def _exec_arg(value: str) -> str:
+    """Quote *value* for a ``.desktop`` ``Exec=`` field.
+
+    The spec asks for double quotes, with backslash-escapes for ``"``, ``\\``,
+    ``$`` and a backtick inside them.
+    """
+    if not value:
+        return '""'
+    if not (_EXEC_RESERVED & set(value)):
+        return value
+    escaped = value
+    for ch in ('\\', '"', '$', '`'):
+        escaped = escaped.replace(ch, '\\' + ch)
+    return f'"{escaped}"'
+
 
 def main() -> int:
     # Render icons without needing a display.
@@ -58,7 +79,7 @@ def main() -> int:
             "Type=Application\n"
             f"Name={name}\n"
             f"Comment={comment}\n"
-            f"Exec={exe} %f\n"
+            f"Exec={_exec_arg(exe)} %f\n"
             f"Icon={_ICON_NAME}\n"
             "Terminal=false\n"
             "Categories=Science;Education;\n"

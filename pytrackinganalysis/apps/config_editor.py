@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..io_utils import atomic_write_text
 from ..ui import (
     ActionButton,
     Card,
@@ -55,6 +56,9 @@ class ConfigEditorWindow(QMainWindow):
         # owns, so keys it does not display (scripts:, anything hand-added)
         # survive a load/save round trip.
         self._loaded_config: dict = {}
+        # A single non-modal Script Editor. Two of them would both hold a
+        # snapshot of the same file and the last one to save would win.
+        self._script_editor: Optional[QMainWindow] = None
 
         self._build_ui()
 
@@ -229,11 +233,16 @@ class ConfigEditorWindow(QMainWindow):
 
         config = self._dump_config()
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                yaml.dump(
-                    config, f,
+            # Atomic: the config is the project's only definition of the
+            # experiment, and a plain open(path, "w") truncates it before the
+            # first byte is written.
+            atomic_write_text(
+                path,
+                lambda handle: yaml.dump(
+                    config, handle,
                     default_flow_style=False, allow_unicode=True, sort_keys=False,
-                )
+                ),
+            )
         except Exception as err:  # noqa: BLE001
             QMessageBox.critical(self, "Error", f"Could not save file:\n{err}")
             return
@@ -264,8 +273,16 @@ class ConfigEditorWindow(QMainWindow):
             merged_global.setdefault(key, value)
         config["global"] = merged_global
 
-        config.update(self._tracking_tab.dump())
-        config.update(self._counting_tab.dump())
+        # The region tabs always emit their key, so an empty table means "the
+        # user deleted every region" — not "this tab has nothing to say".
+        # config.update({}) used to be a no-op, which silently wrote the
+        # previous plate's regions back out.
+        for section in (self._tracking_tab.dump(), self._counting_tab.dump()):
+            for key, value in section.items():
+                if value:
+                    config[key] = value
+                else:
+                    config.pop(key, None)
         return config
 
     # ==================================================================
@@ -315,6 +332,17 @@ class ConfigEditorWindow(QMainWindow):
                 "Open or save a YAML config first — scripts are stored alongside it.",
             )
             return
+        # One editor per window. A second one would open its own snapshot of
+        # the same file and whichever saved last would silently win.
+        if self._script_editor is not None:
+            try:
+                self._script_editor.show()
+                self._script_editor.raise_()
+                self._script_editor.activateWindow()
+                return
+            except RuntimeError:  # the C++ object is gone — build a fresh one
+                self._script_editor = None
+
         try:
             from ..script_editor.window import ScriptEditorWindow
         except Exception as err:  # noqa: BLE001
@@ -324,8 +352,57 @@ class ConfigEditorWindow(QMainWindow):
                 f"Script Editor is still under development (Phase 4).\n\n{err}",
             )
             return
-        editor = ScriptEditorWindow(self._current_path, parent=self)
+
+        try:
+            # The construction has to be inside the guard: a malformed
+            # ``scripts:`` block raises in __init__, and an exception escaping a
+            # Qt slot is escalated by PyQt6 to qFatal() — SIGABRT, taking the
+            # user's unsaved config edits with it.
+            editor = ScriptEditorWindow(self._current_path, parent=self)
+        except Exception as err:  # noqa: BLE001
+            QMessageBox.critical(self, "Script Editor", f"Could not open:\n{err}")
+            return
+
+        # The Script Editor writes the same file we do. Without this the next
+        # Save here would rewrite the document from a snapshot predating the
+        # scripts: it just stored, deleting every saved script.
+        editor.scriptsSaved.connect(self._reload_external_changes)
+        editor.destroyed.connect(self._forget_script_editor)
+        self._script_editor = editor
         editor.show()
+
+    def _forget_script_editor(self, *_args) -> None:
+        self._script_editor = None
+
+    # Top-level sections this window renders and therefore owns; everything
+    # else in the document belongs to whoever wrote it.
+    _OWNED_SECTIONS = ("global", "tracking_regions", "counting_regions")
+
+    def _reload_external_changes(self, path: str = "") -> None:
+        """Re-read the sections this window does not own after a child wrote the file."""
+        target = Path(path) if path else self._current_path
+        if target is None:
+            return
+        try:
+            with open(target, encoding="utf-8") as f:
+                text = f.read()
+            fresh = yaml.safe_load(text) or {}
+        except Exception:  # noqa: BLE001 — a re-read failure must not kill the slot
+            return
+        if not isinstance(fresh, dict):
+            return
+
+        for key, value in fresh.items():
+            if key not in self._OWNED_SECTIONS:
+                self._loaded_config[key] = value
+        # A section the other writer *removed* must not be resurrected either.
+        for key in [k for k in self._loaded_config
+                    if k not in self._OWNED_SECTIONS and k not in fresh]:
+            del self._loaded_config[key]
+
+        # The on-disk baseline moved, so re-anchor the dirty indicator to it.
+        self._disk_text = yaml.safe_dump(fresh, default_flow_style=False, sort_keys=False)
+        self._refresh_dirty()
 
 
 # ---------------------------------------------------------------------------

@@ -66,13 +66,17 @@ from ..ui import (
     resolved_mode,
 )
 from ..ui import settings as ui_settings
-from .common import TaskWorker, capture_figures
+from .common import TaskWorker, capture_figures, shutdown_worker
 
 
 # Lines like "Saved: /path/to/file.png" come out of the various Experiment
 # methods that write artifacts to disk. We mirror them as zoomable PlotDock
 # tabs in the Hub.
 _SAVED_RE = re.compile(r"^\s*Saved:\s+(\S.*?)\s*$")
+
+# The only config file ``Experiment.__init__`` ever opens — it takes a project
+# directory and joins this name onto it, with no parameter to override it.
+_CANONICAL_CONFIG = "tracking_config.yaml"
 
 
 # Per-tracking-type plot buttons for the Plots card. Each entry is
@@ -281,10 +285,24 @@ class HubWindow(QMainWindow):
         form.addRow("Project dir:", _wrap_layout(proj_col))
 
         self._config_combo = QComboBox()
-        self._config_combo.setToolTip("YAML configs found in the project dir.")
+        self._config_combo.setToolTip(
+            "YAML configs found in the project dir. The selected file is the "
+            "one that Validate YAML checks, the Scripts card reads, and Load "
+            "experiment analyses."
+        )
+        # Both the Scripts list and the "wrong config" notice below are read
+        # off this selection; without this the Scripts card kept listing the
+        # previously selected file's recipes.
+        self._config_combo.currentIndexChanged.connect(self._on_config_changed)
         form.addRow("Config:", self._config_combo)
 
         card.add_body(form)
+
+        self._config_note = QLabel()
+        self._config_note.setWordWrap(True)
+        self._config_note.setStyleSheet("color: #f59e0b; font-size: 9pt;")
+        self._config_note.setVisible(False)
+        card.add_body(self._config_note)
 
         launchers = QHBoxLayout()
         edit_cfg = ActionButton("Edit config…", Category.TOOLS, icon_name="config")
@@ -584,7 +602,7 @@ class HubWindow(QMainWindow):
             self._config_combo.setCurrentText("tracking_config.yaml")
         self._config_combo.blockSignals(False)
         self._log.append_line(f"Project: {p}")
-        self._refresh_scripts()
+        self._on_config_changed()
 
     def _reload_project(self) -> None:
         if self._project_dir:
@@ -598,6 +616,28 @@ class HubWindow(QMainWindow):
         if self._project_dir is None:
             return None
         return self._project_dir / self._config_combo.currentText()
+
+    def _uses_canonical_config(self) -> bool:
+        """True when the selected config is the one an Experiment would read."""
+        return self._config_combo.currentText().strip() == _CANONICAL_CONFIG
+
+    def _on_config_changed(self, _index: int = -1) -> None:
+        """Re-read the selected file and note when it isn't the default.
+
+        ``Experiment`` now takes a ``config_path``, so the selection genuinely
+        drives the analysis. It previously did not: the filename was joined on
+        unconditionally, so the Hub validated one file and analysed another.
+        The note stays because loading a non-default config is worth seeing.
+        """
+        if self._uses_canonical_config():
+            self._config_note.setVisible(False)
+        else:
+            self._config_note.setText(
+                f"Using '{self._config_combo.currentText()}' instead of "
+                f"{_CANONICAL_CONFIG} for validation, scripts and analysis."
+            )
+            self._config_note.setVisible(True)
+        self._refresh_scripts()
 
     def _refresh_scripts(self) -> None:
         from ..script_editor.runner import load_scripts
@@ -692,14 +732,16 @@ class HubWindow(QMainWindow):
         if not self._project_dir:
             self._warn("Choose a project directory first.")
             return
-
         project_dir = self._project_dir
+        # The file the user actually selected — the same one Validate YAML
+        # checks and the Scripts card reads.
+        config_name = self._config_combo.currentText().strip() or _CANONICAL_CONFIG
         # Use a list as a mutable holder so the worker callable can hand the
         # built Experiment back to the GUI thread without a custom signal.
         result_holder: list = []
 
         def _do_load_and_qc() -> str:
-            exp = ExperimentMod.Experiment(str(project_dir))
+            exp = ExperimentMod.Experiment(str(project_dir), config_path=config_name)
             result_holder.append(exp)
             print(str(exp))
             exp.run_qc()
@@ -801,22 +843,36 @@ class HubWindow(QMainWindow):
             self._log_issue(f"Unknown plot method: arena.{method_name}")
             return
         self._log.append_line(f"[plot] arena.{method_name}({_fmt_kwargs(kwargs)})")
-        with capture_figures() as figs:
-            try:
-                fn(**kwargs)
-            except Exception as err:  # noqa: BLE001
-                import traceback
 
-                self._log_issue(traceback.format_exc())
-                self._warn(f"Plot failed: {err}")
+        figs: list = []
+
+        def _do() -> str:
+            # ``capture_figures`` swaps the module-global ``plt.show``; running
+            # it on the GUI thread meant a plot click during an analysis had
+            # two threads fighting over that global — the worker's figure was
+            # swallowed, its PNG never written, and plt.show left corrupted.
+            # Going through TaskWorker serialises the two (the Plots card is
+            # also disabled while busy, see _set_busy).
+            with capture_figures() as captured:
+                fn(**kwargs)
+            figs.extend(captured)
+            return f"Plot complete: {title}."
+
+        def _on_ok(msg: str) -> None:
+            if not figs:
+                self._log_issue(f"[plot] {method_name} produced no figures.")
                 return
-        if not figs:
-            self._log_issue(f"[plot] {method_name} produced no figures.")
-            return
-        interactive = self._interactive_checkbox.isChecked()
-        for i, fig in enumerate(figs):
-            tab_title = title if len(figs) == 1 else f"{title} ({i+1})"
-            self._plot_dock.add_figure(tab_title, fig, interactive=interactive)
+            interactive = self._interactive_checkbox.isChecked()
+            for i, fig in enumerate(figs):
+                tab_title = title if len(figs) == 1 else f"{title} ({i+1})"
+                self._plot_dock.add_figure(tab_title, fig, interactive=interactive)
+            self._log.append_line(msg)
+
+        def _on_fail(msg: str) -> None:
+            self._log_issue(msg)
+            self._warn(f"Plot failed: {title} — see the Errors tab.")
+
+        self._spawn_task_with_callbacks(f"Plot {title}", _do, _on_ok, _on_fail)
 
     def _render_dynamic_plot(
         self, base_label: str, flat_method: str, facet_method: str
@@ -1125,12 +1181,20 @@ class HubWindow(QMainWindow):
         key = str(path.resolve())
         cached = self._artifact_tabs.get(key)
         if cached is not None:
-            idx = self._plot_dock.indexOf(cached)
+            try:
+                idx = self._plot_dock.indexOf(cached)
+            except RuntimeError:
+                # Belt and braces: the C++ side is normally pruned by the
+                # destroyed handler below, but this slot is queued, so never
+                # let a dead wrapper raise here — PyQt escalates an exception
+                # in a queued slot to qFatal() and the whole Hub goes down
+                # mid-analysis.
+                idx = -1
             if idx >= 0:
                 self._plot_dock.setCurrentIndex(idx)
                 return
             # Tab was closed by the user — drop the stale entry and re-add below.
-            del self._artifact_tabs[key]
+            self._artifact_tabs.pop(key, None)
 
         suffix = path.suffix.lower()
         title = path.stem
@@ -1145,15 +1209,40 @@ class HubWindow(QMainWindow):
         else:
             return  # PDFs / other formats: just leave them on disk.
 
-        idx = self._plot_dock.addTab(view, tab_icon, title)
         self._artifact_tabs[key] = view
-        self._plot_dock.setCurrentIndex(idx)
+        # Closing the tab (or "Clear plots") calls deleteLater; prune the
+        # mapping when the widget actually goes away so the next "Saved:" line
+        # for the same path can't reach a deleted C++ object.
+        # Everything the slot needs is bound as a default argument: a plain
+        # closure over ``self`` breaks when the signal fires from the garbage
+        # collector, which clears the enclosing cell first (NameError inside a
+        # Qt slot is fatal).
+        view.destroyed.connect(
+            lambda *_args, hub=self, k=key, w=view: hub._forget_artifact_tab(k, w)
+        )
+        self._plot_dock.add_widget(title, view, tab_icon)
+
+    def _forget_artifact_tab(self, key: str, widget: QWidget) -> None:
+        """Drop *key* from the artifact map, but only if it still maps to *widget*.
+
+        Guards the case where the tab was re-added before the old widget's
+        deferred deletion was processed.
+        """
+        if self._artifact_tabs.get(key) is widget:
+            del self._artifact_tabs[key]
 
     def _on_task_ok(self, msg: str) -> None:
         self._log.append_line(msg)
 
     def _on_task_failed(self, msg: str) -> None:
+        # An Errors-tab badge alone left a failed run looking like a finished
+        # one; _load_experiment already pops a dialog, so do the same here.
         self._log_issue(msg)
+        headline = msg.splitlines()[0] if msg else "The task failed."
+        QMessageBox.warning(
+            self, "PyTrackingAnalysis",
+            f"{headline}\n\nSee the Errors tab for the full traceback.",
+        )
 
     def _on_task_finished(self, worker: TaskWorker) -> None:
         if self._worker is worker:
@@ -1177,6 +1266,15 @@ class HubWindow(QMainWindow):
                     or self._exp is not None
                 )
             )
+        # Plot rendering and script runs are workloads too; leaving their cards
+        # live during a task let a second one start behind the first.
+        for key in ("plots", "scripts"):
+            card = self._cards.get(key)
+            if card is None:
+                continue
+            if key == "scripts" and self._mode_batch.isChecked():
+                continue  # already disabled wholesale by _on_mode_changed
+            card.setEnabled(not busy)
 
     # ==================================================================
     # Behaviour — tools
@@ -1455,6 +1553,43 @@ class HubWindow(QMainWindow):
         self._subapps.append((which, process))
         self._log.append_line(f"[tools] launched pytrack-{which} (pid {process.pid})")
         QTimer.singleShot(2000, lambda: self._check_subapp(which, process))
+        self._start_reaper()
+
+    def _start_reaper(self) -> None:
+        """Keep polling the child apps so exited ones don't stay zombies.
+
+        A QC viewer is spawned on every successful load and each handle used to
+        be polled exactly once, 2 s in; anything the user closed later was
+        never waited on and lingered as a defunct process for the life of the
+        Hub.
+        """
+        timer = getattr(self, "_subapp_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(3000)
+            timer.timeout.connect(self._reap_subapps)
+            self._subapp_timer = timer
+        if not timer.isActive():
+            timer.start()
+
+    def _reap_subapps(self) -> None:
+        """Collect the exit status of every finished child app."""
+        alive: list[tuple[str, object]] = []
+        for which, process in self._subapps:
+            try:
+                code = process.poll()
+            except Exception:  # noqa: BLE001
+                continue
+            if code is None:
+                alive.append((which, process))
+            else:
+                self._log.append_line(
+                    f"[tools] pytrack-{which} (pid {process.pid}) exited with code {code}."
+                )
+        self._subapps = alive
+        timer = getattr(self, "_subapp_timer", None)
+        if not alive and timer is not None:
+            timer.stop()
 
     def _check_subapp(self, which: str, process) -> None:
         """Report a child app that exited right after launch."""
@@ -1494,6 +1629,50 @@ class HubWindow(QMainWindow):
     def _warn(self, msg: str) -> None:
         self._err_log.append_line(f"[warning] {msg}")
         QMessageBox.warning(self, "PyTrackingAnalysis", msg)
+
+    # ==================================================================
+    # Shutdown
+    # ==================================================================
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """Never let a running task's QThread be destroyed with the window.
+
+        Qt aborts the process in that case; an analysis is exactly the kind of
+        long task a user is tempted to close out from under.
+        """
+        worker = self._worker
+        if worker is not None and worker.isRunning():
+            answer = QMessageBox.question(
+                self, "PyTrackingAnalysis",
+                f"'{worker.task_name}' is still running.\n\n"
+                "Wait for it to finish and then close?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Ok:
+                event.ignore()
+                return
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                finished = shutdown_worker(worker)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not finished:
+                QMessageBox.warning(
+                    self, "PyTrackingAnalysis",
+                    f"'{worker.task_name}' is still running. Closing now would "
+                    "abort the application — try again once it finishes.",
+                )
+                event.ignore()
+                return
+        self._worker = None
+        timer = getattr(self, "_subapp_timer", None)
+        if timer is not None:
+            timer.stop()
+        # Child apps are meant to outlive the Hub, but collect any that have
+        # already exited so they aren't left defunct.
+        self._reap_subapps()
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------------

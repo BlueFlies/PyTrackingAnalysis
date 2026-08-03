@@ -52,6 +52,7 @@ class ScriptEditorWindow(QMainWindow):
         self._scripts: list[dict] = []
         self._active_idx: int = -1
         self._dirty: bool = False
+        self._experiment_type: str | None = None
 
         self._build_ui()
         self._load_from_disk()
@@ -207,6 +208,7 @@ class ScriptEditorWindow(QMainWindow):
         cfg = self._read_global_config()
         tt = cfg.get("tracking_type")
         exp_type = str(tt).strip().upper() if tt else None
+        self._experiment_type = exp_type
         self._palette.set_experiment_type(exp_type)
         self._inspector.set_experiment_type(exp_type)
 
@@ -218,6 +220,11 @@ class ScriptEditorWindow(QMainWindow):
             inherited["cutoffs"] = ", ".join(str(c) for c in cutoffs)
         self._inspector.set_inherited(inherited)
 
+        # The canvas warning triangles were painted before the tracking type
+        # was known; repaint them so they agree with the inspector banner and
+        # the save gate.
+        self._refresh_errors()
+
     def _read_global_config(self) -> dict:
         """Return the ``global:`` block from the project's YAML, or ``{}``."""
         try:
@@ -227,7 +234,34 @@ class ScriptEditorWindow(QMainWindow):
             return {}
         return data.get("global") or {}
 
+    def script_validation_errors(self) -> list[str]:
+        """Human-readable problems across *every* script, not just the visible one.
+
+        The inspector shows its error banner but still emits ``paramsChanged``
+        (it has to — the canvas must track what the user typed), and a value
+        loaded from a hand-edited YAML never passes through a widget at all.
+        Without this gate an out-of-range recipe reached disk behind a "Saved"
+        dialog.
+        """
+        errors: list[str] = []
+        for script in self._scripts:
+            name = script.get("name", "Untitled")
+            steps = script.get("steps", [])
+            for i, err in validation_issues(steps, experiment_type=self._experiment_type):
+                errors.append(f"{name} — step {i + 1}: {err}")
+        return errors
+
     def _save(self) -> None:
+        errors = self.script_validation_errors()
+        if errors:
+            # Writing anyway hands the runner a recipe it will refuse to run,
+            # while the "Saved" dialog tells the user everything is fine.
+            QMessageBox.warning(
+                self,
+                "Fix these steps first",
+                "The scripts were not saved:\n\n  • " + "\n  • ".join(errors),
+            )
+            return
         try:
             save_scripts(self._config_path, self._scripts)
         except Exception as err:  # noqa: BLE001
@@ -354,7 +388,7 @@ class ScriptEditorWindow(QMainWindow):
         if not (0 <= self._active_idx < len(self._scripts)):
             return
         steps = self._scripts[self._active_idx].get("steps", [])
-        issues = validation_issues(steps, experiment_type=None)
+        issues = validation_issues(steps, experiment_type=self._experiment_type)
         by_idx: dict[int, list[str]] = {}
         for i, err in issues:
             by_idx.setdefault(i, []).append(err)

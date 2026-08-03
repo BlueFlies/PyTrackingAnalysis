@@ -32,4 +32,6 @@ jobs:
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0
 
       - name: Run the tests
-        run: uv run pytest -q
+        # Coverage is reported so the gap between the well-tested newer modules
+        # and the two giants that produce the published numbers stays visible.
+        run: uv run pytest -q --cov=pytrackinganalysis --cov-report=term-missing

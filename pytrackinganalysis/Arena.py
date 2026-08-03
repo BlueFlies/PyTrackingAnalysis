@@ -29,22 +29,24 @@ def _abbrev_treatment(t):
     """Abbreviate each comma-separated factor in a treatment string to 3 characters."""
     return ", ".join(part.strip()[:3] for part in str(t).split(","))
 
-_RIG_MAP = {
-    'small_arena':  'small_arena',
-    'smallarena':   'small_arena',
-    'arena_max':    'arena_max',
-    'arenamax':     'arena_max',
-    'colosseum':    'colosseum',
-    'colloseum':    'colosseum',
-    'obscura':      'obscura',
-    'movie':        'movie',
-}
+## Sentinel standing in for NaN when comparing run labels: NaN != NaN, so a
+## plain .shift() comparison would split a run of out-of-region frames into one
+## run per frame.
+_NO_GROUP = "\x00<none>"
 
-_PARAMETER_KEYS = {
-    'fps', 'mm_per_pixel', 'speed_window_seconds',
-    'micromove_speed_mm_sec', 'walking_speed_mm_sec',
-    'sleep_threshold_min', 'interaction_distances',
-}
+
+def _merge_adjacent_runs(rle_df, column='group'):
+    """Re-run the RLE over ``column`` so runs that became equal after a relabel fuse."""
+    keys = rle_df[column].fillna(_NO_GROUP)
+    changes = keys.ne(keys.shift()).cumsum()
+    return rle_df.groupby(changes, as_index=False).agg({'lengths': 'sum', column: 'first'})
+
+
+## Config parsing lives in Experiment, which is the object that owns the config.
+## Arena used to carry a near-verbatim copy of _load_config/_build_parameters
+## plus these two tables, reachable only through a `self.config` attribute that
+## nothing ever set. Two copies of the rig table would have drifted; see
+## Experiment._build_parameters and config_validation.RIG_ALIASES.
 
 class Arena:
     """
@@ -83,51 +85,6 @@ class Arena:
         out = df.copy()
         out['Treatment'] = out['Treatment'].map(_abbrev_treatment)
         return out
-
-    def _load_config(self):
-        if not os.path.isfile(self.config_path):
-            raise FileNotFoundError(f"tracking_config.yaml not found at {self.config_path}")
-        with open(self.config_path, 'r') as f:
-            return yaml.safe_load(f)
-
-    def _build_parameters(self):
-        global_cfg = self.config.get('global', {})
-        tracking_type_str = global_cfg.get('tracking_type', 'TRACKER').upper()
-        try:
-            tracking_type = Parameters.TrackingType[tracking_type_str]
-        except KeyError:
-            raise ValueError(
-                f"Unknown tracking_type '{tracking_type_str}' in tracking_config.yaml. "
-                f"Valid values: {[t.name for t in Parameters.TrackingType]}"
-            )
-        rig_raw = global_cfg.get('tracking_rig', '').lower().replace(' ', '_').replace('-', '_')
-        rig = _RIG_MAP.get(rig_raw, rig_raw)
-        p = Parameters.Parameters()
-        if rig == 'small_arena':
-            p.set_small_arena_values(tracking_type)
-        elif rig == 'arena_max':
-            p.set_arena_max_values(tracking_type)
-        elif rig in ('colosseum', 'colloseum'):
-            p.set_colloseum_values(tracking_type)
-        elif rig == 'obscura':
-            p.set_obscura_values(tracking_type)
-        elif rig == 'movie':
-            ## A movie has no rig preset to fall back on. Guessing 30 fps / 0.1 mm
-            ## per pixel would silently rescale every time and distance in the
-            ## experiment, so require the real calibration instead.
-            missing = [k for k in ('fps', 'mm_per_pixel') if global_cfg.get(k) is None]
-            if missing:
-                raise ValueError(
-                    "tracking_rig 'movie' requires explicit calibration in the global: "
-                    f"section of tracking_config.yaml. Missing: {', '.join(missing)}."
-                )
-            p.set_movie_values(tracking_type, global_cfg['fps'], global_cfg['mm_per_pixel'])
-        else:
-            p.set_tracking_type(tracking_type)
-        overrides = {k: v for k, v in global_cfg.items() if k in _PARAMETER_KEYS}
-        if overrides:
-            p.set(**overrides)
-        return p
 
     def get_experiment_file_info(self):
         """
@@ -418,7 +375,30 @@ class Arena:
 #endregion ########### Access Functions ############
 
 #region ########### Basic Computation Functions ############
-    def summarize_facet(self,cutoffs=(10,70),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
+    def _output_path(self, suffix):
+        """Where Arena writes ``<experiment><suffix>``.
+
+        One place decides this. Every call site used to build the path with
+        ``self.data_path + self.experiment_name``, which assumes a trailing
+        separator that neighbouring lines using ``os.path.join`` do not.
+        """
+        return os.path.join(self.data_path, f"{self.experiment_name}{suffix}")
+
+    def _over_facets(self, fn, cutoffs, **kwargs):
+        """Call *fn* once per facet window and stack the results.
+
+        The ``.copy()`` is load-bearing: ``summarize`` returns its cache entry,
+        and writing ``FacetRange`` into that object leaked the column into every
+        later flat read of the same window.
+        """
+        frames = []
+        for window in windowing.facet_windows(cutoffs):
+            tmp = fn(range_minutes=window, **kwargs).copy()
+            tmp['FacetRange'] = [window] * len(tmp)
+            frames.append(tmp)
+        return pd.concat(frames, ignore_index=True)
+
+    def summarize_facet(self,cutoffs=None,copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
         """
         Summarize data in facets.
 
@@ -432,16 +412,13 @@ class Arena:
         Returns:
         DataFrame: Summarized data.
         """
-        results = []
-        for window in windowing.facet_windows(cutoffs):
-            tmp = self.summarize(range_minutes=window,remove_partners=remove_partners)
-            tmp['FacetRange']=[window]*len(tmp)
-            results.append(tmp)
-        all_summaries = pd.concat(results, ignore_index=True)        
-        if(copy_to_clipboard):            
+        all_summaries = self._over_facets(self.summarize, cutoffs,
+                                          remove_partners=remove_partners)
+        if(copy_to_clipboard):
             all_summaries.to_clipboard(index=False, na_rep='NA')
-        if(write_to_csvfile==True):                        
-            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary_Facet_NA.csv",index=False, na_rep='NA')      
+        if(write_to_csvfile==True):
+            all_summaries.to_csv(self._output_path("_Summary_Facet_NA.csv"),
+                                 index=False, na_rep='NA')
         return all_summaries
     
     
@@ -455,15 +432,21 @@ class Arena:
         Returns:
         DataFrame: Short data quality report.
         """
-        data_quality = self.get_data_quality(range_minutes)                
+        data_quality = self.get_data_quality(range_minutes)
         print(data_quality)
-        
-        warning_data=data_quality[(data_quality['HighQuality']<cutoff)]
+
+        ## get_data_quality returns pd.NA for a tracker with no frames in the
+        ## window. `NA < cutoff` is NA, which boolean indexing reads as False,
+        ## so a tracker that contributed *zero* data used to pass QC silently —
+        ## a false negative in exactly the case QC exists to catch (a dead
+        ## animal, a truncated recording, a mis-set facet cutoff).
+        high_quality = pd.to_numeric(data_quality['HighQuality'], errors='coerce')
+        warning_data = data_quality[high_quality.isna() | (high_quality < cutoff)]
         if(len(warning_data)>0):
             print("****************************************************")
-            print(f"Warning: Some data quality falls below {cutoff}!")
+            print(f"Warning: Some data quality falls below {cutoff}, or no data in range!")
             print(warning_data)
-            print("****************************************************")            
+            print("****************************************************")
         else:
             print("****************************************************")
             print(f"All data quality is above {cutoff}.")            
@@ -518,7 +501,11 @@ class Arena:
         cache_key = tuple(range_minutes)
         if(remove_partners==False):
             if(cache_key in self.computed_summaries):
-                return self.computed_summaries[cache_key]
+                ## Hand out a copy: summarize_facet writes a FacetRange column
+                ## into whatever it gets back, which used to leak straight into
+                ## the cached flat summary and out again through the next
+                ## summarize(write_to_csvfile=True).
+                return self.computed_summaries[cache_key].copy()
 
 
         summaries = []
@@ -534,14 +521,14 @@ class Arena:
             all_summaries.reset_index(drop=True, inplace=True)
         else:
             ## To avoid confusion, if we remove partners, we won't save a copy to speed things up.
-            self.computed_summaries[cache_key] = all_summaries
+            self.computed_summaries[cache_key] = all_summaries.copy()
 
    
         ## Note that for the this function to work in linux, you need to install xclip or xsel (verified with xclip)
         if(copy_to_clipboard):            
             all_summaries.to_clipboard(index=False, na_rep='NA')
         if(write_to_csvfile==True):            
-            all_summaries.to_csv(f"{self.data_path+self.experiment_name}_Summary.csv",index=False, na_rep='NA') 
+            all_summaries.to_csv(self._output_path("_Summary.csv"), index=False, na_rep='NA') 
         return all_summaries
     
 #endregion ########### Basic Computation Functions ############
@@ -558,7 +545,7 @@ class Arena:
             self.plot_pi_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
-    def plot_pi_facet(self,cutoffs=(10,70)):
+    def plot_pi_facet(self,cutoffs=None):
         """
         Plot PI in facets.
 
@@ -582,7 +569,7 @@ class Arena:
             self.plot_percentage_twochoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")  
-    def plot_percentage_facet(self,cutoffs=(10,70)):
+    def plot_percentage_facet(self,cutoffs=None):
         """
         Plot choice percentage in facets.
 
@@ -606,7 +593,7 @@ class Arena:
             self.plot_adj_x_pos_xchoicetracker(range_minutes)
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be an XChoiceTracker.")
-    def plot_adjusted_x_position_facet(self,cutoffs=(10,70)):
+    def plot_adjusted_x_position_facet(self,cutoffs=None):
         """
         Plot adjusted X position (adjusted for polarity in the experimental design file) in facets.
 
@@ -641,7 +628,7 @@ class Arena:
                 f"Invalid tracking type: {self.parameters.get_tracking_type()}. "
                 "Total distance requires a tracker-class experiment."
             )
-    def plot_totaldistance_facet(self,cutoffs=(10,70)):
+    def plot_totaldistance_facet(self,cutoffs=None):
         """
         Plot total distance moved (mm) in facets.
 
@@ -690,18 +677,6 @@ class Arena:
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
 
-    def plot_trackers_x_hist(self,range_minutes=(0,0)):
-        """
-        Plot histogram of each tracker's X positions.
-
-        Parameters:
-        range_minutes (tuple): Range of minutes to plot.
-        """
-        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
-            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
-        for key, tracker in self.trackers.items():
-            tracker.plot_x_hist(range_minutes)            
-
     def plot_trackers_x(self,range_minutes=(0,0),one_plot=False):
         """
         Plot each tracker's X positions. This function automatically adjusts the X positions based on the experimental design file.
@@ -713,19 +688,23 @@ class Arena:
         if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING): 
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         if(one_plot):
-            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
+            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():
                 fig, ax = plt.subplots(figsize=(10, 6))
-            
-                # Generate a colormap
-                colormap = plt.cm.get_cmap('tab10', len(self.trackers))
-                
-                for idx, (key, tracker) in enumerate(self.trackers.items()):
-                    if(tracker.get_treatment()==treatment):
-                        # Assuming tracker has a method to get x-positions within the specified range
-                        x_positions = tracker.get_x_positions(range_minutes)
-                        minutes = tracker.get_minutes(range_minutes)
-                        ax.plot(minutes,x_positions, label=key, color=colormap(idx),alpha=0.7)
-                
+
+                ## Only the matching-treatment trackers are drawn, so the colour
+                ## cycle must be sized and indexed over those — not over every
+                ## tracker in the arena, which spread one treatment's traces
+                ## across an arbitrary slice of the palette.
+                matching = [(key, t) for key, t in self.trackers.items()
+                            if t.get_treatment() == treatment]
+                ## plt.cm.get_cmap was removed in matplotlib 3.9.
+                colormap = plt.get_cmap('tab10').resampled(max(len(matching), 1))
+
+                for idx, (key, tracker) in enumerate(matching):
+                    x_positions = tracker.get_x_positions(range_minutes)
+                    minutes = tracker.get_minutes(range_minutes)
+                    ax.plot(minutes,x_positions, label=key, color=colormap(idx),alpha=0.7)
+
                 ax.set_xlabel('Minutes')
                 ax.set_ylabel('X Position')
                 title = treatment + " (Axis flips applied if specified)"
@@ -747,18 +726,19 @@ class Arena:
             raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
         
         if(one_plot):
-            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():        
+            for treatment in self.experimental_design.tracking_regions['Treatment'].unique():
                 fig, ax = plt.subplots(figsize=(10, 6))
-            
-                # Generate a colormap
-                colormap = plt.cm.get_cmap('tab10', len(self.trackers))
-                
-                for idx, (key, tracker) in enumerate(self.trackers.items()):
-                    if(tracker.get_treatment()==treatment):
-                        minutes = tracker.get_minutes(range_minutes)
-                        y_positions = tracker.get_y_positions(range_minutes)
-                        ax.plot(minutes, y_positions, label=key, color=colormap(idx),alpha=0.7)
-                
+
+                matching = [(key, t) for key, t in self.trackers.items()
+                            if t.get_treatment() == treatment]
+                ## plt.cm.get_cmap was removed in matplotlib 3.9.
+                colormap = plt.get_cmap('tab10').resampled(max(len(matching), 1))
+
+                for idx, (key, tracker) in enumerate(matching):
+                    minutes = tracker.get_minutes(range_minutes)
+                    y_positions = tracker.get_y_positions(range_minutes)
+                    ax.plot(minutes, y_positions, label=key, color=colormap(idx),alpha=0.7)
+
                 ax.set_xlabel('Minutes')
                 ax.set_ylabel('Y Position')
                 title = treatment + " (Axis flips applied if specified)"
@@ -786,9 +766,19 @@ class Arena:
         bins (int): Number of bins for the histogram.
         range_minutes (tuple): Range of minutes to plot.
         """
-        if(self.parameters.get_tracking_type()==Parameters.TrackingType.XCHOICETRACKER):
-            for key, tracker in self.trackers.items():
-                tracker.plot_x_hist(bins=bins,range_minutes=range_minutes)
+        ## This method used to be defined twice with the parameters in opposite
+        ## orders. The dead twin took range_minutes first, so a positional call
+        ## carried over from an older notebook lands a tuple in `bins`, which
+        ## matplotlib silently reads as bin *edges* and plots a one-bin histogram.
+        if isinstance(bins, (tuple, list)):
+            raise TypeError(
+                "plot_trackers_x_hist(bins, range_minutes): `bins` must be an int. "
+                f"Received {bins!r} — did you mean range_minutes={bins!r}?"
+            )
+        if(self.parameters.get_tracking_class() == Parameters.TrackingClass.COUNTING):
+            raise ValueError(f"Invalid tracking class: {self.parameters.get_tracking_class()}. Must be a Tracker.")
+        for key, tracker in self.trackers.items():
+            tracker.plot_x_hist(bins=bins,range_minutes=range_minutes)
       
     def plot_trackers_time_dependent_interactions(self,window_size_min=10,step_size_min=5,range_minutes=(0,0)):
         """
@@ -832,7 +822,7 @@ class Arena:
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
       
-    def plot_interactions_facet(self,cutoffs=(10,70)):
+    def plot_interactions_facet(self,cutoffs=None):
         """
         Plot interactions in facets.
 
@@ -844,7 +834,7 @@ class Arena:
         else:
             raise ValueError(f"Invalid tracking type: {self.parameters.get_tracking_type()}. Must be a TwoChoiceTracker.")
         
-    def plot_transitions_facet(self,cutoffs=(10,70)):
+    def plot_transitions_facet(self,cutoffs=None):
         """
         Plot transitions in facets.
 
@@ -953,7 +943,7 @@ class Arena:
                
         plt.show()
 
-    def plot_pi_facet_twochoicetracker(self, cutoffs=(10,70)):   
+    def plot_pi_facet_twochoicetracker(self, cutoffs=None):   
         """
         Backend function to plot PI in facets for TwoChoiceTracker.
 
@@ -991,7 +981,7 @@ class Arena:
         
         plt.show()
 
-    def plot_pi_facet_twochoicecounter(self, cutoffs=(10,70)):   
+    def plot_pi_facet_twochoicecounter(self, cutoffs=None):   
         """
         Backend function to plot PI in facets for TwoChoiceCounter.
 
@@ -1029,7 +1019,7 @@ class Arena:
         plt.show()
 
 
-    def plot_transitions_facet_twochoicetracker(self, cutoffs=(10,70)):   
+    def plot_transitions_facet_twochoicetracker(self, cutoffs=None):   
         """
         Backend function to plot transitions in facets for TwoChoiceTracker.
         Generally not called by the user.   
@@ -1126,7 +1116,7 @@ class Arena:
         ax.text(-0.4,-1,tmp[1])
         plt.show()
     
-    def plot_adj_x_pos_facet_xchoicetracker(self, cutoffs=(10,70)):
+    def plot_adj_x_pos_facet_xchoicetracker(self, cutoffs=None):
         """
         Backend function to plot adjusted X position in facets for XChoiceTracker.
         Generally not called by the user.
@@ -1221,7 +1211,7 @@ class Arena:
                 counter+=1
             plt.show()
 
-    def plot_interactions_facet_pairwiseinteractiontracker(self, cutoffs=(10,70)):   
+    def plot_interactions_facet_pairwiseinteractiontracker(self, cutoffs=None):   
         """
         Backend function to plot interactions in facets for PairwiseInteractionTracker.
         Generally not called by the user.
@@ -1258,7 +1248,7 @@ class Arena:
             plt.subplots_adjust(top=0.87)  # Adjust the top to make room for the title
             plt.show()
 
-    def plot_percentage_facet_twochoicetracker(self, cutoffs=(10,70)):   
+    def plot_percentage_facet_twochoicetracker(self, cutoffs=None):   
         """
         Backend function to plot percentage in facets for TwoChoiceTracker.
         Generally not called by the user.
@@ -1297,7 +1287,7 @@ class Arena:
         
         plt.show()
 
-    def plot_percentage_facet_twochoicecounter(self, cutoffs=(10,70)):   
+    def plot_percentage_facet_twochoicecounter(self, cutoffs=None):   
         """
         Backend function to plot percentage in facets for TwoChoiceTracker.
         Generally not called by the user.
@@ -1365,7 +1355,7 @@ class Arena:
         tmp = list(self.experimental_design.counting_regions.keys())             
         plt.show()
 
-    def plot_totaldistance_facet_generaltracker(self, cutoffs=(10,70)):   
+    def plot_totaldistance_facet_generaltracker(self, cutoffs=None):   
         """
         Backend function to plot total distance in facets for general tracker.
         Generally not called by the user.
@@ -1426,26 +1416,36 @@ class Arena:
         for key, tracker in self.trackers.items():
             rle_data = tracker.rle(range_minutes)
 
+            counting_names = list(tracker.counting_regions_design.keys()) if tracker.counting_regions_design else ["Treatment1", "Treatment2"]
+            t1_name = counting_names[0] if len(counting_names) > 0 else "Treatment1"
+            t2_name = counting_names[1] if len(counting_names) > 1 else "Treatment2"
+
+            ## rle() returns the raw CountingRegion cells, which are region
+            ## *aliases* ("L", "LL"), not the group keys they are declared
+            ## under. Comparing them against group names directly never matches
+            ## for any lab using the alias feature, so map first and compare on
+            ## the group. Out-of-region runs map to NaN.
+            region_to_group = ExperimentalDesign.alias_to_group_map(tracker.counting_regions_design)
+            rle_data = rle_data.copy()
+            rle_data['group'] = rle_data['values'].map(region_to_group)
+            ## Re-encode on the group: consecutive runs under two aliases of the
+            ## same group ("L" then "LL") are one visit, not two.
+            rle_data = _merge_adjacent_runs(rle_data)
+
             if change_none_to_light:
-                first_region = list(tracker.counting_regions_design.keys())[0] if tracker.counting_regions_design else "Light"
-                rle_data['values'] = rle_data['values'].replace("None", first_region)
-                changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
-                rle_data = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+                rle_data['group'] = rle_data['group'].fillna(t1_name)
+                rle_data = _merge_adjacent_runs(rle_data)
 
             if min_duration_frames > 1:
                 rle_data = rle_data[rle_data['lengths'] >= min_duration_frames].reset_index(drop=True)
                 if len(rle_data) > 0:
-                    changes = rle_data['values'].ne(rle_data['values'].shift()).cumsum()
-                    rle_data = rle_data.groupby(changes, as_index=False).agg({'lengths': 'sum', 'values': 'first'})
+                    rle_data = _merge_adjacent_runs(rle_data)
 
             treatment = tracker.tracking_region_design['Treatment'].iloc[0] if tracker.tracking_region_design is not None else "Unknown"
-            counting_names = list(tracker.counting_regions_design.keys()) if tracker.counting_regions_design is not None else ["Treatment1", "Treatment2"]
-            t1_name = counting_names[0] if len(counting_names) > 0 else "Treatment1"
-            t2_name = counting_names[1] if len(counting_names) > 1 else "Treatment2"
 
-            rle_filtered = rle_data[rle_data['values'] != "None"]
-            t1_data = rle_filtered[rle_filtered['values'] == t1_name]
-            t2_data = rle_filtered[rle_filtered['values'] == t2_name]
+            rle_filtered = rle_data[rle_data['group'].notna()]
+            t1_data = rle_filtered[rle_filtered['group'] == t1_name]
+            t2_data = rle_filtered[rle_filtered['group'] == t2_name]
 
             results.append({
                 'Tracker': key,
@@ -1464,7 +1464,7 @@ class Arena:
 
         return pd.DataFrame(results)
 
-    def analyze_rle_data_facet(self, cutoffs=(10, 70), change_none_to_light=True,
+    def analyze_rle_data_facet(self, cutoffs=None, change_none_to_light=True,
                                min_duration_frames=1, write_to_csvfile=False):
         """
         Faceted version of analyze_rle_data across time windows.
@@ -1476,19 +1476,13 @@ class Arena:
         Returns:
         DataFrame: RLE statistics with a FacetRange column.
         """
-        results = []
-        for window in windowing.facet_windows(cutoffs):
-            tmp = self.analyze_rle_data(
-                change_none_to_light=change_none_to_light,
-                min_duration_frames=min_duration_frames,
-                range_minutes=window,
-            )
-            tmp['FacetRange'] = [window] * len(tmp)
-            results.append(tmp)
-
-        all_results = pd.concat(results, ignore_index=True)
+        all_results = self._over_facets(
+            self.analyze_rle_data, cutoffs,
+            change_none_to_light=change_none_to_light,
+            min_duration_frames=min_duration_frames,
+        )
         if write_to_csvfile:
-            path = f"{self.data_path}{self.experiment_name}_EventDuration_Summary_Facet.csv"
+            path = self._output_path("_EventDuration_Summary_Facet.csv")
             all_results.to_csv(path, index=False)
         return all_results
 
@@ -1549,14 +1543,18 @@ class Arena:
                 f'{light_group}_Time_sec': light_time,
                 f'{nolight_group}_Time_sec': nolight_time,
             }
-            with np.errstate(divide='ignore', invalid='ignore'):
-                row[f'{light_group}_Distance_mm_sec'] = np.where(light_time > 0, light_dist / light_time, np.nan)
-                row[f'{nolight_group}_Distance_mm_sec'] = np.where(nolight_time > 0, nolight_dist / nolight_time, np.nan)
+            ## Plain floats, not np.where: with scalar arguments np.where returns
+            ## a 0-d ndarray, which makes the whole column object dtype. That
+            ## defeats pandas' skipna, so a single tracker with no time in one
+            ## region turned that entire treatment's mean into NaN, and the
+            ## exported CSV could not be re-read numerically.
+            row[f'{light_group}_Distance_mm_sec'] = float(light_dist / light_time) if light_time > 0 else np.nan
+            row[f'{nolight_group}_Distance_mm_sec'] = float(nolight_dist / nolight_time) if nolight_time > 0 else np.nan
             results.append(row)
 
         return pd.DataFrame(results)
 
-    def analyze_distance_by_light_facet(self, cutoffs=(10, 70), copy_to_clipboard=False,
+    def analyze_distance_by_light_facet(self, cutoffs=None, copy_to_clipboard=False,
                                         write_to_csvfile=False):
         """
         Faceted version of analyze_distance_by_light across time windows.
@@ -1569,24 +1567,64 @@ class Arena:
         Returns:
         DataFrame: Distance/time statistics with a FacetRange column.
         """
-        results = []
-        for window in windowing.facet_windows(cutoffs):
-            tmp = self.analyze_distance_by_light(range_minutes=window)
-            tmp['FacetRange'] = [window] * len(tmp)
-            results.append(tmp)
-
-        all_results = pd.concat(results, ignore_index=True)
+        all_results = self._over_facets(self.analyze_distance_by_light, cutoffs)
         if copy_to_clipboard:
             all_results.to_clipboard(index=False)
         if write_to_csvfile:
-            path = f"{self.data_path}{self.experiment_name}_DistanceByLight_Facet.csv"
+            path = self._output_path("_DistanceByLight_Facet.csv")
             all_results.to_csv(path, index=False)
         return all_results
 
 #endregion ########### Special Analysis Functions ############
 
 #region ########### Statistical Functions ############
-    def run_pairwise_comparisons(self, metric='FinalPI', range_minutes=(0,0)):
+    @staticmethod
+    def _treatment_arms(summary):
+        """Split a summary into (assigned rows, level names, count of unassigned rows).
+
+        A tracking region whose ``experimental_factors`` is blank is *not* a
+        treatment arm. Carrying it through as one silently converts a two-arm
+        t-test into a three-arm Tukey HSD, inflates the multiplicity family and
+        reports a nameless n=1 group as a result. One blank region in the config
+        is enough to trigger it, so exclude and announce rather than analyse.
+        """
+        labels = summary['Treatment'].astype(str).str.strip()
+        assigned = labels.ne('') & labels.str.lower().ne('nan')
+        return summary[assigned], list(pd.unique(labels[assigned])), int((~assigned).sum())
+
+    @staticmethod
+    def _print_group_comparison(subset, metric, treatments, window_label, equal_var=False):
+        """Print one two-group comparison, including each group's N.
+
+        The N matters: ``pd.to_numeric(..., errors='coerce').dropna()`` silently
+        discards trackers with no numeric value for the metric — routine for
+        ``FinalPI`` and ``Transitions`` in early facets, where an animal may
+        never enter a counting region. Without N a reader of ``*_Stats.txt``
+        cannot tell whether a p-value rests on 18 animals or 8.
+        """
+        labels = subset['Treatment'].astype(str).str.strip()
+        numeric = pd.to_numeric(subset[metric], errors='coerce')
+        group1 = numeric[labels == treatments[0]].dropna()
+        group2 = numeric[labels == treatments[1]].dropna()
+        if len(group1) < 2 or len(group2) < 2:
+            print(f"Warning: Insufficient numeric data for {metric} in {window_label} "
+                  f"(n={len(group1)}, n={len(group2)}). Skipping.")
+            return False
+
+        t_stat, p_value = ttest_ind(group1, group2, equal_var=equal_var)
+        test_name = "Student's t-test (equal variance)" if equal_var else "Welch's t-test (unequal variance)"
+        print("############# T-Test #############")
+        print(f"Column = {metric}, Range Minutes = {window_label}")
+        print(f"{treatments[0]} (n={len(group1)}, mean={group1.mean():.4g}, sd={group1.std(ddof=1):.4g}) vs. "
+              f"{treatments[1]} (n={len(group2)}, mean={group2.mean():.4g}, sd={group2.std(ddof=1):.4g}): "
+              f"T={t_stat:.2f}, p={p_value:.5f}")
+        print(f"Test: {test_name}")
+        dropped = len(subset) - len(group1) - len(group2)
+        if dropped:
+            print(f"  note: {dropped} tracker(s) excluded — no numeric {metric} in this window.")
+        return True
+
+    def run_pairwise_comparisons(self, metric='FinalPI', range_minutes=(0,0), equal_var=False):
         """
         Run pairwise comparisons for a given metric.
         Generally not called by the user.
@@ -1594,6 +1632,9 @@ class Arena:
         Parameters:
         metric (str): Metric to compare.
         range_minutes (tuple): Range of minutes to compare.
+        equal_var (bool): ``False`` (default) runs Welch's t-test, which does not
+            assume equal variances and is the safer choice for unbalanced groups.
+            Pass ``True`` for the classic Student's t-test.
 
         Returns:
             ``"Not applicable"`` if there are fewer than two treatment levels,
@@ -1608,70 +1649,70 @@ class Arena:
         if metric not in summary.columns:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
 
-        # Perform pairwise t-tests
-        treatments = summary['Treatment'].unique()
+        summary, treatments, unassigned = self._treatment_arms(summary)
+        if unassigned:
+            print(f"Warning: {unassigned} tracker(s) have no experimental_factors assigned "
+                  f"and were excluded from the {metric} comparison. Check tracking_config.yaml.")
+
+        window_label = f"({range_minutes[0]:.2f} , {range_minutes[1]:.2f})"
 
         if(len(treatments)<2):
             msg = f"Not applicable: {metric} has fewer than two treatment levels."
             print(msg)
             return msg
         elif(len(treatments)==2):
-            group1 = pd.to_numeric(summary[summary['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
-            group2 = pd.to_numeric(summary[summary['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
-            if len(group1) == 0 or len(group2) == 0:
-                print(f"Warning: Insufficient numeric data for {metric} comparison. Skipping.")
-                return
-            t_stat, p_value = ttest_ind(group1, group2)
-            print("############# T-Test #############")
-            print(f"Column = {metric}, Range Minutes = ({range_minutes[0]:.2f} , {range_minutes[1]:.2f}) ")
-            print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
+            self._print_group_comparison(summary, metric, treatments, window_label, equal_var=equal_var)
         else:
             metric_numeric = pd.to_numeric(summary[metric], errors='coerce')
             valid_mask = metric_numeric.notna()
             if valid_mask.sum() == 0:
                 print(f"Warning: No valid numeric data for {metric} comparison. Skipping.")
                 return
-            tukey = pairwise_tukeyhsd(endog=metric_numeric[valid_mask], groups=summary['Treatment'][valid_mask], alpha=0.05)            
+            tukey = pairwise_tukeyhsd(endog=metric_numeric[valid_mask], groups=summary['Treatment'][valid_mask], alpha=0.05)
             print(f"Column = {metric}, Range Minutes = [{range_minutes[0]:.2f} , {range_minutes[1]:.2f}] ")
+            print(f"Group sizes: " + ", ".join(
+                f"{level} n={int((summary['Treatment'][valid_mask] == level).sum())}" for level in treatments))
             print(tukey)
-    
-    def run_pairwise_comparisons_facet(self, metric='FinalPI', cutoffs=(10,70), remove_partners=False):
+
+    def run_pairwise_comparisons_facet(self, metric='FinalPI', cutoffs=None, remove_partners=False,
+                                       equal_var=False):
         """
         Run pairwise comparisons in facets for a given metric.
         Generally not called by the user.
-        
+
         Parameters:
         metric (str): Metric to compare.
         cutoffs (tuple): Cutoff values for facets.
         remove_partners (bool): Flag to remove partners from the comparison.
+        equal_var (bool): ``False`` (default) runs Welch's t-test. See
+            :meth:`run_pairwise_comparisons`.
         """
         summary = self.summarize_facet(cutoffs, remove_partners=remove_partners)
         if 'Treatment' not in summary.columns:
             raise ValueError("The summary data does not contain a 'Treatment' column.")
         if metric not in summary.columns:
             raise ValueError(f"The summary data does not contain a '{metric}' column.")
-        
+
+        summary, _, unassigned = self._treatment_arms(summary)
+        if unassigned:
+            print(f"Warning: {unassigned} tracker-facet row(s) have no experimental_factors assigned "
+                  f"and were excluded from the {metric} comparison. Check tracking_config.yaml.")
+
         applicable = False
+        tests_run = 0
         for frange in summary['FacetRange'].unique():
             subset = summary[summary['FacetRange'] == frange]
-            treatments = subset['Treatment'].unique()
+            treatments = list(pd.unique(subset['Treatment'].astype(str).str.strip()))
             if(len(treatments)<2):
                 print(f"Not applicable for facet {frange}: fewer than two treatment levels.")
                 continue
             applicable = True
+            window_label = f"({frange[0]:.2f} , {frange[1]:.2f})"
             if(len(treatments)==2):
-                group1 = pd.to_numeric(subset[subset['Treatment'] == treatments[0]][metric], errors='coerce').dropna()
-                group2 = pd.to_numeric(subset[subset['Treatment'] == treatments[1]][metric], errors='coerce').dropna()
-                if len(group1) == 0 or len(group2) == 0:
-                    print(f"Warning: Insufficient numeric data for {metric} in facet {frange}. Skipping.")
-                    print("\n")
-                    continue
-                t_stat, p_value = ttest_ind(group1, group2)
-                print("############# T-Test #############")
-                print(f"Column = {metric}, Range Minutes = ({frange[0]:.2f} , {frange[1]:.2f}) ")
-                print(f"{treatments[0]} vs. {treatments[1]}: T={t_stat:.2f}, p={p_value:.5f}")
+                if self._print_group_comparison(subset, metric, treatments, window_label, equal_var=equal_var):
+                    tests_run += 1
                 print("\n")
-            else:              
+            else:
                 metric_numeric = pd.to_numeric(subset[metric], errors='coerce')
                 valid_mask = metric_numeric.notna()
                 if valid_mask.sum() == 0:
@@ -1682,6 +1723,15 @@ class Arena:
                 print(f"Column = {metric}, Facet Range = ({frange[0]:.2f},{frange[1]:.2f})")
                 print(tukey)
                 print("\n")
+
+        if tests_run > 1:
+            ## Each facet is a separate test of the same hypothesis. Nothing here
+            ## corrects for that, so say so rather than let the reader assume the
+            ## printed p-values are family-wise.
+            print(f"Note: {tests_run} independent t-tests were run for {metric} across facets. "
+                  f"No multiplicity correction is applied; at alpha=0.05 a Bonferroni-adjusted "
+                  f"threshold would be {0.05 / tests_run:.5f}.")
+            print("\n")
 
         if not applicable:
             return f"Not applicable: {metric} has fewer than two treatment levels in any facet."

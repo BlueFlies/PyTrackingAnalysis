@@ -3,21 +3,43 @@ import io
 import logging
 import os
 import sys
+import time
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import pandas as pd
 import yaml
 from . import Parameters
 from . import Arena
+from . import config_validation
+from . import io_utils
 
-_RIG_MAP = Arena._RIG_MAP
-_PARAMETER_KEYS = Arena._PARAMETER_KEYS
+## The rig spellings the config accepts. config_validation owns this table so
+## that the checker and the loader can never disagree about which rigs exist —
+## Arena used to carry a third copy behind a dead code path.
+_RIG_MAP = config_validation.RIG_ALIASES
+
+## global: keys that are forwarded to Parameters.set() as explicit overrides.
+_PARAMETER_KEYS = {
+    'fps', 'mm_per_pixel', 'speed_window_seconds',
+    'micromove_speed_mm_sec', 'walking_speed_mm_sec',
+    'sleep_threshold_min', 'interaction_distances',
+}
 
 logger = logging.getLogger(__name__)
 
 # Maps TrackingType to the plot methods (and kwargs) that are relevant for it
 _TRACKING_TYPE_PLOTS = {
     Parameters.TrackingType.TRACKER: [
+        ('plot_totaldistance_facet', {}),
+    ],
+    ## Both are plain tracking-class types whose trackers produce the standard
+    ## Tracker summary, so they get the generic distance policy. Leaving them out
+    ## of these tables made run_analysis emit a zero-byte Stats.txt and no plots
+    ## while still printing "=== Done. ===" and recording 'ok' in batch mode.
+    Parameters.TrackingType.DDROPTRACKER: [
+        ('plot_totaldistance_facet', {}),
+    ],
+    Parameters.TrackingType.CENTROPHOBISMTRACKER: [
         ('plot_totaldistance_facet', {}),
     ],
     Parameters.TrackingType.TWOCHOICETRACKER: [
@@ -46,11 +68,18 @@ _TRACKING_TYPE_PLOTS = {
 # Maps TrackingType to the metrics used in run_pairwise_comparisons_facet
 _TRACKING_TYPE_METRICS = {
     Parameters.TrackingType.TRACKER:                   ['TotalDistancePerMin'],
+    Parameters.TrackingType.DDROPTRACKER:              ['TotalDistancePerMin'],
+    Parameters.TrackingType.CENTROPHOBISMTRACKER:      ['TotalDistancePerMin'],
     Parameters.TrackingType.TWOCHOICETRACKER:          ['FinalPI', 'FinalPercentage', 'TotalDistancePerMin'],
     Parameters.TrackingType.TWOCHOICECOUNTER:          ['FinalPI', 'FinalPercentage'],
     Parameters.TrackingType.XCHOICETRACKER:            ['AvgAdjX_mm', 'TotalDistancePerMin'],
     Parameters.TrackingType.PAIRWISEINTERACTIONTRACKER: None,   # built at runtime from interaction distances
     Parameters.TrackingType.PAIRWISEINTERACTIONCOUNTER: None,
+    ## A plain COUNTER summary carries no outcome metric — only Treatment, Name,
+    ## TrackingRegion and the observed-minutes bounds — so there is genuinely
+    ## nothing to compare. Listed explicitly so it reads as a decision rather
+    ## than an omission; stats() says so out loud instead of writing an empty file.
+    Parameters.TrackingType.COUNTER:                   [],
 }
 
 
@@ -92,7 +121,8 @@ class Experiment:
     sleep_threshold_min, interaction_distances : other parameter overrides
     """
 
-    def __init__(self, project_directory: str, force_preprocessing: bool = False):
+    def __init__(self, project_directory: str, force_preprocessing: bool = False,
+                 config_path: str | None = None):
         """
         Parameters
         ----------
@@ -102,12 +132,23 @@ class Experiment:
         force_preprocessing :
             Passed through to Arena; forces re-computation of nearest-neighbour
             pre-processing when True.
+        config_path :
+            Alternative config file to load instead of
+            ``<project_directory>/tracking_config.yaml``. A relative path is
+            resolved against *project_directory*. The Hub offers a config
+            selector, and without this parameter the filename was joined on
+            unconditionally, so choosing a second config silently loaded the
+            *other* file's tracking type, rig calibration and cutoffs.
         """
         self.project_directory = os.path.abspath(project_directory)
         self.data_path     = self._find_subdir('data') + '/'
         self.analysis_path = os.path.join(self.project_directory, 'analysis') + '/'
         self.qc_path       = os.path.join(self.project_directory, 'qc') + '/'
-        self.config_path   = os.path.join(self.project_directory, 'tracking_config.yaml')
+        if config_path is None:
+            self.config_path = os.path.join(self.project_directory, 'tracking_config.yaml')
+        else:
+            self.config_path = config_path if os.path.isabs(config_path) \
+                else os.path.join(self.project_directory, config_path)
 
         # Create output directories (data/ must already exist with files in it)
         os.makedirs(self.analysis_path, exist_ok=True)
@@ -116,9 +157,23 @@ class Experiment:
         self.config = self._load_config()
         self.parameters = self._build_parameters()
 
-        xlsx_files = glob.glob(os.path.join(self.data_path, '*.xlsx'))
+        ## Excel writes a '~$Name.xlsx' lock file next to any workbook that is
+        ## currently open. Globbing unsorted and unfiltered picked it up, and the
+        ## experiment died with "Excel file format cannot be determined" — for
+        ## the entirely ordinary reason that the user had the sheet open.
+        ## Sorting also makes the choice deterministic when several are present.
+        xlsx_files = sorted(
+            f for f in glob.glob(os.path.join(self.data_path, '*.xlsx'))
+            if not os.path.basename(f).startswith(('~$', '.'))
+        )
         if not xlsx_files:
             raise FileNotFoundError(f"No .xlsx file found in {self.data_path}")
+        if len(xlsx_files) > 1:
+            logger.warning(
+                "Multiple .xlsx files in %s; using '%s'. Others: %s",
+                self.data_path, os.path.basename(xlsx_files[0]),
+                ", ".join(os.path.basename(f) for f in xlsx_files[1:]),
+            )
         exp_name = os.path.splitext(os.path.basename(xlsx_files[0]))[0]
 
         self.arena = Arena.Arena(
@@ -155,11 +210,26 @@ class Experiment:
 
     def _load_config(self) -> dict:
         if not os.path.isfile(self.config_path):
-            raise FileNotFoundError(
-                f"tracking_config.yaml not found in {self.project_directory}"
-            )
+            raise FileNotFoundError(f"Config file not found: {self.config_path}")
         with open(self.config_path, 'r') as f:
-            return yaml.safe_load(f)
+            config = yaml.safe_load(f)
+
+        ## config_validation catches unknown rigs, missing movie calibration, bad
+        ## multipliers and mis-ordered cutoffs. It was only reachable from the Hub
+        ## button and the Config Editor, so a notebook user constructing
+        ## Experiment(...) directly got the same problems as a crash much later in
+        ## the run — or as a silent fallback to a default calibration. Warn here,
+        ## naming the file, rather than failing: a config can be imperfect and
+        ## still analysable, and refusing to load would be a breaking change.
+        problems = config_validation.validate_config(config)
+        if problems:
+            logger.warning("Problems in %s:", self.config_path)
+            print(f"Warning: {len(problems)} problem(s) in {self.config_path}:")
+            for problem in problems:
+                logger.warning("  %s", problem)
+                print(f"  - {problem}")
+
+        return config
 
     def _build_parameters(self) -> Parameters.Parameters:
         """Create a Parameters object from the global: section of the yaml."""
@@ -747,7 +817,18 @@ class Experiment:
         sys.stdout = buf
         try:
             metrics = self._stats_metrics()
-            if cutoffs is None:
+            tracking_type = self.parameters.get_tracking_type()
+            if not metrics:
+                ## Never write a zero-byte Stats.txt: a reader cannot tell an
+                ## empty file from a crashed run, and run_analysis reports
+                ## success either way.
+                if tracking_type in _TRACKING_TYPE_METRICS:
+                    print(f"No statistical comparisons are defined for tracking type "
+                          f"{tracking_type.name}: its summary carries no outcome metric.")
+                else:
+                    print(f"Warning: tracking type {tracking_type.name} has no statistics policy "
+                          f"defined in this version. No comparisons were run.")
+            elif cutoffs is None:
                 print("(No facet_cutoffs configured — running flat pairwise comparisons.)\n")
                 for metric in metrics:
                     try:
@@ -837,6 +918,7 @@ class Experiment:
         """
         if output_dir is None:
             output_dir = self.analysis_path
+        os.makedirs(output_dir, exist_ok=True)
 
         tracker_items = list(self.arena.trackers.items())
         n = len(tracker_items)
@@ -999,8 +1081,21 @@ class Experiment:
 
         if output_dir is None:
             output_dir = self.analysis_path
+        os.makedirs(output_dir, exist_ok=True)
 
         plot_methods = self._plot_methods()
+        ## _plot_methods only injects `cutoffs` when facet_cutoffs is set. With
+        ## no cutoffs configured the facet methods used to be called bare and
+        ## fall through to a hardcoded (10, 70) default, so one PDF could carry
+        ## whole-recording p-values beside plots split at 10 and 70 minutes with
+        ## nothing marking the discrepancy. Skip them instead, and say so.
+        if self.facet_cutoffs is None:
+            skipped = [name for name, kwargs in plot_methods if name.endswith('_facet')]
+            if skipped:
+                print(f"(No facet_cutoffs configured — skipping {len(skipped)} faceted plot(s).)")
+            plot_methods = [(name, kwargs) for name, kwargs in plot_methods
+                            if not name.endswith('_facet')]
+
         method_counts: dict = {}
         current_method = ['unknown']
         original_show = plt.show
@@ -1046,6 +1141,39 @@ class Experiment:
     _MARGIN_TOP = 0.94
     _MARGIN_BOTTOM = 0.06
 
+    #: Name of the marker file :meth:`run_analysis` drops in ``analysis/``.
+    _RUN_MANIFEST = ".pytracking_run.json"
+
+    def _write_run_manifest(self) -> None:
+        """Stamp the start of an analysis run so stale artifacts can be identified."""
+        import json
+        from datetime import datetime as _dt
+
+        payload = {
+            "started": time.time(),
+            "started_iso": _dt.now().isoformat(timespec="seconds"),
+            "facet_cutoffs": list(self.facet_cutoffs) if self.facet_cutoffs is not None else None,
+            "tracking_type": self.parameters.get_tracking_type().name,
+        }
+        try:
+            io_utils.atomic_write_text(
+                os.path.join(self.analysis_path, self._RUN_MANIFEST),
+                lambda handle: json.dump(payload, handle, indent=2),
+            )
+        except OSError as err:
+            logger.warning("Could not write the run manifest: %s", err)
+
+    def _run_started_at(self):
+        """Timestamp of the last :meth:`run_analysis`, or None if never recorded."""
+        import json
+
+        path = os.path.join(self.analysis_path, self._RUN_MANIFEST)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return float(json.load(handle)["started"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
     def create_report(self, cutoffs=None, qc_cutoff: float = 0.9) -> str:
         """Assemble a letter-size PDF report from the artifacts already in
         ``analysis/`` and ``qc/``.
@@ -1077,17 +1205,24 @@ class Experiment:
         # Don't try to embed the report into itself.
         exclude = {os.path.abspath(pdf_path)}
 
+        since = self._run_started_at()
+        self._stale_artifacts: list = []
+
         plt.close("all")
         with PdfPages(pdf_path) as pdf:
             self._report_cover_page(pdf, exp_name, qc_cutoff)
 
             self._report_section_divider(pdf, "Analysis")
-            self._report_section_files(pdf, analysis_dir, exclude=exclude)
+            self._report_section_files(pdf, analysis_dir, exclude=exclude, since=since)
 
             self._report_section_divider(pdf, "Quality Control")
-            self._report_section_files(pdf, qc_dir, exclude=exclude)
+            self._report_section_files(pdf, qc_dir, exclude=exclude, since=since)
 
         plt.close("all")
+        if self._stale_artifacts:
+            print(f"Warning: {len(self._stale_artifacts)} artifact(s) in the report predate the "
+                  f"last analysis run and are marked STALE: {', '.join(self._stale_artifacts)}")
+            print("         Delete them or re-run the analysis if they no longer apply.")
         print(f"Saved: {pdf_path}")
         return pdf_path
 
@@ -1098,6 +1233,7 @@ class Experiment:
         pdf,
         directory,
         exclude: set | None = None,
+        since: float | None = None,
     ) -> None:
         from pathlib import Path as _Path
 
@@ -1107,15 +1243,28 @@ class Experiment:
         exclude = {os.path.abspath(p) for p in (exclude or set())}
 
         def _filter(paths):
-            return [p for p in paths if os.path.abspath(p) not in exclude]
+            return [p for p in paths if os.path.abspath(p) not in exclude
+                    and not p.name.startswith('.')]
+
+        def _suffix(path):
+            """Mark artifacts that predate the current analysis run."""
+            if since is None:
+                return ""
+            try:
+                if os.path.getmtime(path) < since:
+                    self._stale_artifacts.append(path.name)
+                    return "  [STALE — predates this analysis run]"
+            except OSError:
+                pass
+            return ""
 
         # Order text → tables → images so the narrative reads top-down.
         for path in sorted(_filter(directory.glob("*.txt"))):
-            self._report_text_file(pdf, path)
+            self._report_text_file(pdf, path, title_suffix=_suffix(path))
         for path in sorted(_filter(directory.glob("*.csv"))):
-            self._report_csv_table(pdf, path)
+            self._report_csv_table(pdf, path, title_suffix=_suffix(path))
         for path in sorted(_filter(directory.glob("*.png"))):
-            self._report_image(pdf, path)
+            self._report_image(pdf, path, title_suffix=_suffix(path))
 
     # ---------- Cover + section divider --------------------------------
 
@@ -1203,8 +1352,8 @@ class Experiment:
         ax.axis("off")
         ax.axhline(0, color="#cbd5e1", linewidth=0.6)
 
-    def _report_text_file(self, pdf, path) -> None:
-        title = path.stem
+    def _report_text_file(self, pdf, path, title_suffix: str = "") -> None:
+        title = path.stem + title_suffix
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except Exception as err:  # noqa: BLE001
@@ -1234,8 +1383,8 @@ class Experiment:
             pdf.savefig(fig)
             plt.close(fig)
 
-    def _report_csv_table(self, pdf, path) -> None:
-        title = path.stem
+    def _report_csv_table(self, pdf, path, title_suffix: str = "") -> None:
+        title = path.stem + title_suffix
         try:
             df = pd.read_csv(path)
         except Exception as err:  # noqa: BLE001
@@ -1308,11 +1457,16 @@ class Experiment:
                 for j in range(len(chunk.columns)):
                     tbl[(i + 1, j)].set_facecolor(base)
                 if hq_idx >= 0:
+                    ## A perfect tracker reports HighQuality == 1.0. The old test
+                    ## was `if hq_val < 1.0: fraction else: percent`, so exactly
+                    ## 1.0 was read as "1 percent" and the four cleanest
+                    ## recordings in the run were tinted red as the worst.
+                    ## Decide on the '%' suffix, and only rescale bare values
+                    ## that cannot be a fraction.
+                    raw = str(row.iloc[hq_idx]).strip()
                     try:
-                        hq_val = float(str(row.iloc[hq_idx]).rstrip("%"))
-                        if hq_val < 1.0:  # already a fraction
-                            pass
-                        else:
+                        hq_val = float(raw.rstrip("%"))
+                        if raw.endswith("%") or hq_val > 1.0:
                             hq_val = hq_val / 100.0
                     except (TypeError, ValueError):
                         hq_val = None
@@ -1340,10 +1494,10 @@ class Experiment:
         pdf.savefig(fig)
         plt.close(fig)
 
-    def _report_image(self, pdf, path) -> None:
+    def _report_image(self, pdf, path, title_suffix: str = "") -> None:
         import matplotlib.image as mpimg
 
-        title = path.stem
+        title = path.stem + title_suffix
         try:
             img = mpimg.imread(str(path))
         except Exception as err:  # noqa: BLE001
@@ -1390,6 +1544,12 @@ class Experiment:
 
         name = self.arena.experiment_name
         print(f"=== Running analysis for: {name} ===\n")
+
+        ## Record when this run began so create_report can tell the artifacts it
+        ## produced from leftovers of an earlier configuration sitting in the
+        ## same directory. Without it a stale *_Summary_Facet.csv is embedded in
+        ## the PDF as a current result with no provenance marker at all.
+        self._write_run_manifest()
 
         print("--- Experiment Summary ---")
         self.experiment_summary(save=True)

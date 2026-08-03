@@ -12,6 +12,21 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
+def alias_to_group_map(counting_regions):
+    """Invert a ``{group: [alias, ...]}`` design into ``{alias: group}``.
+
+    Raw ``CountingRegion`` cells hold the *aliases* a rig writes ("L", "LL"),
+    never the group key the config declares them under. Anything comparing raw
+    cells against group names must map through this first.
+    """
+    if not counting_regions:
+        return {}
+    return {str(alias): group
+            for group, aliases in counting_regions.items()
+            for alias in aliases}
+
+
 class ExperimentalDesign:
     def __init__(self, exp_name, parameters, config_path=None):
         self.experiment_name = exp_name

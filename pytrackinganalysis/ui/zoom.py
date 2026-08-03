@@ -91,8 +91,12 @@ class ZoomableImageView(QWidget):
             anchor = self._scroll.viewport().rect().center()
         h = self._scroll.horizontalScrollBar()
         v = self._scroll.verticalScrollBar()
-        img_x = (h.value() + anchor.x()) / max(1.0, self._zoom)
-        img_y = (v.value() + anchor.y()) / max(1.0, self._zoom)
+        # Divide by the *current* zoom to get image coordinates. Clamping this
+        # to 1.0 broke the anchor for everything below 100% (fit-to-window is
+        # routinely ~0.3), scrolling the image hundreds of pixels off target.
+        current = self._zoom if self._zoom > 0 else 1.0
+        img_x = (h.value() + anchor.x()) / current
+        img_y = (v.value() + anchor.y()) / current
         self._zoom = new_zoom
         self._render()
         h.setValue(int(img_x * self._zoom - anchor.x()))

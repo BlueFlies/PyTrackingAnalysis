@@ -163,7 +163,15 @@ def normalize_cutoffs(cutoffs):
     them — as the old tuple-or-int check did — broke documented usage.
     """
     if cutoffs is None:
-        raise ValueError("cutoffs must be a number or a sequence of numbers, not None.")
+        ## Every _facet signature defaults to None rather than carrying a
+        ## literal (10, 70). A caller that forgets to pass cutoffs now fails
+        ## here instead of silently splitting the recording at 10 and 70
+        ## minutes and labelling the result as the user's configured facets.
+        raise ValueError(
+            "cutoffs must be a number or a sequence of numbers, not None. "
+            "Set 'facet_cutoffs' under 'global:' in tracking_config.yaml, "
+            "or pass cutoffs= explicitly."
+        )
     if isinstance(cutoffs, (int, float)) and not isinstance(cutoffs, bool):
         values = [cutoffs]
     elif isinstance(cutoffs, (str, bytes)):

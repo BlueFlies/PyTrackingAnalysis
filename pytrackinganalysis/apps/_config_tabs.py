@@ -63,6 +63,17 @@ RIG_MM_PER_PIXEL: dict[str, float | None] = {
 }
 
 
+def _parse_cutoffs(text: str) -> list[int]:
+    """Parse the facet-cutoff field into whole minutes.
+
+    ``validation_errors`` and ``dump`` must agree on what is acceptable. They
+    used to disagree — ``float()`` in the first, ``int()`` in the second — so a
+    fractional cutoff passed validation and was then silently discarded, taking
+    the previously saved value with it. Raises ``ValueError`` on bad input.
+    """
+    return [int(part.strip()) for part in text.split(",") if part.strip()]
+
+
 def _section_label(text: str) -> QLabel:
     lbl = QLabel(text)
     font = QFont()
@@ -117,6 +128,11 @@ class GlobalTab(QWidget):
 
     def __init__(self):
         super().__init__()
+        # Calibration keys the user (or the file) supplied explicitly, as opposed
+        # to values this tab auto-filled for a rig. Changing the rig dropdown may
+        # only discard the latter — see _on_rig_changed.
+        self._explicit_overrides: set[str] = set()
+
         outer = QVBoxLayout(self)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -187,10 +203,16 @@ class GlobalTab(QWidget):
 
         self.fps = QLineEdit()
         self.fps.setPlaceholderText("required for 'movie' rig")
+        # textEdited (not textChanged) fires only for typing, so programmatic
+        # setText during load/rig-change does not falsely mark an override.
+        self.fps.textEdited.connect(lambda t: self._mark_override("fps", t))
         pform.addRow("fps:", self.fps)
 
         self.mm_per_pixel = QLineEdit()
         self.mm_per_pixel.setPlaceholderText("required for 'movie' rig")
+        self.mm_per_pixel.textEdited.connect(
+            lambda t: self._mark_override("mm_per_pixel", t)
+        )
         pform.addRow("mm_per_pixel:", self.mm_per_pixel)
 
         self.speed_window = QLineEdit()
@@ -226,13 +248,27 @@ class GlobalTab(QWidget):
         # (currentIndexChanged does not fire for the initial selection).
         self._on_rig_changed(self.tracking_rig.currentData())
 
+    def _mark_override(self, key: str, text: str) -> None:
+        """Record (or forget) a calibration the user typed by hand."""
+        if text.strip():
+            self._explicit_overrides.add(key)
+        else:
+            self._explicit_overrides.discard(key)
+
     def _on_rig_changed(self, rig: str) -> None:
         movie = rig == "movie"
-        self.fps.setEnabled(movie)
-        self.mm_per_pixel.setEnabled(movie)
         if not movie:
-            self.fps.clear()
-            self.mm_per_pixel.clear()
+            # Only a value this tab auto-filled may be discarded. A calibration
+            # the user typed — or that came out of the file — is a deliberate
+            # override: clearing it here dropped the key on the next save and
+            # silently reverted the analysis to the rig preset.
+            for key, widget in (("fps", self.fps), ("mm_per_pixel", self.mm_per_pixel)):
+                if key not in self._explicit_overrides:
+                    widget.clear()
+        # A surviving override stays editable so the user can still revise or
+        # remove it without switching the rig back to Movie.
+        self.fps.setEnabled(movie or bool(self.fps.text().strip()))
+        self.mm_per_pixel.setEnabled(movie or bool(self.mm_per_pixel.text().strip()))
 
         rig_label = _RIG_LABELS.get(rig, rig)
         if movie:
@@ -283,11 +319,15 @@ class GlobalTab(QWidget):
         tt = g.get("tracking_type", "TRACKER")
         self.tracking_type.setCurrentIndex(max(_find_data(self.tracking_type, tt), 0))
 
+        # A calibration present in the file is an explicit choice, whatever the
+        # rig says; record it before the rig change can decide to clear it.
+        self._explicit_overrides = {
+            key for key in ("fps", "mm_per_pixel")
+            if str(g.get(key, "")).strip()
+        }
+
         rig = g.get("tracking_rig", "small_arena")
         self.tracking_rig.setCurrentIndex(max(_find_data(self.tracking_rig, rig), 0))
-        # Refresh override placeholders even if the index did not change
-        # (currentIndexChanged would not fire in that case).
-        self._on_rig_changed(self.tracking_rig.currentData())
 
         self.factors_table.setRowCount(0)
         for name, levels in g.get("experimental_design_factors", {}).items():
@@ -316,6 +356,12 @@ class GlobalTab(QWidget):
         idist = g.get("interaction_distances")
         if idist:
             self.interaction_distances.setText(", ".join(str(d) for d in idist))
+
+        # Refresh the calibration placeholders / enabled state last, so it sees
+        # the values just loaded rather than the previous file's. Doing it here
+        # also covers the case where the rig index did not change and
+        # currentIndexChanged therefore never fired.
+        self._on_rig_changed(self.tracking_rig.currentData())
 
     # Keys this tab owns. The window uses these to tell "the user cleared this
     # field" apart from "this key was hand-added and is none of our business".
@@ -380,9 +426,14 @@ class GlobalTab(QWidget):
                 errors.append("Facet cutoffs: enter at least one minute boundary, or untick faceting")
             else:
                 try:
-                    values = [float(x.strip()) for x in text.split(",") if x.strip()]
+                    # dump() writes whole minutes, so validation has to accept
+                    # exactly what dump() can serialise. Parsing with float()
+                    # here let '10.5' through, and dump() then dropped the key.
+                    values = _parse_cutoffs(text)
                 except ValueError:
-                    errors.append(f"Facet cutoffs: '{text}' is not a comma-separated list of numbers")
+                    errors.append(
+                        f"Facet cutoffs: '{text}' must be whole minutes, comma-separated (e.g. 10, 70)"
+                    )
                 else:
                     if sorted(values) != values:
                         errors.append("Facet cutoffs: values must increase from left to right")
@@ -424,12 +475,10 @@ class GlobalTab(QWidget):
             g["experimental_design_factors"] = factors
 
         if self.use_facets.isChecked() and self.facet_cutoffs.text().strip():
-            try:
-                g["facet_cutoffs"] = [
-                    int(x.strip()) for x in self.facet_cutoffs.text().split(",") if x.strip()
-                ]
-            except ValueError:
-                pass
+            # No `except ValueError: pass` here. validation_errors() uses the
+            # same parser and blocks the save, so anything that reaches this
+            # point parses; swallowing the error instead deleted the key.
+            g["facet_cutoffs"] = _parse_cutoffs(self.facet_cutoffs.text())
 
         def _float(w):
             t = w.text().strip()
@@ -482,6 +531,10 @@ class TrackingRegionsTab(QWidget):
         self._global_tab = global_tab
         # Current factor → levels mapping driving the dynamic columns.
         self._factors: dict[str, list[str]] = {}
+        # The tracking_regions section as loaded, keyed by region name. dump()
+        # merges over these so per-region keys this tab does not render
+        # (``notes:``, anything hand-added) survive a load/save round trip.
+        self._loaded_regions: dict[str, dict] = {}
 
         layout = QVBoxLayout(self)
 
@@ -557,6 +610,7 @@ class TrackingRegionsTab(QWidget):
                 factor_values=row["factors"],
                 x=row["x"],
                 y=row["y"],
+                extra_factors=row["extras"],
             )
 
     def _snapshot_rows(self) -> list[dict]:
@@ -578,6 +632,7 @@ class TrackingRegionsTab(QWidget):
             rows.append({
                 "name": name,
                 "factors": factor_values,
+                "extras": list(name_item.data(Qt.ItemDataRole.UserRole) or []) if name_item else [],
                 "x": xw.currentText() if xw else "1",
                 "y": yw.currentText() if yw else "1",
             })
@@ -593,11 +648,16 @@ class TrackingRegionsTab(QWidget):
         factor_values: dict[str, str] | None = None,
         x: str | int = 1,
         y: str | int = 1,
+        extra_factors: list[str] | None = None,
     ) -> None:
         factor_values = factor_values or {}
         r = self.table.rowCount()
         self.table.insertRow(r)
-        self.table.setItem(r, 0, QTableWidgetItem(name or f"T_{r}"))
+        name_item = QTableWidgetItem(name or f"T_{r}")
+        # Factor tokens with no column of their own ride along on the row so
+        # they survive both a column rebuild and the save.
+        name_item.setData(Qt.ItemDataRole.UserRole, list(extra_factors or []))
+        self.table.setItem(r, 0, name_item)
         for i, (fname, levels) in enumerate(self._factors.items()):
             combo = _NoScrollComboBox()
             combo.addItem("")  # blank = unset
@@ -630,11 +690,18 @@ class TrackingRegionsTab(QWidget):
     # Load / dump
     # ------------------------------------------------------------------
 
-    def _split_factor_string(self, s: str) -> dict[str, str]:
-        """Map each token in a comma-list to the factor whose levels it belongs to."""
+    def _split_factor_string(self, s: str) -> tuple[dict[str, str], list[str]]:
+        """Split a comma-list into (factor → level, tokens matching no factor).
+
+        Tokens that are not a level of any declared factor have no column to
+        live in, so they used to be silently dropped on the next save
+        (``'Starved, Female, Batch1'`` → ``'Starved, Female'``). They are
+        returned instead and carried through to :meth:`dump` untouched.
+        """
         out: dict[str, str] = {}
+        extras: list[str] = []
         if not s:
-            return out
+            return out, extras
         tokens = [t.strip() for t in s.split(",") if t.strip()]
         for tok in tokens:
             for fname, levels in self._factors.items():
@@ -643,7 +710,9 @@ class TrackingRegionsTab(QWidget):
                 if tok in levels:
                     out[fname] = tok
                     break
-        return out
+            else:
+                extras.append(tok)
+        return out, extras
 
     def load(self, config: dict) -> None:
         # Re-sync factor columns from the current Global tab, in case load
@@ -651,14 +720,21 @@ class TrackingRegionsTab(QWidget):
         self._factors = self._global_tab.get_factors()
         self._apply_columns()
         self.table.setRowCount(0)
-        for name, data in config.get("tracking_regions", {}).items():
+        loaded = config.get("tracking_regions") or {}
+        self._loaded_regions = {
+            name: dict(data) for name, data in loaded.items() if isinstance(data, dict)
+        }
+        for name, data in loaded.items():
+            if not isinstance(data, dict):
+                continue
             ef = data.get("experimental_factors", "")
-            factor_values = self._split_factor_string(str(ef))
+            factor_values, extras = self._split_factor_string(str(ef))
             self._add_row(
                 name=name,
                 factor_values=factor_values,
                 x=data.get("x_location_multiplier", 1),
                 y=data.get("y_location_multiplier", 1),
+                extra_factors=extras,
             )
 
     def dump(self) -> dict:
@@ -674,19 +750,32 @@ class TrackingRegionsTab(QWidget):
                 val = w.currentText().strip() if w else ""
                 if val:
                     parts.append(val)
+            parts.extend(name_item.data(Qt.ItemDataRole.UserRole) or [])
             xw = self.table.cellWidget(r, self._x_col())
             yw = self.table.cellWidget(r, self._y_col())
-            regions[name_item.text().strip()] = {
+            name = name_item.text().strip()
+            # Start from the entry as loaded so keys this tab does not render
+            # survive, then overwrite the ones it owns.
+            entry = dict(self._loaded_regions.get(name) or {})
+            entry.update({
                 "experimental_factors": ", ".join(parts),
                 "x_location_multiplier": int(xw.currentText()) if xw else 1,
                 "y_location_multiplier": int(yw.currentText()) if yw else 1,
-            }
-        return {"tracking_regions": regions} if regions else {}
+            })
+            regions[name] = entry
+        # Always emit the key. Returning {} made config.update() a no-op, so
+        # clearing every row silently resurrected the previous plate's regions.
+        return {"tracking_regions": regions}
 
 
 class CountingRegionsTab(QWidget):
     def __init__(self):
         super().__init__()
+        # The counting_regions section as loaded, keyed by treatment label.
+        # dump() merges over it so per-region keys this tab does not render
+        # (``color:``, anything hand-added) survive a load/save round trip.
+        self._loaded_regions: dict[str, dict] = {}
+
         layout = QVBoxLayout(self)
 
         info = QLabel(
@@ -728,7 +817,13 @@ class CountingRegionsTab(QWidget):
 
     def load(self, config: dict) -> None:
         self.table.setRowCount(0)
-        for label, data in config.get("counting_regions", {}).items():
+        loaded = config.get("counting_regions") or {}
+        self._loaded_regions = {
+            label: dict(data) for label, data in loaded.items() if isinstance(data, dict)
+        }
+        for label, data in loaded.items():
+            if not isinstance(data, dict):
+                continue
             self._add_row(label=label, aliases=data.get("alias", ""))
 
     def dump(self) -> dict:
@@ -737,7 +832,11 @@ class CountingRegionsTab(QWidget):
             label_item = self.table.item(r, 0)
             aliases_item = self.table.item(r, 1)
             if label_item and label_item.text().strip():
-                regions[label_item.text().strip()] = {
-                    "alias": aliases_item.text().strip() if aliases_item else ""
-                }
-        return {"counting_regions": regions} if regions else {}
+                label = label_item.text().strip()
+                # Start from the entry as loaded so keys this tab does not
+                # render survive, then overwrite the one it owns.
+                entry = dict(self._loaded_regions.get(label) or {})
+                entry["alias"] = aliases_item.text().strip() if aliases_item else ""
+                regions[label] = entry
+        # Always emit the key — see TrackingRegionsTab.dump.
+        return {"counting_regions": regions}

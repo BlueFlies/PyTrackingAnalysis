@@ -83,10 +83,25 @@ Results are written into each project's own `analysis/` and `qc/` folders.
   parameters, faceting rules, and the special `batch` script that powers
   batch mode.
 
+## Tests
+
+The suite is hermetic — it synthesises complete projects in a temp directory and
+depends on nothing in `Testing/`:
+
+```bash
+uv run pytest -q                                    # run everything
+uv run pytest -q --cov=pytrackinganalysis           # with coverage
+```
+
+Qt runs headless, so no display is needed. CI runs the same command on every
+push and pull request (`.github/workflows/tests.yml`).
+
 ## Repository layout
 
 ```
 pytrackinganalysis/    the package: analysis pipeline, PyQt6 apps, script engine
 doc/                   user guides (start with doc/guide.md)
-Testing/               sample projects and test data
+doc/archive/           superseded review documents, kept for history only
+tests/                 the pytest suite
+Testing/               sample projects and test data (gitignored)
 ```

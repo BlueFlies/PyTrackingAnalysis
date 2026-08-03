@@ -16,6 +16,7 @@ independent of the report-generation code path.
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -47,7 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
-from .common import TaskWorker
+from .common import TaskWorker, shutdown_worker
 from ..ui import (
     ActionButton,
     Card,
@@ -75,11 +76,42 @@ _TAB_DISTANCE = "Tracker — Distance"
 _TAB_XY_TIME = "Tracker — X/Y(t)"
 _TAB_QUALITY = "Tracker — Quality"
 
+# Width of the amber warning band below the pass threshold. The pass threshold
+# itself is never hardcoded here — see _qc_cutoff_for().
+_YELLOW_BAND = 0.10
+
+
+def _core_qc_cutoff() -> float:
+    """The analysis core's own high-quality cutoff (``Experiment.qc``'s default).
+
+    Read from the signature rather than copied, so this window cannot drift
+    away from the number the QC report and the PDF cover page use.
+    """
+    try:
+        default = inspect.signature(ExperimentMod.Experiment.qc).parameters["cutoff"].default
+        return float(default)
+    except Exception:  # noqa: BLE001
+        return 0.9
+
+
+def _qc_cutoff_for(exp) -> float:
+    """Resolve the pass threshold for *exp*: ``global.qc_cutoff`` or the core's."""
+    config = getattr(exp, "config", None)
+    if isinstance(config, dict):
+        global_cfg = config.get("global")
+        if isinstance(global_cfg, dict):
+            raw = global_cfg.get("qc_cutoff")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                return float(raw)
+    return _core_qc_cutoff()
+
 
 class QcViewerWindow(QMainWindow):
-    # Fixed thresholds for row colouring (HighQuality column).
-    _THR_GREEN = 0.90
-    _THR_YELLOW = 0.80
+    # Thresholds for row colouring (HighQuality column). Replaced per project
+    # in _on_project_loaded so the tints agree with the cutoff the analysis
+    # actually applies; these are only the pre-load defaults.
+    _THR_GREEN = _core_qc_cutoff()
+    _THR_YELLOW = max(0.0, _core_qc_cutoff() - _YELLOW_BAND)
 
     def __init__(self, initial_project: str | None = None) -> None:
         super().__init__()
@@ -145,7 +177,11 @@ class QcViewerWindow(QMainWindow):
         trackers_card = Card(
             "Trackers",
             category=Category.QC,
-            subtitle="Rows tinted by %HighQuality: green ≥ 0.90, yellow 0.80–0.90, red < 0.80.",
+            subtitle=(
+                "Rows tinted by %HighQuality against the project's QC cutoff: "
+                "green passes, yellow is within one band below it, red fails. "
+                "The exact thresholds are shown under the table."
+            ),
             icon_name="qc",
         )
 
@@ -275,10 +311,21 @@ class QcViewerWindow(QMainWindow):
             self._log_issue("[qc] load finished but no experiment was produced")
             return
         self._exp = exp
+        self._apply_qc_cutoff(exp)
         ui_settings.add_recent_project(path)
         self._log.append_line(str(self._exp))
         self._refresh_table()
         self._show_qc_artifacts()
+
+    def _apply_qc_cutoff(self, exp) -> None:
+        """Adopt the project's QC cutoff for the row tints and the summary line."""
+        cutoff = _qc_cutoff_for(exp)
+        self._THR_GREEN = cutoff
+        self._THR_YELLOW = max(0.0, cutoff - _YELLOW_BAND)
+        self._log.append_line(
+            f"[qc] high-quality threshold: {cutoff:.0%} "
+            f"(warning band {self._THR_YELLOW:.0%}–{cutoff:.0%})"
+        )
 
     def _on_project_load_failed(self, message: str) -> None:
         self._log_issue(message)
@@ -309,11 +356,15 @@ class QcViewerWindow(QMainWindow):
             return
         # Drop the leading "<exp>_qc_" prefix and the ".png" suffix to keep tab titles short.
         title = png_path.stem
-        prefix = f"{self._exp.arena.experiment_name}_qc_"
-        if title.startswith(prefix):
+        prefix = f"{self._exp.arena.experiment_name}_qc_" if self._exp is not None else ""
+        if prefix and title.startswith(prefix):
             title = title[len(prefix):]
-        idx = self._plot_dock.addTab(view, icon("qc", category=Category.QC), title)
-        self._plot_dock.setCurrentIndex(idx)
+        # Replace rather than append: a reload used to open a second copy of
+        # every artifact, so ten reloads left 36 tabs each pinning a
+        # full-resolution QPixmap.
+        self._plot_dock.add_widget(
+            title, view, icon("qc", category=Category.QC), replace_existing=True,
+        )
 
     def _refresh_table(self) -> None:
         if self._exp is None:
@@ -521,6 +572,36 @@ class QcViewerWindow(QMainWindow):
             icon("theme_dark" if resolved_mode() == "light" else "theme_light")
         )
         self._apply_text_styles()
+
+    # ==================================================================
+    # Shutdown
+    # ==================================================================
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """Let the loader thread finish before the window takes it down.
+
+        A real project takes seconds to load, so the window is closable for the
+        whole of that window; closing it used to destroy the running QThread
+        and abort the process.
+        """
+        loader = self._loader
+        if loader is not None and loader.isRunning():
+            self._log.append_line("Waiting for the project load to finish before closing…")
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                finished = shutdown_worker(loader)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not finished:
+                QMessageBox.warning(
+                    self, "QC Viewer",
+                    "The project is still loading. Closing now would abort the "
+                    "application — try again once the load finishes.",
+                )
+                event.ignore()
+                return
+        self._loader = None
+        super().closeEvent(event)
 
 
 def _scalar(value) -> float:

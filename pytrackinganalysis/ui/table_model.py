@@ -49,10 +49,17 @@ class DataFrameModel(QAbstractTableModel):
     # Qt model API
     # ------------------------------------------------------------------
 
-    def rowCount(self, _parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    # A table is flat: only the invisible root has children. Reporting the row
+    # count for a *cell* made every cell look like a branch, which recursive
+    # QSortFilterProxyModel filtering then walked into and double-counted.
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if parent is not None and parent.isValid():
+            return 0
         return len(self._df.index)
 
-    def columnCount(self, _parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if parent is not None and parent.isValid():
+            return 0
         return len(self._df.columns)
 
     def headerData(  # noqa: N802

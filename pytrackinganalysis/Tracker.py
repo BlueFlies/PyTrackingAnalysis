@@ -1,11 +1,15 @@
+import logging
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
-import time
 
 from . import windowing
+
+logger = logging.getLogger(__name__)
+
 
 class Tracker:
     def __init__(self, tracking_region_id, object_id, tracking_regions, counting_regions, parameters, exp_design,rawdata):
@@ -36,12 +40,30 @@ class Tracker:
         
         ## Now to get the information from the experiment design file (new format).  This is used in the summary function and 
         ## will likely be used in all stats like functions that combine replicates within a treatment group.        
-        if(exp_design is not None):                              
+        if(exp_design is not None):
             self.tracking_region_design = exp_design.get_tracking_region(self.tracking_region_id)
-            self.counting_regions_design = exp_design.counting_regions                     
+            self.counting_regions_design = exp_design.counting_regions
         else:
             self.tracking_region_design = None
             self.counting_regions_design = None
+
+        ## get_tracking_region returns an *empty* DataFrame — never None — for a
+        ## region that appears in the data but not in tracking_config.yaml. Every
+        ## caller guards with `is not None` and then indexes [0], so that empty
+        ## frame used to abort the entire run with a bare IndexError naming
+        ## neither the region nor the config file. Substitute an explicit
+        ## unassigned row instead: the run continues, the region is visible in
+        ## every summary, and the statistics layer excludes blank treatments
+        ## with a warning rather than treating them as an arm.
+        if self.tracking_region_design is not None and len(self.tracking_region_design) == 0:
+            logger.warning(
+                "Tracking region '%s' is present in the data but missing from the "
+                "experimental design; treating it as unassigned.", self.tracking_region_id
+            )
+            self.tracking_region_design = pd.DataFrame(
+                [[self.tracking_region_id, '', 1, 1]],
+                columns=['RegionName', 'Treatment', 'XLocationMultiplier', 'YLocationMultiplier'],
+            )
         
         ## These are the ROI from the experiment file.  They are used for plotting and presumably for centrophobism stuff.
         self.tracking_region_roi = tracking_regions[tracking_regions['Name']==tracking_region_id].reset_index(drop=True)        
@@ -110,13 +132,23 @@ class Tracker:
             self.rawdata['Speed_mm_sec']  = self.rawdata['DistWindow_mm']/self.rawdata['DeltaSecWindow']
             self.rawdata.loc[self.rawdata.index[0], 'Speed_mm_sec'] = 0
 
+        ## A frame whose speed is undefined — a duplicate or stalled timestamp
+        ## giving DeltaSec == 0, or the lead-in rows of the rolling window — is
+        ## not a measurement of anything. NaN comparisons are False, so such a
+        ## frame used to fall through to IsResting=True and be reported as the
+        ## animal resting. Track it explicitly instead so the activity fractions
+        ## stay interpretable: "we could not tell" is not "it rested".
+        self.rawdata['IsUnmeasurable'] = self.rawdata['Speed_mm_sec'].isna()
+        measurable = ~self.rawdata['IsUnmeasurable']
+
         self.rawdata['IsWalking'] = self.rawdata['Speed_mm_sec'] > self.parameters.walking_speed_mm_sec
         self.rawdata['IsMicroMove'] = (self.rawdata['Speed_mm_sec'] > self.parameters.micro_move_speed_mm_sec[0]) & (self.rawdata['Speed_mm_sec'] < self.parameters.micro_move_speed_mm_sec[1])
-        self.rawdata['IsResting'] = True
+        self.rawdata['IsResting'] = measurable
         ## Resting is not walking or micro move but can be altered by sleep.
         self.rawdata.loc[self.rawdata['IsWalking']==True,'IsResting'] = False
         self.rawdata.loc[self.rawdata['IsMicroMove']==True,'IsResting'] = False
-        
+
+
         self.calculate_sleeping()
         
     ## This is definitely beta code at the moment. But it may be working reasonably well. It requires a good value for the lower bound of micro move speed.
@@ -236,11 +268,24 @@ class Tracker:
         Series: Summary statistics of the tracking data.
         """
         data_subset = self.get_data_subset(range_minutes)
-        if(len(data_subset)!=0):            
-            perc_sleeping = data_subset['IsSleeping'].sum()/len(data_subset)
-            perc_walking = data_subset['IsWalking'].sum()/len(data_subset)
-            perc_micro = data_subset['IsMicroMove'].sum()/len(data_subset)
-            perc_resting = data_subset['IsResting'].sum()/len(data_subset)
+        if(len(data_subset)!=0):
+            ## Activity fractions are denominated over *measurable* frames only.
+            ## A frame with no defined speed cannot be classified, and folding it
+            ## into the denominator as "resting" makes "the animal was still"
+            ## indistinguishable from "we could not tell". PercUnmeasurable is
+            ## reported over all frames so the two are always separable.
+            unmeasurable = data_subset['IsUnmeasurable'] if 'IsUnmeasurable' in data_subset.columns \
+                else pd.Series(False, index=data_subset.index)
+            n_measurable = int((~unmeasurable).sum())
+            perc_unmeasurable = int(unmeasurable.sum())/len(data_subset)
+            if n_measurable > 0:
+                measured = data_subset.loc[~unmeasurable]
+                perc_sleeping = measured['IsSleeping'].sum()/n_measurable
+                perc_walking = measured['IsWalking'].sum()/n_measurable
+                perc_micro = measured['IsMicroMove'].sum()/n_measurable
+                perc_resting = measured['IsResting'].sum()/n_measurable
+            else:
+                perc_sleeping = perc_walking = perc_micro = perc_resting = pd.NA
 
             avg_speed = data_subset['Speed_mm_sec'].mean()
             total_distance = data_subset['Dist_mm'].sum()
@@ -251,13 +296,26 @@ class Tracker:
             total_distance_min = windowing.safe_rate(total_distance, obs_minutes)
 
             perc_highquality = (data_subset['DataQuality']=='High').sum()/len(data_subset)
+
+            ## TotalDistance sums every step in the window, including steps into
+            ## and out of frames where tracking was lost — those carry real
+            ## coordinate jumps, not NaN, and inflate the total by up to ~19% per
+            ## animal in proportion to how poor the tracking was. Report the
+            ## quality-filtered total alongside it rather than silently changing
+            ## the headline number, so a user can see the size of the correction
+            ## on their own data. A step is discarded if either endpoint was lost.
+            lost = data_subset['DataQuality'] != 'High'
+            contaminated = lost | lost.shift(1, fill_value=False)
+            total_distance_hq = data_subset.loc[~contaminated, 'Dist_mm'].sum()
         else:
             perc_sleeping = pd.NA
             perc_walking = pd.NA
             perc_micro = pd.NA
             perc_resting = pd.NA
+            perc_unmeasurable = pd.NA
             avg_speed = pd.NA
             total_distance = pd.NA
+            total_distance_hq = pd.NA
             obs_minutes = pd.NA
             start_minutes = pd.NA
             end_minutes = pd.NA
@@ -270,8 +328,8 @@ class Tracker:
             treatment = ''
 
         #tmp = (f"Treatment: {treatment}, Name: {self.name}, ObsMin: {obs_minutes:.2f}, Sleeping: {perc_sleeping:.2f}, Walking: {perc_walking:.2f}, Micro: {perc_micro:.2f}, Resting: {perc_resting:.2f}, AvgSpeed: {avg_speed:.2f}, TotalDist: {total_distance:.2f}, TotalDist2: {total_distance_dtrack:.2f}, StartMin: {start_minutes:.2f}, EndMin: {end_minutes:.2f}")
-        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,avg_speed,perc_highquality,start_minutes,end_minutes])
-        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','AvgSpeed','PercHighQuality','StartMinutes','EndMinutes']
+        result = pd.Series([treatment, self.name,self.tracking_region_id,self.object_id,obs_minutes,total_distance,total_distance_hq,total_distance_min,perc_sleeping,perc_walking,perc_micro,perc_resting,perc_unmeasurable,avg_speed,perc_highquality,start_minutes,end_minutes])
+        result.index = ['Treatment','Name','TrackingRegion','ObjectID','ObsMinutes','TotalDistance','TotalDistanceHighQualityOnly','TotalDistancePerMin','PercSleeping','PercWalking','PercMicro','PercResting','PercUnmeasurable','AvgSpeed','PercHighQuality','StartMinutes','EndMinutes']
         return result
 
     def get_plot_limits(self):

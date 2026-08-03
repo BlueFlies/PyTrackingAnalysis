@@ -26,6 +26,29 @@ from ..ui import Category, category_color, icon
 from .actions import ACTIONS, Action
 
 
+def _unknown_action(key: str) -> Action:
+    """A stand-in :class:`Action` for a step whose key is not in the registry.
+
+    Skipping the card instead would leave ``_cards`` shorter than ``_steps``:
+    every index after the unknown step would then address the wrong entry, so
+    selecting a card opened its neighbour's parameters and Remove deleted the
+    wrong step.  Rendering a placeholder keeps the two lists in lockstep *and*
+    makes the bad step visible so the user can delete it.
+    """
+    return Action(
+        key=key,
+        title=f"Unknown action: {key!r}" if key else "Unknown action",
+        description=(
+            "This step's action is not in the registry — it may come from a "
+            "newer version or a typo in the YAML. It cannot be edited here; "
+            "remove it or fix the 'action:' key in tracking_config.yaml."
+        ),
+        category=Category.QC,
+        icon_name="warning",
+        params=(),
+    )
+
+
 class _StepCard(QFrame):
     """A single step in the canvas."""
 
@@ -243,9 +266,8 @@ class Canvas(QWidget):
     # ------------------------------------------------------------------
 
     def _append_card(self, step: dict) -> None:
-        action = ACTIONS.get(step.get("action", ""))
-        if action is None:
-            return
+        key = step.get("action", "")
+        action = ACTIONS.get(key) or _unknown_action(key)
         idx = len(self._cards)
         card = _StepCard(idx, action, step.get("params", {}))
         card.selected.connect(self._on_card_selected)
