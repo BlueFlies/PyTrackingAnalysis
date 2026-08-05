@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Parameters as _ParametersMod
+from ..help import HelpButton
 
 
 # (display_label, yaml/enum_value). The dropdowns show the label; we read and
@@ -135,6 +136,13 @@ class GlobalTab(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        help_row = QHBoxLayout()
+        help_row.addStretch(1)
+        help_row.addWidget(
+            HelpButton("config_global", tooltip="Global settings help")
+        )
+        outer.addLayout(help_row)
 
         self.tracking_type = QComboBox()
         for label, value in TRACKING_TYPES:
@@ -538,12 +546,17 @@ class TrackingRegionsTab(QWidget):
 
         layout = QVBoxLayout(self)
 
+        info_row = QHBoxLayout()
         info = QLabel(
             "Each row is one tracking region (tube/well). "
             "Pick a level for every experimental-design factor defined on the Global tab."
         )
         info.setWordWrap(True)
-        layout.addWidget(info)
+        info_row.addWidget(info, 1)
+        info_row.addWidget(
+            HelpButton("config_regions", tooltip="Tracking and counting regions")
+        )
+        layout.addLayout(info_row)
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add region")
@@ -778,6 +791,7 @@ class CountingRegionsTab(QWidget):
 
         layout = QVBoxLayout(self)
 
+        info_row = QHBoxLayout()
         info = QLabel(
             "Each row defines a treatment and the strings that identify it in the "
             "tracking data file's counting_region column. Any value in that column "
@@ -787,7 +801,11 @@ class CountingRegionsTab(QWidget):
             "whose counting_region is Light, LL, or L."
         )
         info.setWordWrap(True)
-        layout.addWidget(info)
+        info_row.addWidget(info, 1)
+        info_row.addWidget(
+            HelpButton("config_regions", tooltip="Tracking and counting regions")
+        )
+        layout.addLayout(info_row)
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add region")

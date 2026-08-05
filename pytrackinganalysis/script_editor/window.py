@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..help import make_topbar_help_button
 from ..ui import ActionButton, Category, TopBar, apply_theme, icon, resolved_mode
 from .actions import ACTIONS, validation_issues
 from .canvas import Canvas
@@ -71,6 +72,9 @@ class ScriptEditorWindow(QMainWindow):
         # ── Top bar with script switcher ────────────────────────────────
         self._top_bar = TopBar("Script Editor")
         self._top_bar.add_right(self._build_script_switcher())
+        self._top_bar.add_right(
+            make_topbar_help_button(self, topic_id="scripts_overview")
+        )
 
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(

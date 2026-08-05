@@ -1132,15 +1132,6 @@ class Experiment:
     # PDF report generation
     # ------------------------------------------------------------------
 
-    # Letter-size page dimensions in inches.
-    _LETTER_PORTRAIT = (8.5, 11.0)
-    _LETTER_LANDSCAPE = (11.0, 8.5)
-    # Inset that keeps content off the edge of the printable area.
-    _MARGIN_LEFT = 0.06
-    _MARGIN_RIGHT = 0.94
-    _MARGIN_TOP = 0.94
-    _MARGIN_BOTTOM = 0.06
-
     #: Name of the marker file :meth:`run_analysis` drops in ``analysis/``.
     _RUN_MANIFEST = ".pytracking_run.json"
 
@@ -1174,358 +1165,122 @@ class Experiment:
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def create_report(self, cutoffs=None, qc_cutoff: float = 0.9) -> str:
-        """Assemble a letter-size PDF report from the artifacts already in
-        ``analysis/`` and ``qc/``.
+    def create_report(self, cutoffs=None, qc_cutoff: float = 0.9,
+                      backend: str = "reportlab") -> str:
+        """Assemble a professional report for this experiment.
 
-        Run this after :meth:`run_analysis` and :meth:`run_qc`. The PDF is
-        written to ``<analysis_path>/<exp>_report.pdf``. The report layout:
+        Builds a backend-agnostic document model (see
+        :mod:`pytrackinganalysis.report`) from the current analysis outputs and
+        renders it with the named *backend* — reportlab today; the same model is
+        designed to drive future Markdown/LaTeX backends without any change to
+        the analysis core. Run after :meth:`run_analysis` and :meth:`run_qc`.
 
-          * Cover page
-          * Section divider — "Analysis"
-          * Every ``.txt`` in ``analysis/`` (paginated monospaced text)
-          * Every ``.csv`` in ``analysis/`` (rendered as a table)
-          * Every ``.png`` in ``analysis/`` (one image per page, fit to letter)
-          * Section divider — "Quality Control"
-          * Every ``.txt`` / ``.csv`` / ``.png`` in ``qc/``
-
-        Parameters are accepted for back-compat but ``cutoffs`` is unused
-        (the report reads pre-rendered artifacts). ``qc_cutoff`` only drives
-        the colored summary line on the cover page.
+        Unlike the previous version, the report draws its plots natively as
+        consolidated multi-panel figures rather than re-embedding the
+        interactive ``save_plots`` PNGs, and reads the freshly written
+        ``*_Stats.txt`` and ``*_Summary*.csv`` artifacts for its text and
+        tables. ``cutoffs`` is accepted for back-compat and unused. Returns the
+        path to the written report.
         """
-        from matplotlib.backends.backend_pdf import PdfPages
+        from .report import render as _render
+
+        del cutoffs  # report sources the current analysis outputs, not a re-run.
+        report = self.build_report_model(qc_cutoff=qc_cutoff)
+        ext = {"reportlab": "pdf"}.get(backend, "pdf")
+        out_path = os.path.join(
+            self.analysis_path, f"{self.arena.experiment_name}_report.{ext}")
+        _render(report, out_path, backend=backend)
+        print(f"Saved: {out_path}")
+        return out_path
+
+    # ------------------------------------------------------------------
+    # Report model assembly (analysis-side; imports the document model only,
+    # never a rendering backend, so the core stays engine-independent).
+    # ------------------------------------------------------------------
+
+    def build_report_model(self, qc_cutoff: float = 0.9):
+        """Build the backend-agnostic :class:`~...report.model.Report`.
+
+        The single bridge between analysis data and the report: it emits the
+        cover, section dividers, statistics text, summary tables and
+        report-native figures as model blocks.
+        """
+        from datetime import datetime as _dt
         from pathlib import Path as _Path
 
-        del cutoffs  # unused; report sources already-rendered artifacts.
+        from . import report_figures
+        from .report import model as _m
 
         exp_name = self.arena.experiment_name
-        analysis_dir = _Path(self.analysis_path)
-        qc_dir = _Path(self.qc_path)
-        pdf_path = os.path.join(self.analysis_path, f"{exp_name}_report.pdf")
-        # Don't try to embed the report into itself.
-        exclude = {os.path.abspath(pdf_path)}
+        report = _m.Report(exp_name)
 
-        since = self._run_started_at()
-        self._stale_artifacts: list = []
-
-        plt.close("all")
-        with PdfPages(pdf_path) as pdf:
-            self._report_cover_page(pdf, exp_name, qc_cutoff)
-
-            self._report_section_divider(pdf, "Analysis")
-            self._report_section_files(pdf, analysis_dir, exclude=exclude, since=since)
-
-            self._report_section_divider(pdf, "Quality Control")
-            self._report_section_files(pdf, qc_dir, exclude=exclude, since=since)
-
-        plt.close("all")
-        if self._stale_artifacts:
-            print(f"Warning: {len(self._stale_artifacts)} artifact(s) in the report predate the "
-                  f"last analysis run and are marked STALE: {', '.join(self._stale_artifacts)}")
-            print("         Delete them or re-run the analysis if they no longer apply.")
-        print(f"Saved: {pdf_path}")
-        return pdf_path
-
-    # ---------- Section walker -----------------------------------------
-
-    def _report_section_files(
-        self,
-        pdf,
-        directory,
-        exclude: set | None = None,
-        since: float | None = None,
-    ) -> None:
-        from pathlib import Path as _Path
-
-        directory = _Path(directory)
-        if not directory.exists():
-            return
-        exclude = {os.path.abspath(p) for p in (exclude or set())}
-
-        def _filter(paths):
-            return [p for p in paths if os.path.abspath(p) not in exclude
-                    and not p.name.startswith('.')]
-
-        def _suffix(path):
-            """Mark artifacts that predate the current analysis run."""
-            if since is None:
-                return ""
-            try:
-                if os.path.getmtime(path) < since:
-                    self._stale_artifacts.append(path.name)
-                    return "  [STALE — predates this analysis run]"
-            except OSError:
-                pass
-            return ""
-
-        # Order text → tables → images so the narrative reads top-down.
-        for path in sorted(_filter(directory.glob("*.txt"))):
-            self._report_text_file(pdf, path, title_suffix=_suffix(path))
-        for path in sorted(_filter(directory.glob("*.csv"))):
-            self._report_csv_table(pdf, path, title_suffix=_suffix(path))
-        for path in sorted(_filter(directory.glob("*.png"))):
-            self._report_image(pdf, path, title_suffix=_suffix(path))
-
-    # ---------- Cover + section divider --------------------------------
-
-    def _report_cover_page(self, pdf, exp_name: str, qc_cutoff: float) -> None:
-        from datetime import datetime as _dt
-
-        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
-        fig.patch.set_facecolor("white")
-
-        # Title block — centered, top third.
-        fig.text(0.5, 0.78, exp_name, ha="center", va="center",
-                 fontsize=26, fontweight="bold", color="#0f172a")
-        fig.text(0.5, 0.72, "Tracking Analysis Report",
-                 ha="center", va="center", fontsize=14, color="#475569")
-        # Hairline separator under the title block.
-        ax_line = fig.add_axes([0.18, 0.685, 0.64, 0.001])
-        ax_line.axis("off")
-        ax_line.axhline(0, color="#94a3b8", linewidth=0.8)
-
-        # Metadata block.
-        global_cfg = self.config.get("global", {}) if isinstance(self.config, dict) else {}
-        info = [
+        # ---- Cover ----
+        global_cfg = (self.config.get("global", {})
+                      if isinstance(self.config, dict) else {})
+        metadata = [
             ("Tracking type", self.parameters.get_tracking_type().name),
             ("Tracking rig", str(global_cfg.get("tracking_rig", "—"))),
             ("Project", os.path.abspath(self.project_directory)),
             ("Generated", _dt.now().strftime("%Y-%m-%d %H:%M")),
         ]
-        y = 0.6
-        for label, value in info:
-            fig.text(0.18, y, f"{label}:", fontsize=10, color="#64748b",
-                     fontweight="bold")
-            fig.text(0.36, y, value, fontsize=10, family="monospace",
-                     color="#0f172a")
-            y -= 0.03
+        report.add(_m.Cover(exp_name, "Tracking Analysis Report",
+                            metadata=metadata,
+                            status=self._qc_status_line(qc_cutoff)))
 
-        # QC summary line — green if everything passes, red otherwise.
+        # ---- Analysis section ----
+        # Whole-recording figures, then the per-phase (faceted) figures when
+        # facet_cutoffs is configured, then the statistical-test text. The
+        # numeric summary tables are NOT embedded — that data is written to the
+        # CSVs in analysis/ by run_analysis; the report is a visual + stats
+        # narrative, not a data dump.
+        report.add(_m.SectionDivider("Analysis"))
+        for fig in report_figures.build_analysis_figures(self):
+            report.add(fig)
+        for fig in report_figures.build_faceted_figures(self):
+            report.add(fig)
+        self._add_text_blocks(report, _Path(self.analysis_path), _m)
+
+        # ---- Quality-control section ----
+        report.add(_m.SectionDivider("Quality Control"))
+        for fig in report_figures.build_qc_figures(self):
+            report.add(fig)
+        self._add_text_blocks(report, _Path(self.qc_path), _m)
+
+        return report
+
+    def _qc_status_line(self, qc_cutoff: float):
+        """Cover-page QC one-liner as a semantic StatusLine, or None."""
+        from .report import model as _m
+
         try:
             if not self.arena.supports_data_quality():
-                raise ValueError("no per-frame data quality for this tracking type")
+                return None
             dq = self.arena.get_data_quality()
-            n = len(dq)
-            n_good = int((dq["HighQuality"] >= qc_cutoff).sum())
-            color = "#16a34a" if n_good == n else "#dc2626"
-            fig.text(
-                0.5, 0.36,
+            hq = pd.to_numeric(dq["HighQuality"], errors="coerce")
+            n = len(hq)
+            n_good = int((hq >= qc_cutoff).sum())
+            level = _m.Level.OK if n_good == n else _m.Level.ERROR
+            return _m.StatusLine(
                 f"Data quality: {n_good}/{n} trackers ≥ {qc_cutoff:.0%} high-quality",
-                ha="center", fontsize=12, color=color, fontweight="bold",
-            )
+                level)
         except Exception:  # noqa: BLE001
-            pass
+            return None
 
-        # Footer.
-        fig.text(0.5, 0.05, "PyTrackingAnalysis", ha="center", va="center",
-                 fontsize=9, color="#94a3b8")
-
-        pdf.savefig(fig)
-        plt.close(fig)
-
-    def _report_section_divider(self, pdf, title: str) -> None:
-        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
-        fig.patch.set_facecolor("white")
-        fig.text(0.5, 0.5, title, ha="center", va="center",
-                 fontsize=42, fontweight="bold", color="#1f2937")
-        # Decorative bars above and below.
-        ax = fig.add_axes([0.25, 0.555, 0.5, 0.001]); ax.axis("off")
-        ax.axhline(0, color="#94a3b8", linewidth=1.2)
-        ax = fig.add_axes([0.25, 0.445, 0.5, 0.001]); ax.axis("off")
-        ax.axhline(0, color="#94a3b8", linewidth=1.2)
-        pdf.savefig(fig)
-        plt.close(fig)
-
-    # ---------- Body content renderers ---------------------------------
-
-    def _report_page_header(self, fig, title: str, subtitle: str | None = None) -> None:
-        fig.text(self._MARGIN_LEFT, self._MARGIN_TOP + 0.03, title,
-                 fontsize=12, fontweight="bold", color="#0f172a")
-        if subtitle:
-            fig.text(self._MARGIN_RIGHT, self._MARGIN_TOP + 0.03, subtitle,
-                     fontsize=9, color="#64748b", ha="right")
-        # Underline.
-        ax = fig.add_axes(
-            [self._MARGIN_LEFT, self._MARGIN_TOP + 0.018,
-             self._MARGIN_RIGHT - self._MARGIN_LEFT, 0.0008],
-        )
-        ax.axis("off")
-        ax.axhline(0, color="#cbd5e1", linewidth=0.6)
-
-    def _report_text_file(self, pdf, path, title_suffix: str = "") -> None:
-        title = path.stem + title_suffix
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception as err:  # noqa: BLE001
-            text = f"(could not read {path.name}: {err})"
-        lines = text.splitlines() or [""]
-
-        LINES_PER_PAGE = 60
-        total_pages = max(1, -(-len(lines) // LINES_PER_PAGE))
-        for page_idx in range(total_pages):
-            start = page_idx * LINES_PER_PAGE
-            chunk = "\n".join(lines[start:start + LINES_PER_PAGE])
-            fig = plt.figure(figsize=self._LETTER_PORTRAIT)
-            fig.patch.set_facecolor("white")
-            subtitle = (
-                f"page {page_idx + 1}/{total_pages}"
-                if total_pages > 1 else None
-            )
-            self._report_page_header(fig, title, subtitle)
-            fig.text(
-                self._MARGIN_LEFT,
-                self._MARGIN_TOP - 0.01,
-                chunk,
-                fontsize=8.5, family="monospace",
-                verticalalignment="top",
-                color="#0f172a",
-            )
-            pdf.savefig(fig)
-            plt.close(fig)
-
-    def _report_csv_table(self, pdf, path, title_suffix: str = "") -> None:
-        title = path.stem + title_suffix
-        try:
-            df = pd.read_csv(path)
-        except Exception as err:  # noqa: BLE001
-            self._report_text_file_string(pdf, title, f"(could not read {path}: {err})")
+    def _add_text_blocks(self, report, directory, _m) -> None:
+        """Add each non-empty ``*.txt`` in *directory* as a Preformatted block."""
+        if not directory.exists():
             return
-        if df.empty:
-            self._report_text_file_string(pdf, title, "(empty)")
-            return
+        for path in sorted(directory.glob("*.txt")):
+            if path.name.startswith("."):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as err:
+                text = f"(could not read {path.name}: {err})"
+            if text.strip():
+                report.add(_m.Preformatted(text, title=path.stem))
 
-        # Wide tables go landscape.
-        landscape = len(df.columns) > 6
-        figsize = self._LETTER_LANDSCAPE if landscape else self._LETTER_PORTRAIT
 
-        # Format float columns for compactness; keep ints / strings as-is.
-        display = df.copy()
-        for col in display.columns:
-            if pd.api.types.is_float_dtype(display[col]):
-                display[col] = display[col].map(
-                    lambda v: ("" if pd.isna(v) else f"{v:.3f}")
-                )
-            else:
-                display[col] = display[col].astype(str)
-
-        rows_per_page = 30 if landscape else 36
-        n_rows = len(display)
-        total_pages = max(1, -(-n_rows // rows_per_page))
-
-        for page_idx in range(total_pages):
-            start = page_idx * rows_per_page
-            chunk = display.iloc[start:start + rows_per_page]
-            fig = plt.figure(figsize=figsize)
-            fig.patch.set_facecolor("white")
-            subtitle = (
-                f"page {page_idx + 1}/{total_pages}  ·  rows {start + 1}–"
-                f"{start + len(chunk)} of {n_rows}"
-            )
-            self._report_page_header(fig, title, subtitle)
-
-            ax = fig.add_axes([
-                self._MARGIN_LEFT,
-                self._MARGIN_BOTTOM,
-                self._MARGIN_RIGHT - self._MARGIN_LEFT,
-                self._MARGIN_TOP - self._MARGIN_BOTTOM - 0.04,
-            ])
-            ax.axis("off")
-            tbl = ax.table(
-                cellText=chunk.values.tolist(),
-                colLabels=list(chunk.columns),
-                cellLoc="center",
-                loc="upper center",
-            )
-            tbl.auto_set_font_size(False)
-            font_size = 7.5 if len(chunk.columns) > 8 else 8.5
-            tbl.set_fontsize(font_size)
-            tbl.scale(1, 1.35)
-
-            # Header row styling.
-            for j in range(len(chunk.columns)):
-                cell = tbl[(0, j)]
-                cell.set_facecolor("#1f2937")
-                cell.set_text_props(color="white", weight="bold")
-                cell.set_height(cell.get_height() * 1.1)
-            # Alternating row tints, plus green/red for HighQuality if present.
-            hq_idx = (
-                list(chunk.columns).index("HighQuality")
-                if "HighQuality" in chunk.columns else -1
-            )
-            for i, (_, row) in enumerate(chunk.iterrows()):
-                base = "#f8fafc" if i % 2 == 0 else "#ffffff"
-                for j in range(len(chunk.columns)):
-                    tbl[(i + 1, j)].set_facecolor(base)
-                if hq_idx >= 0:
-                    ## A perfect tracker reports HighQuality == 1.0. The old test
-                    ## was `if hq_val < 1.0: fraction else: percent`, so exactly
-                    ## 1.0 was read as "1 percent" and the four cleanest
-                    ## recordings in the run were tinted red as the worst.
-                    ## Decide on the '%' suffix, and only rescale bare values
-                    ## that cannot be a fraction.
-                    raw = str(row.iloc[hq_idx]).strip()
-                    try:
-                        hq_val = float(raw.rstrip("%"))
-                        if raw.endswith("%") or hq_val > 1.0:
-                            hq_val = hq_val / 100.0
-                    except (TypeError, ValueError):
-                        hq_val = None
-                    if hq_val is not None:
-                        if hq_val >= 0.90:
-                            tint = "#dcfce7"
-                        elif hq_val >= 0.80:
-                            tint = "#fef9c3"
-                        else:
-                            tint = "#fee2e2"
-                        for j in range(len(chunk.columns)):
-                            tbl[(i + 1, j)].set_facecolor(tint)
-
-            pdf.savefig(fig)
-            plt.close(fig)
-
-    def _report_text_file_string(self, pdf, title: str, body: str) -> None:
-        """Helper for the rare case we need to surface a string, not a real file."""
-        fig = plt.figure(figsize=self._LETTER_PORTRAIT)
-        fig.patch.set_facecolor("white")
-        self._report_page_header(fig, title)
-        fig.text(self._MARGIN_LEFT, self._MARGIN_TOP - 0.01, body,
-                 fontsize=9, family="monospace", verticalalignment="top",
-                 color="#0f172a")
-        pdf.savefig(fig)
-        plt.close(fig)
-
-    def _report_image(self, pdf, path, title_suffix: str = "") -> None:
-        import matplotlib.image as mpimg
-
-        title = path.stem + title_suffix
-        try:
-            img = mpimg.imread(str(path))
-        except Exception as err:  # noqa: BLE001
-            self._report_text_file_string(pdf, title, f"(could not read image: {err})")
-            return
-
-        # Pick orientation that wastes less paper for the source aspect ratio.
-        h = img.shape[0]
-        w = img.shape[1]
-        landscape = w > h
-        figsize = self._LETTER_LANDSCAPE if landscape else self._LETTER_PORTRAIT
-
-        fig = plt.figure(figsize=figsize)
-        fig.patch.set_facecolor("white")
-        self._report_page_header(fig, title)
-
-        ax = fig.add_axes([
-            self._MARGIN_LEFT,
-            self._MARGIN_BOTTOM,
-            self._MARGIN_RIGHT - self._MARGIN_LEFT,
-            self._MARGIN_TOP - self._MARGIN_BOTTOM - 0.04,
-        ])
-        ax.imshow(img)
-        ax.axis("off")
-        # Preserve aspect ratio inside the page area.
-        ax.set_aspect("equal")
-        pdf.savefig(fig, dpi=150)
-        plt.close(fig)
 
     def run_analysis(self, cutoffs=None, qc_cutoff: float = 0.9) -> None:
         """

@@ -187,6 +187,7 @@ class Card(QFrame):
             f"}}"
         )
         title_row.addWidget(self._title_lbl, 1)
+        self._title_row = title_row
 
         outer.addLayout(title_row)
 
@@ -218,6 +219,10 @@ class Card(QFrame):
 
     def set_title(self, title: str) -> None:
         self._title_lbl.setText(title)
+
+    def add_title_widget(self, widget: QWidget) -> None:
+        """Add a widget to the title row (e.g. a contextual help button)."""
+        self._title_row.addWidget(widget)
 
     def add_section_label(self, text: str) -> None:
         lbl = QLabel(text, self)

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..io_utils import atomic_write_text
+from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
     ActionButton,
     Card,
@@ -126,6 +127,10 @@ class ConfigEditorWindow(QMainWindow):
         btn_script.clicked.connect(self._launch_script_editor)
         self._top_bar.add_right(btn_script)
 
+        self._top_bar.add_right(
+            make_topbar_help_button(self, topic_id="config_overview")
+        )
+
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(
             icon("theme_dark" if resolved_mode() == "light" else "theme_light")
@@ -156,6 +161,9 @@ class ConfigEditorWindow(QMainWindow):
             category=Category.NEUTRAL,
             subtitle="Edit the global settings, tracking regions, and counting regions.",
             icon_name="config",
+        )
+        tabs_card.add_title_widget(
+            HelpButton("config_overview", tooltip="Config file overview")
         )
         self._tabs = QTabWidget()
         self._global_tab = GlobalTab()

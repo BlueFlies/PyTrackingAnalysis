@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
     ActionButton,
     Card,
@@ -169,6 +170,7 @@ class HubWindow(QMainWindow):
             "PNGs (faster)."
         )
         self._top_bar.add_right(self._interactive_checkbox)
+        self._top_bar.add_right(make_topbar_help_button(self, topic_id="getting_started"))
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(
             icon("theme_dark" if resolved_mode() == "light" else "theme_light")
@@ -259,6 +261,12 @@ class HubWindow(QMainWindow):
             subtitle="Pick the experiment folder and its config file.",
             icon_name="project",
         )
+        card.add_title_widget(
+            HelpButton(
+                "project_structure",
+                tooltip="Project directory layout and naming rules",
+            )
+        )
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -334,27 +342,10 @@ class HubWindow(QMainWindow):
         mode_group.addButton(self._mode_batch)
         mode_group.buttonClicked.connect(self._on_mode_changed)
 
-        batch_help = QToolButton()
-        batch_help.setText("?")
-        batch_help.setFixedSize(18, 18)
-        batch_help.setToolTip("How batch analyses work")
-        batch_help.setCursor(Qt.CursorShape.PointingHandCursor)
-        batch_help.setStyleSheet(
-            "QToolButton {"
-            "  border: 1px solid palette(mid);"
-            "  border-radius: 9px;"          # half of the fixed size → circle
-            "  background: palette(button);"
-            "  color: palette(button-text);"
-            "  font-size: 11px;"
-            "  font-weight: 600;"
-            "  padding: 0px;"
-            "}"
-            "QToolButton:hover {"
-            "  background: palette(midlight);"
-            "  border-color: palette(highlight);"
-            "}"
+        batch_help = HelpButton(
+            "batch_experiments",
+            tooltip="How batch analyses work",
         )
-        batch_help.clicked.connect(self._show_batch_help)
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(self._mode_single)
@@ -381,6 +372,9 @@ class HubWindow(QMainWindow):
             category=Category.ANALYZE,
             subtitle="Summaries, QC, stats, and PDF reports.",
             icon_name="basic",
+        )
+        card.add_title_widget(
+            HelpButton("hub_workflow", tooltip="Analysis Hub workflow")
         )
 
         # Facet checkbox controls whether Summarize / Pairwise / Plots buttons
@@ -449,6 +443,9 @@ class HubWindow(QMainWindow):
             subtitle="Figures appear as tabs on the right.",
             icon_name="plots",
         )
+        card.add_title_widget(
+            HelpButton("hub_workflow", tooltip="Plots and Hub workflow")
+        )
         self._plots_empty = QLabel(
             "Load an experiment to see available plots for its tracking type."
         )
@@ -467,6 +464,9 @@ class HubWindow(QMainWindow):
             category=Category.SCRIPTS,
             subtitle="Run saved recipes from the Script Editor.",
             icon_name="scripts",
+        )
+        card.add_title_widget(
+            HelpButton("scripts_overview", tooltip="Scripts and Script Editor")
         )
 
         self._scripts_combo = QComboBox()
@@ -514,6 +514,9 @@ class HubWindow(QMainWindow):
             category=Category.TOOLS,
             subtitle="Housekeeping.",
             icon_name="tools",
+        )
+        card.add_title_widget(
+            HelpButton("outputs", tooltip="Where analysis and QC outputs are written")
         )
         btn_validate = ActionButton(
             "Validate YAML", Category.TOOLS, icon_name="lint"
@@ -977,46 +980,6 @@ class HubWindow(QMainWindow):
                 return "Pairwise comparisons complete."
 
             self._spawn_task("Pairwise", _do)
-
-    def _show_batch_help(self) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle("Batch experiments — how it works")
-        box.setTextFormat(Qt.TextFormat.RichText)
-        box.setText(
-            "<h3>Running batch analyses</h3>"
-            "<p>In <b>Batch experiments</b> mode the chosen project directory is "
-            "treated as a <b>parent folder</b>: every immediate subdirectory is "
-            "run as its own independent experiment. Click "
-            "<b>Run batch script</b> (the Load button changes its label in "
-            "batch mode) to start.</p>"
-            "<p><b>Each subfolder needs:</b></p>"
-            "<ul>"
-            "<li>a <code>tracking_config.yaml</code> (any capitalisation) with "
-            "the usual experiment configuration, and</li>"
-            "<li>inside that YAML, a <code>scripts:</code> entry containing a "
-            "script named <code>batch</code> (case-insensitive).</li>"
-            "</ul>"
-            "<p><b>What runs:</b> for each subfolder, only its script named "
-            "<code>batch</code> is executed, with that subfolder as the "
-            "project directory (a <code>load_experiment</code> step with "
-            "<code>path: \".\"</code> loads the subfolder's own data). Scripts "
-            "are authored in the Script Editor (Config Editor → Script "
-            "Editor) and saved into each subfolder's YAML.</p>"
-            "<p><b>Skips and failures:</b></p>"
-            "<ul>"
-            "<li>No <code>tracking_config.yaml</code> → subfolder is skipped "
-            "with a warning in the Output tab.</li>"
-            "<li>YAML has no script named <code>batch</code> → skipped with a "
-            "warning.</li>"
-            "<li>A script error in one subfolder is logged; the remaining "
-            "subfolders still run.</li>"
-            "</ul>"
-            "<p>When finished, a summary line reports how many subfolders ran, "
-            "were skipped, or failed. Any figures the scripts produce open as "
-            "plot tabs.</p>"
-        )
-        box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        box.exec()
 
     def _run_batch_scripts_per_subdir(self) -> None:
         """Run the script named ``batch`` against every immediate subdirectory
@@ -1739,9 +1702,14 @@ class BatchToolsDialog(QDialog):
         outer.setContentsMargins(16, 16, 16, 16)
         outer.setSpacing(10)
 
+        header_row = QHBoxLayout()
         header = QLabel(f"Project: <b>{project}</b>" if project else "Project: <i>(not set)</i>")
         header.setWordWrap(True)
-        outer.addWidget(header)
+        header_row.addWidget(header, 1)
+        header_row.addWidget(
+            HelpButton("batch_tools", tooltip="What each batch tool does")
+        )
+        outer.addLayout(header_row)
 
         btn_convert = ActionButton(
             "Convert subdirectories", Category.TOOLS, icon_name="batch"

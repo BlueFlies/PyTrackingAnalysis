@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from ..help import make_topbar_help_button
 from .common import TaskWorker, shutdown_worker
 from ..ui import (
     ActionButton,
@@ -152,6 +153,8 @@ class QcViewerWindow(QMainWindow):
         self._btn_reload.setToolTip("Reload")
         self._btn_reload.clicked.connect(self._reload)
         self._top_bar.add_right(self._btn_reload)
+
+        self._top_bar.add_right(make_topbar_help_button(self, topic_id="qc_overview"))
 
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(

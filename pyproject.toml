@@ -16,6 +16,7 @@ dependencies = [
     "pyqtdarktheme>=2.1.0",
     "pyyaml>=6.0.2",
     "qtawesome>=1.4.2",
+    "reportlab>=4.0.0",
     "scipy>=1.15.2",
     "seaborn>=0.13.2",
     "statsmodels>=0.14.4",
@@ -45,6 +46,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pytrackinganalysis"]
+
+# Ensure in-app help markdown ships with the installed package.
+[tool.hatch.build.targets.wheel.force-include]
+"pytrackinganalysis/help/content" = "pytrackinganalysis/help/content"
 
 [dependency-groups]
 dev = [
