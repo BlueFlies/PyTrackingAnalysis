@@ -11,6 +11,7 @@ import yaml
 from . import Parameters
 from . import Arena
 from . import config_validation
+from . import experiment_types
 from . import io_utils
 
 ## The rig spellings the config accepts. config_validation owns this table so
@@ -155,6 +156,12 @@ class Experiment:
         os.makedirs(self.qc_path, exist_ok=True)
 
         self.config = self._load_config()
+        ## The Experiment Type (absent -> Custom) owns the fixed fields and its
+        ## own constraints. Resolve it before anything reads tracking_type or
+        ## facets, so those come from the type for a typed experiment (ADR-0001).
+        self.experiment_type = experiment_types.get_experiment_type(
+            (self.config.get('global') or {}).get('experiment_type'))
+        self._validate_config()
         self.parameters = self._build_parameters()
 
         ## Excel writes a '~$Name.xlsx' lock file next to any workbook that is
@@ -182,10 +189,10 @@ class Experiment:
             force_preprocessing=force_preprocessing,
         )
 
-        # facet_cutoffs is optional in the global: section, e.g. facet_cutoffs: [10, 70]
-        global_cfg = self.config.get('global', {})
-        raw_cutoffs = global_cfg.get('facet_cutoffs')
-        self.facet_cutoffs: tuple | None = tuple(raw_cutoffs) if raw_cutoffs is not None else None
+        # Facet cutoffs: fixed by the Experiment Type for a typed experiment,
+        # otherwise read from the global: section (Custom). e.g. [10, 70].
+        self.facet_cutoffs: tuple | None = self.experiment_type.resolve_facet_cutoffs(
+            self.config.get('global', {}))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -212,38 +219,42 @@ class Experiment:
         if not os.path.isfile(self.config_path):
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
         with open(self.config_path, 'r') as f:
-            config = yaml.safe_load(f)
+            return yaml.safe_load(f)
 
-        ## config_validation catches unknown rigs, missing movie calibration, bad
-        ## multipliers and mis-ordered cutoffs. It was only reachable from the Hub
-        ## button and the Config Editor, so a notebook user constructing
-        ## Experiment(...) directly got the same problems as a crash much later in
-        ## the run — or as a silent fallback to a default calibration. Warn here,
-        ## naming the file, rather than failing: a config can be imperfect and
-        ## still analysable, and refusing to load would be a breaking change.
-        problems = config_validation.validate_config(config)
-        if problems:
-            logger.warning("Problems in %s:", self.config_path)
-            print(f"Warning: {len(problems)} problem(s) in {self.config_path}:")
-            for problem in problems:
-                logger.warning("  %s", problem)
-                print(f"  - {problem}")
+    def _validate_config(self) -> None:
+        """Validate the config through its Experiment Type.
 
-        return config
+        ``config_validation`` catches unknown rigs, missing movie calibration,
+        bad multipliers, mis-ordered cutoffs, and (for a typed experiment) the
+        type's own constraints. For a **typed** experiment we fail hard (ADR-0001)
+        — a Valence config that names the wrong rig or omits Light/NoLight should
+        stop at load, not crash mid-analysis or silently produce wrong numbers.
+        A **Custom** experiment stays lenient (its previous behaviour): a config
+        can be imperfect and still analysable, and refusing to load it would be a
+        breaking change for existing projects.
+        """
+        problems = config_validation.validate_config(self.config)
+        if not problems:
+            return
+        if not self.experiment_type.is_custom:
+            raise ValueError(
+                f"{self.experiment_type.display_name} configuration has "
+                f"{len(problems)} problem(s) in {self.config_path}:\n  - "
+                + "\n  - ".join(problems)
+            )
+        logger.warning("Problems in %s:", self.config_path)
+        print(f"Warning: {len(problems)} problem(s) in {self.config_path}:")
+        for problem in problems:
+            logger.warning("  %s", problem)
+            print(f"  - {problem}")
 
     def _build_parameters(self) -> Parameters.Parameters:
         """Create a Parameters object from the global: section of the yaml."""
         global_cfg = self.config.get('global', {})
 
-        # Resolve tracking type
-        tracking_type_str = global_cfg.get('tracking_type', 'TRACKER').upper()
-        try:
-            tracking_type = Parameters.TrackingType[tracking_type_str]
-        except KeyError:
-            raise ValueError(
-                f"Unknown tracking_type '{tracking_type_str}' in tracking_config.yaml. "
-                f"Valid values: {[t.name for t in Parameters.TrackingType]}"
-            )
+        ## Tracking type comes from the Experiment Type: fixed for a typed
+        ## experiment (the yaml does not carry it), read from the yaml for Custom.
+        tracking_type = self.experiment_type.resolve_tracking_type(global_cfg)
 
         # Resolve rig and apply preset
         rig_raw = global_cfg.get('tracking_rig', '').lower().replace(' ', '_').replace('-', '_')
@@ -1217,13 +1228,18 @@ class Experiment:
         # ---- Cover ----
         global_cfg = (self.config.get("global", {})
                       if isinstance(self.config, dict) else {})
-        metadata = [
+        metadata = []
+        if not self.experiment_type.is_custom:
+            metadata.append(("Experiment type", self.experiment_type.display_name))
+        metadata += [
             ("Tracking type", self.parameters.get_tracking_type().name),
             ("Tracking rig", str(global_cfg.get("tracking_rig", "—"))),
             ("Project", os.path.abspath(self.project_directory)),
             ("Generated", _dt.now().strftime("%Y-%m-%d %H:%M")),
         ]
-        report.add(_m.Cover(exp_name, "Tracking Analysis Report",
+        # Title/intro come from the Experiment Type (ADR-0001): a Valence report
+        # says "Valence Experiment Report" and carries the assay's intro.
+        report.add(_m.Cover(exp_name, self.experiment_type.report_title(),
                             metadata=metadata,
                             status=self._qc_status_line(qc_cutoff)))
 
@@ -1234,6 +1250,9 @@ class Experiment:
         # CSVs in analysis/ by run_analysis; the report is a visual + stats
         # narrative, not a data dump.
         report.add(_m.SectionDivider("Analysis"))
+        intro = self.experiment_type.report_intro()
+        if intro:
+            report.add(_m.Paragraph(intro))
         for fig in report_figures.build_analysis_figures(self):
             report.add(fig)
         for fig in report_figures.build_faceted_figures(self):
@@ -1323,7 +1342,26 @@ class Experiment:
         print("\n--- Saving Plots ---")
         self.save_plots(cutoffs=cutoffs)
 
+        self._verify_output_manifest()
+
         print(f"\n=== Done. Outputs written to: {self.analysis_path} ===")
+
+    def _verify_output_manifest(self) -> None:
+        """Warn if the Experiment Type declared data outputs it did not produce.
+
+        Each Experiment Type declares the files it is expected to write
+        (``output_manifest``); this checks they exist after a run. Empty for a
+        Custom Experiment, which declares nothing.
+        """
+        manifest = self.experiment_type.output_manifest()
+        if not manifest:
+            return
+        name = self.arena.experiment_name
+        missing = [suffix for suffix in manifest
+                   if not os.path.exists(os.path.join(self.analysis_path, f"{name}{suffix}"))]
+        if missing:
+            print(f"Warning: {self.experiment_type.display_name} expected these "
+                  f"outputs which were not produced: {', '.join(missing)}")
 
     # ------------------------------------------------------------------
     # Representation
@@ -1337,7 +1375,8 @@ class Experiment:
             f"  Data path         : {self.data_path}",
             f"  Analysis path     : {self.analysis_path}",
             f"  QC path           : {self.qc_path}",
-            f"  Tracking type     : {global_cfg.get('tracking_type', 'Unknown')}",
+            f"  Experiment type   : {self.experiment_type.display_name}",
+            f"  Tracking type     : {self.parameters.get_tracking_type().name}",
             f"  Tracking rig      : {global_cfg.get('tracking_rig', 'Unknown')}",
             f"  Facet cutoffs     : {self.facet_cutoffs if self.facet_cutoffs is not None else 'Not set'}",
             f"  Parameters        :",

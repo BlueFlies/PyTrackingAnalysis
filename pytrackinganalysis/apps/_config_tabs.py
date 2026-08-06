@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Parameters as _ParametersMod
+from .. import experiment_types as _et
 from ..help import HelpButton
 
 
@@ -126,6 +127,8 @@ class GlobalTab(QWidget):
     # Emitted whenever the experimental-design factors change (name/levels
     # edited, row added/removed). Payload: {factor_name: [levels]}.
     factorsChanged = pyqtSignal(dict)
+    # Emitted when the selected Experiment Type changes (including on load).
+    experimentTypeChanged = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -143,6 +146,24 @@ class GlobalTab(QWidget):
             HelpButton("config_global", tooltip="Global settings help")
         )
         outer.addLayout(help_row)
+
+        # Experiment type selector (Custom + registered types). Choosing a type
+        # constrains the rig and fixes+hides the fields the type owns (ADR-0001).
+        # The signal is connected at the end of __init__, after the widgets it
+        # manipulates exist, so populating the combo here does not fire it early.
+        self.experiment_type = QComboBox()
+        for _t in _et.available_experiment_types():
+            self.experiment_type.addItem(_t.display_name, _t.name)
+        _style_label_combo(self.experiment_type)
+        et_row = QHBoxLayout()
+        et_row.addWidget(QLabel("Experiment type:"))
+        et_row.addWidget(self.experiment_type, 1)
+        outer.addLayout(et_row)
+        self._type_summary = QLabel("")
+        self._type_summary.setWordWrap(True)
+        self._type_summary.setStyleSheet("color: palette(mid); font-style: italic;")
+        outer.addWidget(self._type_summary)
+        outer.addSpacing(8)
 
         self.tracking_type = QComboBox()
         for label, value in TRACKING_TYPES:
@@ -256,6 +277,76 @@ class GlobalTab(QWidget):
         # (currentIndexChanged does not fire for the initial selection).
         self._on_rig_changed(self.tracking_rig.currentData())
 
+        # Now that every widget exists, wire the experiment-type selector and
+        # apply the initial locking for the default (Custom) selection.
+        self.experiment_type.currentIndexChanged.connect(
+            lambda _i: self._on_experiment_type_changed()
+        )
+        self._on_experiment_type_changed()
+
+    def current_experiment_type(self):
+        """The selected ``ExperimentType`` instance."""
+        return _et.get_experiment_type(self.experiment_type.currentData())
+
+    def _set_rig_options(self, rigs) -> None:
+        """Rebuild the rig combo to *rigs* (canonical names), keeping the current
+        selection if it is still allowed."""
+        keep = self.tracking_rig.currentData()
+        self.tracking_rig.blockSignals(True)
+        self.tracking_rig.clear()
+        for value in rigs:
+            self.tracking_rig.addItem(_RIG_LABELS.get(value, value), value)
+        idx = _find_data(self.tracking_rig, keep)
+        self.tracking_rig.setCurrentIndex(idx if idx >= 0 else 0)
+        self.tracking_rig.blockSignals(False)
+        self._on_rig_changed(self.tracking_rig.currentData())
+
+    def _on_experiment_type_changed(self) -> None:
+        """Apply the selected type's constraints: fix+disable owned fields,
+        constrain the rig, and show a one-line type summary. Custom restores the
+        full, unconstrained form."""
+        t = self.current_experiment_type()
+        custom = t.is_custom
+
+        # Tracking type: fixed and disabled for a typed experiment.
+        if not custom:
+            idx = _find_data(self.tracking_type, t.tracking_type.name)
+            if idx >= 0:
+                self.tracking_type.setCurrentIndex(idx)
+        self.tracking_type.setEnabled(custom)
+
+        # Rig: constrained to the type's allowed set, else the full list.
+        allowed = list(t.allowed_rigs) if t.allowed_rigs is not None \
+            else [value for _label, value in TRACKING_RIGS]
+        self._set_rig_options(allowed)
+
+        # Facets: fixed and disabled for a typed experiment.
+        if t.facet_cutoffs is not None:
+            self.use_facets.setChecked(True)
+            self.facet_cutoffs.setText(", ".join(str(c) for c in t.facet_cutoffs))
+        self.use_facets.setEnabled(custom or t.facet_cutoffs is None)
+        self.facet_cutoffs.setEnabled(
+            (custom or t.facet_cutoffs is None) and self.use_facets.isChecked())
+
+        # Calibration overrides: disabled when the type forbids them.
+        if not custom and not t.allow_calibration_override:
+            for w in (self.fps, self.mm_per_pixel):
+                w.clear()
+                w.setEnabled(False)
+
+        # Summary chip for the owned/derived fields the user can no longer edit.
+        if custom:
+            self._type_summary.setText("")
+        else:
+            phases = " · ".join(t.phase_labels) if t.phase_labels else "—"
+            self._type_summary.setText(
+                f"Fixed by {t.display_name}: tracking type "
+                f"{t.tracking_type.name}; phases {phases}; "
+                f"rig one of {', '.join(t.allowed_rigs)}."
+            )
+
+        self.experimentTypeChanged.emit()
+
     def _mark_override(self, key: str, text: str) -> None:
         """Record (or forget) a calibration the user typed by hand."""
         if text.strip():
@@ -324,8 +415,18 @@ class GlobalTab(QWidget):
     def load(self, config: dict) -> None:
         g = config.get("global", {})
 
-        tt = g.get("tracking_type", "TRACKER")
-        self.tracking_type.setCurrentIndex(max(_find_data(self.tracking_type, tt), 0))
+        # Experiment type first — setting it applies the field constraints, so
+        # the owned fields below are already fixed/disabled for a typed config.
+        t = _et.get_experiment_type(g.get("experiment_type"))
+        idx = _find_data(self.experiment_type, t.name)
+        self.experiment_type.setCurrentIndex(idx if idx >= 0 else 0)
+        self._on_experiment_type_changed()  # idempotent; covers "index unchanged"
+
+        # Tracking type: from the yaml only for a Custom experiment; a typed one
+        # takes it from the type (already set above, and disabled).
+        if t.tracking_type is None:
+            tt = g.get("tracking_type", "TRACKER")
+            self.tracking_type.setCurrentIndex(max(_find_data(self.tracking_type, tt), 0))
 
         # A calibration present in the file is an explicit choice, whatever the
         # rig says; record it before the rig change can decide to clear it.
@@ -334,7 +435,7 @@ class GlobalTab(QWidget):
             if str(g.get(key, "")).strip()
         }
 
-        rig = g.get("tracking_rig", "small_arena")
+        rig = g.get("tracking_rig", "")
         self.tracking_rig.setCurrentIndex(max(_find_data(self.tracking_rig, rig), 0))
 
         self.factors_table.setRowCount(0)
@@ -344,13 +445,16 @@ class GlobalTab(QWidget):
             self.factors_table.setItem(r, 0, QTableWidgetItem(name))
             self.factors_table.setItem(r, 1, QTableWidgetItem(", ".join(str(l) for l in levels)))
 
-        cutoffs = g.get("facet_cutoffs")
-        if cutoffs:
-            self.use_facets.setChecked(True)
-            self.facet_cutoffs.setText(", ".join(str(c) for c in cutoffs))
-        else:
-            self.use_facets.setChecked(False)
-            self.facet_cutoffs.clear()
+        # Facets: from the yaml only for a Custom experiment; a typed one fixes
+        # them (already set above, and disabled).
+        if t.facet_cutoffs is None:
+            cutoffs = g.get("facet_cutoffs")
+            if cutoffs:
+                self.use_facets.setChecked(True)
+                self.facet_cutoffs.setText(", ".join(str(c) for c in cutoffs))
+            else:
+                self.use_facets.setChecked(False)
+                self.facet_cutoffs.clear()
 
         self.fps.setText(str(g["fps"]) if "fps" in g else "")
         self.mm_per_pixel.setText(str(g["mm_per_pixel"]) if "mm_per_pixel" in g else "")
@@ -374,6 +478,7 @@ class GlobalTab(QWidget):
     # Keys this tab owns. The window uses these to tell "the user cleared this
     # field" apart from "this key was hand-added and is none of our business".
     _OWNED_KEYS = (
+        "experiment_type",
         "tracking_type",
         "tracking_rig",
         "experimental_design_factors",
@@ -518,6 +623,18 @@ class GlobalTab(QWidget):
                 ]
             except ValueError:
                 pass
+
+        # Experiment Type: a typed config names its type and omits the fields the
+        # type owns (they are derived, ADR-0001). A Custom config carries no
+        # experiment_type key at all (absence == Custom), so existing files are
+        # unchanged.
+        t = self.current_experiment_type()
+        if t.is_custom:
+            g.pop("experiment_type", None)
+        else:
+            g["experiment_type"] = t.name
+            for key in t.owned_keys():
+                g.pop(key, None)
 
         return {"global": g}
 
@@ -827,6 +944,19 @@ class CountingRegionsTab(QWidget):
         self.table.insertRow(r)
         self.table.setItem(r, 0, QTableWidgetItem(label))
         self.table.setItem(r, 1, QTableWidgetItem(aliases))
+
+    def labels(self) -> list[str]:
+        """The non-empty treatment labels currently in the table."""
+        out = []
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.text().strip():
+                out.append(item.text().strip())
+        return out
+
+    def add_region(self, label: str, aliases: str = "") -> None:
+        """Append a counting-region row (used to seed a type's required regions)."""
+        self._add_row(label=label, aliases=aliases)
 
     def _remove_row(self) -> None:
         rows = {idx.row() for idx in self.table.selectedIndexes()}

@@ -162,6 +162,28 @@ def test_faceted_figures_built_with_cutoffs():
     assert all(isinstance(f, m.Figure) and f.data[:4] == b"\x89PNG" for f in figs)
 
 
+def test_faceted_figures_use_experiment_type_phase_labels(monkeypatch):
+    # A Valence experiment_type should label phases Acclimation/Experiment/…
+    # rather than raw minute ranges. Capture the tick labels the panel sets.
+    from pytrackinganalysis import experiment_types as et
+    from pytrackinganalysis import report_figures as rf
+
+    captured = {}
+    real = rf.plt.Axes.set_xticklabels
+
+    def _spy(self, labels, *a, **k):
+        captured.setdefault("labels", list(labels))
+        return real(self, labels, *a, **k)
+
+    monkeypatch.setattr(rf.plt.Axes, "set_xticklabels", _spy)
+
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
+                   facet_cutoffs=[10])
+    exp.experiment_type = et.get_experiment_type("Valence")
+    rf.build_faceted_figures(exp)
+    assert captured.get("labels") == ["Acclimation", "Experiment"]
+
+
 def test_report_model_has_figures_and_stats_but_no_data_tables(tmp_path):
     # Data belongs in the CSVs, not the PDF: the assembled model must carry
     # figures and the stats text, but no Table blocks even though a CSV sits in
@@ -176,6 +198,8 @@ def test_report_model_has_figures_and_stats_but_no_data_tables(tmp_path):
     (analysis / "E_Stats.txt").write_text("control vs chr: T=3.1, p=0.005\n",
                                            encoding="utf-8")
 
+    from pytrackinganalysis import experiment_types as et
+
     class _Exp(Experiment):
         def __init__(self):
             self.arena = _FakeArena(_twochoice_summary())
@@ -185,6 +209,7 @@ def test_report_model_has_figures_and_stats_but_no_data_tables(tmp_path):
             self.qc_path = str(qc) + os.sep
             self.config = {"global": {"tracking_rig": "colosseum"}}
             self.facet_cutoffs = [10]
+            self.experiment_type = et.get_experiment_type(None)
             self.parameters = Parameters.Parameters(
                 tracking_type=Parameters.TrackingType.TWOCHOICETRACKER)
 

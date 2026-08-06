@@ -27,8 +27,8 @@ _Avoid_: assay type
 
 **Valence Experiment**:
 The first Experiment Type. A two-choice light-preference assay: a two-choice
-tracker, Light vs NoLight counting regions, on a Max or Colosseum arena, with a
-fixed three-phase structure. (Remaining constraints still being resolved.)
+tracker, Light vs NoLight counting regions (in that order), on a Max or Colosseum
+arena (preset calibration only), with the fixed three-phase structure below.
 
 **Counting Region**:
 A named group of raw DTrack region labels (its aliases) that an animal can

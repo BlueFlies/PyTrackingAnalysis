@@ -22,6 +22,15 @@ counter), X-choice, and pairwise-interaction (tracker or counter), with
 built-in calibration presets for the small arena, arena max, colosseum, and
 obscura rigs.
 
+**Experiment Types** bundle an assay end to end: choosing one (e.g. `Valence`,
+a two-choice light-preference assay) fixes the tracking type and phases,
+constrains the rig, requires the right counting regions, runs a fixed analysis
+set, and produces a report tailored to that assay. Set `experiment_type:` in
+`tracking_config.yaml` (or pick it in the Config Editor and scaffold a new
+project with **New project**). Omitting it is a *Custom* experiment — the
+freeform, `tracking_type`-driven behavior, unchanged. See the
+[user guide](doc/guide.md) §4.1 and `docs/adr/`.
+
 ## Installation
 
 Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/).

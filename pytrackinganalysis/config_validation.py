@@ -66,15 +66,33 @@ def validate_config(config) -> list[str]:
         problems.append("'global:' must be a mapping of settings.")
         global_cfg = {}
 
-    tracking_type = str(global_cfg.get('tracking_type', 'TRACKER')).upper()
+    # Resolve the Experiment Type (absent -> Custom). A typed experiment may
+    # fix the tracking type and constrain the rig / counting regions, in which
+    # case the type owns those checks (see experiment_types); we defer to it and
+    # skip the generic versions to avoid contradictory messages.
+    from . import experiment_types
+    try:
+        exp_type = experiment_types.get_experiment_type(global_cfg.get('experiment_type'))
+    except ValueError as err:
+        problems.append(str(err))
+        exp_type = experiment_types.get_experiment_type(None)
+
     valid_types = [t.name for t in Parameters.TrackingType]
-    if tracking_type not in valid_types:
-        problems.append(
-            f"Unknown tracking_type '{tracking_type}'. Valid values: {', '.join(valid_types)}."
-        )
+    if exp_type.tracking_type is not None:
+        # Owned by the type; the yaml should not carry it. A conflicting value
+        # is reported by exp_type.validate(). Use the type's for the checks below.
+        tracking_type = exp_type.tracking_type.name
+    else:
+        tracking_type = str(global_cfg.get('tracking_type', 'TRACKER')).upper()
+        if tracking_type not in valid_types:
+            problems.append(
+                f"Unknown tracking_type '{tracking_type}'. Valid values: {', '.join(valid_types)}."
+            )
 
     rig = normalize_rig(global_cfg.get('tracking_rig'))
-    if not rig:
+    if exp_type.allowed_rigs is not None:
+        pass  # the Experiment Type validates the rig against its allowed set
+    elif not rig:
         problems.append("Missing tracking_rig — no calibration would be applied.")
     elif rig not in RIG_ALIASES.values():
         problems.append(
@@ -157,7 +175,7 @@ def validate_config(config) -> list[str]:
             if not aliases:
                 problems.append(f"counting_regions.{name}.alias is empty.")
 
-    if tracking_type in _TWO_CHOICE_TYPES:
+    if tracking_type in _TWO_CHOICE_TYPES and exp_type.required_counting_regions is None:
         n_groups = len(counting_regions) if counting_regions else 0
         if n_groups != 2:
             problems.append(
@@ -169,6 +187,10 @@ def validate_config(config) -> list[str]:
             f"{tracking_type} has no global.interaction_distances; "
             "the default of [8] mm will be used."
         )
+
+    # Type-specific constraints (rig subset, required Light/NoLight, owned-field
+    # conflicts). Empty for a Custom Experiment.
+    problems += exp_type.validate(config)
 
     return problems
 

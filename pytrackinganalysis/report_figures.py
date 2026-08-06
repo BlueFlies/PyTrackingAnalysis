@@ -148,9 +148,13 @@ def _phase_label(window) -> str:
 
 
 def _phase_panel(ax, fsummary, metric, treatments, phases, ylabel, ylim=None,
-                 ref_line=None):
+                 ref_line=None, phase_labels=None):
     """A metric-by-phase panel: for each phase, one dodged, jittered cluster of
-    points per treatment with a mean bar. The x-axis is the facet phase."""
+    points per treatment with a mean bar. The x-axis is the facet phase.
+
+    ``phase_labels`` (aligned to ``phases``) overrides the default minute-range
+    tick labels — an Experiment Type supplies named phases (e.g. Acclimation).
+    """
     _style_ax(ax)
     rng = np.random.default_rng(0)
     n_t = max(1, len(treatments))
@@ -175,8 +179,9 @@ def _phase_panel(ax, fsummary, metric, treatments, phases, ylabel, ylim=None,
                           color=_MEAN_COLOR, linewidth=1.8, zorder=4)
     if ref_line is not None:
         ax.axhline(ref_line, color="#94a3b8", linewidth=0.8, linestyle="--")
+    labels = phase_labels if phase_labels is not None else [_phase_label(p) for p in phases]
     ax.set_xticks(range(len(phases)))
-    ax.set_xticklabels([_phase_label(p) for p in phases])
+    ax.set_xticklabels(labels)
     ax.set_xlabel("Phase (min)", fontsize=8, color=_MUTED)
     ax.set_ylabel(ylabel, fontsize=9, color=_INK)
     if ylim is not None:
@@ -316,6 +321,14 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         if w not in phases:
             phases.append(w)
 
+    # Named phase labels come from the Experiment Type when present (e.g.
+    # Valence: Acclimation/Experiment/Cooldown); else minute ranges.
+    exp_type = getattr(experiment, "experiment_type", None)
+    if exp_type is not None:
+        phase_labels = [exp_type.phase_label(i, w) for i, w in enumerate(phases)]
+    else:
+        phase_labels = [_phase_label(w) for w in phases]
+
     def _panels(specs, title, caption):
         """Build a one-row figure of phase panels from (metric, ylabel, ...) specs."""
         specs = [s for s in specs if s[0] in fsummary.columns]
@@ -326,7 +339,7 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
                                      squeeze=False)
             for ax, (metric, ylabel, ylim, ref) in zip(axes[0], specs):
                 _phase_panel(ax, fsummary, metric, treatments, phases, ylabel,
-                             ylim=ylim, ref_line=ref)
+                             ylim=ylim, ref_line=ref, phase_labels=phase_labels)
                 ax.set_title(ylabel, fontsize=10, color=_INK)
             # No matplotlib suptitle: the reportlab block title already labels
             # the figure, so a suptitle would duplicate it and waste space.

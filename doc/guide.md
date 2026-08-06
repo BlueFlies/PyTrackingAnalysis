@@ -323,6 +323,41 @@ global:
   tracking_rig:  colosseum          # see table below
 ```
 
+#### `experiment_type` (recommended)
+
+An **Experiment Type** is a named bundle that standardizes an assay end to end:
+it fixes the tracking type, the phases, and the required regions, constrains the
+rig, and produces a report tailored to that assay. Choose one and the fields it
+owns are supplied for you — you do **not** write them in the file.
+
+```yaml
+global:
+  experiment_type: Valence     # fixes tracking_type + phases; constrains the rig
+  tracking_rig:    colosseum   # you choose: arena_max or colosseum
+```
+
+| Value | What it fixes |
+|-------|---------------|
+| `Valence` | Two-choice light-preference assay. Tracking type `TWOCHOICETRACKER`; **Light/NoLight** counting regions (in that order, so positive PI = light-preference); phases **Acclimation (0–10) / Experiment (10–70) / Cooldown (70+)**; rig must be `arena_max` or `colosseum`; calibration from the rig preset only. |
+
+Rules for a typed experiment:
+
+- The file omits `tracking_type` and `facet_cutoffs` — they come from the type.
+  Setting a conflicting value is an error.
+- A typed config is validated **at load** and **fails hard** on any violation
+  (wrong rig, missing Light/NoLight, a disallowed override), rather than
+  crashing mid-analysis.
+- Omitting `experiment_type` entirely is a **Custom** experiment: the freeform,
+  `tracking_type`-driven behavior described below, unchanged. Existing configs
+  keep working as-is.
+
+In the Config Editor, pick the Experiment Type from the dropdown at the top of
+the **Global** tab; it locks the owned fields and limits the rig choices. Use the
+**New project** button to scaffold a ready-to-fill project folder for a type. See
+`docs/adr/0001` and `0002` for the design rationale.
+
+The rest of §4.1 describes the fields a **Custom** experiment sets directly.
+
 #### `tracking_type`
 
 Selects the analysis mode.  Choose the one that matches how DTrack recorded
