@@ -189,6 +189,9 @@ class ConfigEditorWindow(QMainWindow):
         # When the user picks a typed Experiment Type, offer to seed its required
         # counting regions (never deleting existing ones).
         self._global_tab.experimentTypeChanged.connect(self._maybe_seed_required_regions)
+        # When a typed rig fixes the plate (Valence Max=36, Colosseum=24), lay
+        # out the tracking regions on rig change.
+        self._global_tab.rigChanged.connect(self._maybe_populate_tracking_regions)
         tabs_card.add_body(self._tabs)
         outer.addWidget(tabs_card, 1)
 
@@ -281,6 +284,14 @@ class ConfigEditorWindow(QMainWindow):
             self._counting_tab.load(config)
         finally:
             self._loading = False
+        # A freshly opened typed project whose rig fixes the plate but has no
+        # regions yet (e.g. a scaffolded Valence project) gets them laid out
+        # silently. Only when empty — an existing plate is never touched on load.
+        t = self._global_tab.current_experiment_type()
+        rig = self._global_tab.tracking_rig.currentData()
+        expected = t.regions_for_rig(rig) if hasattr(t, "regions_for_rig") else None
+        if expected and not self._tracking_tab.region_names():
+            self._tracking_tab.set_region_names(expected)
         self._current_path = path
         self._disk_text = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
         self._set_title(path)
@@ -334,6 +345,36 @@ class ConfigEditorWindow(QMainWindow):
                 aliases = (stub.get(key) or {}).get("alias", key)
                 self._counting_tab.add_region(key, aliases)
             self._tabs.setCurrentWidget(self._counting_tab)
+
+    def _maybe_populate_tracking_regions(self, rig: str) -> None:
+        """Lay out a typed Experiment Type's fixed plate when the rig is chosen.
+
+        Fires on rig change (suppressed during a load). Fills an empty table
+        silently; if regions are already present and don't match, asks before
+        replacing them, so treatment assignments are never wiped without consent.
+        """
+        if self._loading:
+            return
+        t = self._global_tab.current_experiment_type()
+        expected = t.regions_for_rig(rig) if hasattr(t, "regions_for_rig") else None
+        if not expected:
+            return
+        have = self._tracking_tab.region_names()
+        if have == expected:
+            return
+        if have:
+            resp = QMessageBox.question(
+                self,
+                f"{t.display_name} tracking regions",
+                f"{t.display_name} on this rig needs {len(expected)} tracking "
+                f"regions ({expected[0]}..{expected[-1]}).\n\n"
+                f"Replace the current {len(have)} region(s)? Treatment "
+                "assignments will be reset.",
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        self._tracking_tab.set_region_names(expected)
+        self._tabs.setCurrentWidget(self._tracking_tab)
 
     def _write(self, path: Path) -> None:
         errors = self._global_tab.validation_errors()

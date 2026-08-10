@@ -67,7 +67,7 @@ def test_model_stays_free_of_rendering_imports():
     assert "reportlab" not in sys.modules
 
 
-_PHASES = [(0, 10), (10, float("inf"))]
+_PHASES = [(0, 10), (10, 70), (70, float("inf"))]  # the Valence default structure
 
 
 class _FakeArena:
@@ -178,10 +178,10 @@ def test_faceted_figures_use_experiment_type_phase_labels(monkeypatch):
     monkeypatch.setattr(rf.plt.Axes, "set_xticklabels", _spy)
 
     exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
-                   facet_cutoffs=[10])
+                   facet_cutoffs=[10, 70])
     exp.experiment_type = et.get_experiment_type("Valence")
     rf.build_faceted_figures(exp)
-    assert captured.get("labels") == ["Acclimation", "Experiment"]
+    assert captured.get("labels") == ["Acclimation", "Experiment", "Cooldown"]
 
 
 def test_report_model_has_figures_and_stats_but_no_data_tables(tmp_path):

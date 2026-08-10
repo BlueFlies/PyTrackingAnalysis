@@ -129,6 +129,8 @@ class GlobalTab(QWidget):
     factorsChanged = pyqtSignal(dict)
     # Emitted when the selected Experiment Type changes (including on load).
     experimentTypeChanged = pyqtSignal()
+    # Emitted (with the canonical rig name) whenever the rig selection changes.
+    rigChanged = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -320,13 +322,13 @@ class GlobalTab(QWidget):
             else [value for _label, value in TRACKING_RIGS]
         self._set_rig_options(allowed)
 
-        # Facets: fixed and disabled for a typed experiment.
+        # Facets: a type may fix them (disabled) or only default them (editable).
+        facets_owned = "facet_cutoffs" in t.owned_keys()
         if t.facet_cutoffs is not None:
             self.use_facets.setChecked(True)
             self.facet_cutoffs.setText(", ".join(str(c) for c in t.facet_cutoffs))
-        self.use_facets.setEnabled(custom or t.facet_cutoffs is None)
-        self.facet_cutoffs.setEnabled(
-            (custom or t.facet_cutoffs is None) and self.use_facets.isChecked())
+        self.use_facets.setEnabled(not facets_owned)
+        self.facet_cutoffs.setEnabled(not facets_owned and self.use_facets.isChecked())
 
         # Calibration overrides: disabled when the type forbids them.
         if not custom and not t.allow_calibration_override:
@@ -379,6 +381,8 @@ class GlobalTab(QWidget):
             self.mm_per_pixel.setPlaceholderText(
                 f"{mm} ({rig_label} default)" if mm is not None else ""
             )
+
+        self.rigChanged.emit(rig or "")
 
     def _on_facet_toggled(self, state) -> None:
         self.facet_cutoffs.setEnabled(bool(state))
@@ -445,10 +449,12 @@ class GlobalTab(QWidget):
             self.factors_table.setItem(r, 0, QTableWidgetItem(name))
             self.factors_table.setItem(r, 1, QTableWidgetItem(", ".join(str(l) for l in levels)))
 
-        # Facets: from the yaml only for a Custom experiment; a typed one fixes
-        # them (already set above, and disabled).
-        if t.facet_cutoffs is None:
+        # Facets: read from the yaml unless the type fixes them (owns the key).
+        # A type may still supply a default when the yaml has none (e.g. Valence).
+        if "facet_cutoffs" not in t.owned_keys():
             cutoffs = g.get("facet_cutoffs")
+            if cutoffs is None and t.facet_cutoffs is not None:
+                cutoffs = list(t.facet_cutoffs)
             if cutoffs:
                 self.use_facets.setChecked(True)
                 self.facet_cutoffs.setText(", ".join(str(c) for c in cutoffs))
@@ -815,6 +821,22 @@ class TrackingRegionsTab(QWidget):
         n = self.count_spin.value()
         for i in range(n):
             self._add_row(name=f"T_{i}")
+
+    def region_names(self) -> list[str]:
+        """The non-empty region names currently in the table, in order."""
+        out = []
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item and item.text().strip():
+                out.append(item.text().strip())
+        return out
+
+    def set_region_names(self, names) -> None:
+        """Replace the table with one blank-treatment row per name in *names*
+        (used to lay out an Experiment Type's fixed plate)."""
+        self.table.setRowCount(0)
+        for name in names:
+            self._add_row(name=name)
 
     # ------------------------------------------------------------------
     # Load / dump

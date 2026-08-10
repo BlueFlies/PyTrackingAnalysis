@@ -338,12 +338,18 @@ global:
 
 | Value | What it fixes |
 |-------|---------------|
-| `Valence` | Two-choice light-preference assay. Tracking type `TWOCHOICETRACKER`; **Light/NoLight** counting regions (in that order, so positive PI = light-preference); phases **Acclimation (0–10) / Experiment (10–70) / Cooldown (70+)**; rig must be `arena_max` or `colosseum`; calibration from the rig preset only. |
+| `Valence` | Two-choice light-preference assay. Tracking type `TWOCHOICETRACKER`; **Light/NoLight** counting regions (in that order, so positive PI = light-preference); phases **Acclimation (0–10) / Experiment (10–70) / Cooldown (70+)**; rig must be `arena_max` (36 regions, `T_0`–`T_35`) or `colosseum` (24 regions, `T_0`–`T_23`); calibration from the rig preset only. |
+
+For a type whose plate is fixed by the rig (like Valence), the Config Editor
+lays out the exact tracking regions when you choose the rig — 36 rows for Arena
+Max, 24 for Colosseum — and a typed config is checked to have exactly that set.
+You still assign each region's treatment; the region names and count are fixed.
 
 Rules for a typed experiment:
 
-- The file omits `tracking_type` and `facet_cutoffs` — they come from the type.
-  Setting a conflicting value is an error.
+- The file omits `tracking_type` — it comes from the type; a conflicting value
+  is an error. `facet_cutoffs` is an **editable default** (10, 70 for Valence):
+  it *is* written to the file and you may change it.
 - A typed config is validated **at load** and **fails hard** on any violation
   (wrong rig, missing Light/NoLight, a disallowed override), rather than
   crashing mid-analysis.
@@ -351,10 +357,14 @@ Rules for a typed experiment:
   `tracking_type`-driven behavior described below, unchanged. Existing configs
   keep working as-is.
 
-In the Config Editor, pick the Experiment Type from the dropdown at the top of
-the **Global** tab; it locks the owned fields and limits the rig choices. Use the
-**New project** button to scaffold a ready-to-fill project folder for a type. See
-`docs/adr/0001` and `0002` for the design rationale.
+The fastest way to start is the **Create experiment…** button on the Analysis
+Hub's project card: pick the type and rig, optionally set facets (default 10, 70)
+and design factors, and it writes a ready-to-edit `tracking_config.yaml` and the
+`data/`/`analysis/`/`qc/` folders. For Valence it also lays out the plate — 36
+regions for Arena Max (with the first 18 X-flipped) or 24 for Colosseum, plus the
+Light/NoLight aliases. You then assign each region's treatment and drop the DTrack
+export into `data/`. You can also pick the Experiment Type from the dropdown at the
+top of the Config Editor's **Global** tab. See `docs/adr/0001` and `0002`.
 
 The rest of §4.1 describes the fields a **Custom** experiment sets directly.
 

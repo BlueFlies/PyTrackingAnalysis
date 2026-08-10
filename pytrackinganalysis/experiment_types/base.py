@@ -29,14 +29,24 @@ class ExperimentType:
     tracking_type: Parameters.TrackingType | None = None
     #: Allowed rig names (canonical), or ``None`` for no constraint.
     allowed_rigs: tuple[str, ...] | None = None
-    #: Fixed facet cutoffs, or ``None`` to read from the yaml (Custom).
+    #: Facet cutoffs the type suggests. By default this is only a *default*
+    #: (the user may change it); set ``facets_fixed = True`` to make it immovable.
+    #: ``None`` means "read entirely from the yaml" (Custom).
     facet_cutoffs: tuple[float, ...] | None = None
-    #: Names for the phases; ``len`` should equal ``len(facet_cutoffs) + 1``.
+    #: When True the type owns ``facet_cutoffs`` (immovable). When False (default)
+    #: ``facet_cutoffs`` above is only a starting default the user can override.
+    facets_fixed: bool = False
+    #: Names for the phases of the *default* facet structure; ``len`` should equal
+    #: ``len(facet_cutoffs) + 1``. Applied only when the actual cutoffs match the
+    #: default (see :meth:`phase_labels_for`).
     phase_labels: tuple[str, ...] = ()
     #: Ordered required counting-region group keys, or ``None`` for no constraint.
     required_counting_regions: tuple[str, ...] | None = None
     #: Whether the user may override fps / mm_per_pixel (False = rig preset only).
     allow_calibration_override: bool = True
+    #: For a type whose plate is fixed by the rig, the number of tracking regions
+    #: per canonical rig name, e.g. ``{"arena_max": 36}``. Empty = no constraint.
+    region_counts: dict = {}
 
     # ---- identity -----------------------------------------------------
 
@@ -60,18 +70,32 @@ class ExperimentType:
             ) from err
 
     def resolve_facet_cutoffs(self, global_cfg: dict):
-        """The facet cutoffs to use: fixed by the type, else read from the yaml."""
-        if self.facet_cutoffs is not None:
+        """The facet cutoffs to use.
+
+        Fixed by the type when ``facets_fixed``; otherwise the yaml value if
+        present, falling back to the type's default (``facet_cutoffs``).
+        """
+        if self.facets_fixed and self.facet_cutoffs is not None:
             return tuple(self.facet_cutoffs)
         raw = global_cfg.get("facet_cutoffs")
-        return tuple(raw) if raw is not None else None
+        if raw is not None:
+            return tuple(raw)
+        return tuple(self.facet_cutoffs) if self.facet_cutoffs is not None else None
+
+    def regions_for_rig(self, rig) -> list[str] | None:
+        """Expected tracking-region names for *rig*, or ``None`` when the type
+        does not fix the plate. A rig with 36 regions yields ``T_0``..``T_35``."""
+        n = self.region_counts.get(config_validation.normalize_rig(rig))
+        if not n:
+            return None
+        return [f"T_{i}" for i in range(n)]
 
     def owned_keys(self) -> set[str]:
         """``global:`` keys the type owns — the user must not set them."""
         owned: set[str] = set()
         if self.tracking_type is not None:
             owned.add("tracking_type")
-        if self.facet_cutoffs is not None:
+        if self.facets_fixed:
             owned.add("facet_cutoffs")
         if not self.allow_calibration_override:
             owned |= {"fps", "mm_per_pixel"}
@@ -79,14 +103,26 @@ class ExperimentType:
 
     # ---- phases / report labelling ------------------------------------
 
-    def phase_label(self, index: int, window) -> str:
-        """Label for the phase at *index* (window is a ``(start, end)`` tuple)."""
-        if 0 <= index < len(self.phase_labels):
-            return self.phase_labels[index]
-        # Fall back to a minute-range label like the generic report uses.
+    def _minute_label(self, window) -> str:
         start, end = window
         fmt = lambda v: f"{int(v)}" if float(v) == int(v) else f"{v:g}"  # noqa: E731
         return f"{fmt(start)}+" if end == float("inf") else f"{fmt(start)}–{fmt(end)}"
+
+    def phase_labels_for(self, windows) -> list[str]:
+        """Labels for each facet window (a list of ``(start, end)`` tuples).
+
+        The type's named phases (e.g. Acclimation/Experiment/Cooldown) are used
+        only when the actual windows match the type's *default* facet structure —
+        so a user who changes the cutoffs gets honest minute-range labels rather
+        than mislabelled phases.
+        """
+        windows = list(windows)
+        if self.phase_labels and self.facet_cutoffs is not None \
+                and len(windows) == len(self.phase_labels):
+            from .. import windowing
+            if windows == list(windowing.facet_windows(self.facet_cutoffs)):
+                return list(self.phase_labels)
+        return [self._minute_label(w) for w in windows]
 
     # ---- report / outputs ---------------------------------------------
 
@@ -121,6 +157,32 @@ class ExperimentType:
         return {"global": {"tracking_type": "TRACKER", "tracking_rig": ""},
                 "tracking_regions": {}}
 
+    @staticmethod
+    def _clean_cutoffs(cutoffs):
+        """Render cutoffs as whole minutes where possible (10.0 -> 10)."""
+        return [int(c) if float(c) == int(c) else c for c in cutoffs]
+
+    def build_config(self, *, tracking_type=None, rig=None, facet_cutoffs=None,
+                     factors=None) -> dict:
+        """Build a full ``tracking_config.yaml`` dict from create-wizard inputs.
+
+        Base (Custom) build: writes ``tracking_type`` (from the wizard), the rig,
+        optional facets and factors, and an empty tracking_regions table for the
+        user to fill. Concrete types override to lay out their plate and regions.
+        """
+        g: dict = {}
+        if not self.is_custom:
+            g["experiment_type"] = self.name
+        if self.tracking_type is None and tracking_type:
+            g["tracking_type"] = tracking_type
+        if rig:
+            g["tracking_rig"] = rig
+        if facet_cutoffs:
+            g["facet_cutoffs"] = self._clean_cutoffs(facet_cutoffs)
+        if factors:
+            g["experimental_design_factors"] = dict(factors)
+        return {"global": g, "tracking_regions": {}}
+
     # ---- shared validation helpers (for subclasses) -------------------
 
     def _validate_rig(self, global_cfg: dict) -> list[str]:
@@ -144,7 +206,7 @@ class ExperimentType:
                     f"{self.display_name}: tracking_type is fixed to "
                     f"{self.tracking_type.name}; remove the conflicting "
                     f"'tracking_type: {tt}'.")
-        if self.facet_cutoffs is not None:
+        if self.facets_fixed and self.facet_cutoffs is not None:
             fc = global_cfg.get("facet_cutoffs")
             if fc is not None and tuple(fc) != tuple(self.facet_cutoffs):
                 problems.append(
@@ -157,6 +219,21 @@ class ExperimentType:
                         f"{self.display_name}: '{key}' override is not allowed; "
                         f"calibration comes from the rig preset.")
         return problems
+
+    def _validate_required_tracking_regions(self, config: dict) -> list[str]:
+        """When the rig fixes the plate, the tracking regions must be exactly the
+        expected ``T_0``..``T_{n-1}`` set. Skipped when the rig is unset (the
+        'choose a rig' problem fires instead) or the type does not fix regions."""
+        global_cfg = config.get("global") or {}
+        expected = self.regions_for_rig(global_cfg.get("tracking_rig"))
+        if expected is None:
+            return []
+        have = list((config.get("tracking_regions") or {}).keys())
+        if have != expected:
+            return [f"{self.display_name}: this rig requires exactly "
+                    f"{len(expected)} tracking regions ({expected[0]}..{expected[-1]}); "
+                    f"got {len(have)}."]
+        return []
 
     def _validate_required_counting_regions(self, config: dict) -> list[str]:
         if self.required_counting_regions is None:

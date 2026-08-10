@@ -12,13 +12,18 @@ from pytrackinganalysis import experiment_types as et
 def _valence_config(rig="arena_max", **global_overrides):
     g = {"experiment_type": "Valence", "tracking_rig": rig}
     g.update(global_overrides)
+    # Lay out the plate the rig actually has, so a well-formed config validates.
+    # Unconstrained/invalid rigs (region check skipped) get a single stub region.
+    n = {"arena_max": 36, "colosseum": 24}.get(rig, 1)
     return {
         "global": g,
         "counting_regions": {
             "Light": {"alias": "Light, L"},
             "NoLight": {"alias": "NoLight, N"},
         },
-        "tracking_regions": {"T_0": {"experimental_factors": "control"}},
+        "tracking_regions": {
+            f"T_{i}": {"experimental_factors": "control"} for i in range(n)
+        },
     }
 
 
@@ -50,12 +55,20 @@ def test_available_types_lists_custom_first():
 
 # ---- derivation (ADR-0001) ------------------------------------------------
 
-def test_valence_derives_tracking_type_and_facets_ignoring_yaml():
+def test_valence_derives_tracking_type_and_defaults_facets():
     t = et.get_experiment_type("Valence")
     g = {}  # minimal yaml: neither field present
     assert t.resolve_tracking_type(g) == Parameters.TrackingType.TWOCHOICETRACKER
-    assert t.resolve_facet_cutoffs(g) == (10, 70)
-    assert t.owned_keys() == {"tracking_type", "facet_cutoffs", "fps", "mm_per_pixel"}
+    assert t.resolve_facet_cutoffs(g) == (10, 70)  # the default
+    # Facets are a default, not owned — tracking_type and calibration are owned.
+    assert t.owned_keys() == {"tracking_type", "fps", "mm_per_pixel"}
+
+
+def test_valence_facets_are_an_overridable_default():
+    t = et.get_experiment_type("Valence")
+    # A facet_cutoffs in the yaml overrides the default and is NOT a conflict.
+    assert t.resolve_facet_cutoffs({"facet_cutoffs": [15, 60]}) == (15, 60)
+    assert t.validate(_valence_config(facet_cutoffs=[15, 60])) == []
 
 
 def test_custom_reads_tracking_type_and_facets_from_yaml():
@@ -68,9 +81,10 @@ def test_custom_reads_tracking_type_and_facets_from_yaml():
 
 def test_valence_phase_labels():
     t = et.get_experiment_type("Valence")
-    assert t.phase_label(0, (0, 10)) == "Acclimation"
-    assert t.phase_label(1, (10, 70)) == "Experiment"
-    assert t.phase_label(2, (70, float("inf"))) == "Cooldown"
+    windows = [(0, 10), (10, 70), (70, float("inf"))]
+    assert t.phase_labels_for(windows) == ["Acclimation", "Experiment", "Cooldown"]
+    # Non-default cutoffs -> honest minute-range labels, not phase names.
+    assert t.phase_labels_for([(0, 5), (5, float("inf"))]) == ["0–5", "5+"]
 
 
 # ---- validation -----------------------------------------------------------
@@ -97,8 +111,8 @@ def test_valence_rejects_conflicting_owned_fields():
     t = et.get_experiment_type("Valence")
     p1 = t.validate(_valence_config(tracking_type="TRACKER"))
     assert any("tracking_type is fixed" in p for p in p1)
-    p2 = t.validate(_valence_config(facet_cutoffs=[5, 20]))
-    assert any("facets are fixed" in p for p in p2)
+    # facet_cutoffs is NOT owned for Valence (editable default) — not a conflict.
+    assert t.validate(_valence_config(facet_cutoffs=[5, 20])) == []
     p3 = t.validate(_valence_config(mm_per_pixel=0.05))
     assert any("mm_per_pixel" in p for p in p3)
 
@@ -128,6 +142,30 @@ def test_valence_requires_tracking_regions():
     assert any("tracking_regions" in p for p in t.validate(cfg))
 
 
+def test_valence_regions_for_rig():
+    t = et.get_experiment_type("Valence")
+    assert t.regions_for_rig("arena_max") == [f"T_{i}" for i in range(36)]
+    assert t.regions_for_rig("colosseum") == [f"T_{i}" for i in range(24)]
+    assert t.regions_for_rig("colloseum") == [f"T_{i}" for i in range(24)]  # alias
+    assert t.regions_for_rig("") is None
+    assert et.get_experiment_type(None).regions_for_rig("arena_max") is None
+
+
+def test_valence_enforces_exact_region_count_for_the_rig():
+    t = et.get_experiment_type("Valence")
+    # Correct plate: 36 for Max.
+    cfg = _valence_config(rig="arena_max")
+    cfg["tracking_regions"] = {f"T_{i}": {} for i in range(36)}
+    assert t.validate(cfg) == []
+    # Wrong count -> a problem.
+    cfg["tracking_regions"] = {f"T_{i}": {} for i in range(24)}
+    assert any("36 tracking regions" in p for p in t.validate(cfg))
+    # Colosseum wants 24.
+    cfg2 = _valence_config(rig="colosseum")
+    cfg2["tracking_regions"] = {f"T_{i}": {} for i in range(24)}
+    assert t.validate(cfg2) == []
+
+
 def test_custom_validate_is_permissive():
     t = et.get_experiment_type(None)
     assert t.validate({"global": {"tracking_type": "TRACKER"}}) == []
@@ -142,6 +180,49 @@ def test_valence_scaffold_is_shaped_but_incomplete():
     assert list(cfg["counting_regions"]) == ["Light", "NoLight"]
     # Rig blank on purpose → scaffold does not yet validate.
     assert any("tracking_rig" in p for p in t.validate(cfg))
+
+
+def test_valence_build_config_max_flips_first_18_x_multipliers():
+    t = et.get_experiment_type("Valence")
+    cfg = t.build_config(rig="arena_max", facet_cutoffs=[10, 70],
+                         factors={"feeding": ["Starved", "Control"]})
+    g = cfg["global"]
+    assert g["experiment_type"] == "Valence"
+    assert g["tracking_rig"] == "arena_max"
+    assert g["facet_cutoffs"] == [10, 70]
+    assert g["experimental_design_factors"] == {"feeding": ["Starved", "Control"]}
+    assert "tracking_type" not in g  # owned/derived, not written
+    regions = cfg["tracking_regions"]
+    assert len(regions) == 36
+    assert regions["T_0"]["x_location_multiplier"] == -1
+    assert regions["T_17"]["x_location_multiplier"] == -1
+    assert regions["T_18"]["x_location_multiplier"] == 1
+    assert regions["T_35"]["x_location_multiplier"] == 1
+    assert all(r["y_location_multiplier"] == 1 for r in regions.values())
+    assert cfg["counting_regions"]["Light"]["alias"].startswith("Light, Left1")
+    # The built config must validate.
+    from pytrackinganalysis import config_validation
+    assert config_validation.validate_config(cfg) == []
+
+
+def test_valence_build_config_colosseum_all_positive():
+    t = et.get_experiment_type("Valence")
+    cfg = t.build_config(rig="colosseum")
+    regions = cfg["tracking_regions"]
+    assert len(regions) == 24
+    assert all(r["x_location_multiplier"] == 1 for r in regions.values())
+    assert cfg["global"]["facet_cutoffs"] == [10, 70]  # default when not given
+
+
+def test_custom_build_config_writes_tracking_type():
+    t = et.get_experiment_type(None)
+    cfg = t.build_config(tracking_type="TWOCHOICECOUNTER", rig="small_arena",
+                         facet_cutoffs=[5, 30])
+    g = cfg["global"]
+    assert "experiment_type" not in g            # Custom has no type key
+    assert g["tracking_type"] == "TWOCHOICECOUNTER"
+    assert g["tracking_rig"] == "small_arena"
+    assert g["facet_cutoffs"] == [5, 30]
 
 
 def test_report_title_and_intro():

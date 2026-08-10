@@ -25,6 +25,16 @@ validates the config through the type and **fails hard** on any violation
 stays lenient. Each Experiment Type also declares a **curated output manifest**
 and the runner produces exactly that set of files, nothing else.
 
+## Amendment (2026-08): facets are a default, not owned
+
+`facet_cutoffs` was initially owned by the Valence type (immovable, omitted from
+the file). It is now an **editable default**: the type suggests `[10, 70]`, the
+Create Experiment wizard and Config Editor let the user change it, and the value
+is written to the yaml. Named phases (Acclimation/Experiment/Cooldown) apply only
+when the cutoffs match the default; other cutoffs get minute-range labels. The
+`facets_fixed` flag on `ExperimentType` still allows a future type to own its
+facets. `tracking_type` and calibration remain owned.
+
 ## Consequences
 
 - A future reader will see a Valence config with **no `tracking_type`** and no

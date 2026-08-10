@@ -325,7 +325,7 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
     # Valence: Acclimation/Experiment/Cooldown); else minute ranges.
     exp_type = getattr(experiment, "experiment_type", None)
     if exp_type is not None:
-        phase_labels = [exp_type.phase_label(i, w) for i, w in enumerate(phases)]
+        phase_labels = exp_type.phase_labels_for(phases)
     else:
         phase_labels = [_phase_label(w) for w in phases]
 

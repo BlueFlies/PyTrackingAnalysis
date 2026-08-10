@@ -42,10 +42,13 @@ light-preference**; the group order is fixed to keep that sign stable.
 _Avoid_: preference score
 
 **Phase**:
-A named time span within an Experiment Type's fixed facet structure. A Valence
-Experiment has exactly three, from the fixed cutoffs [10, 70]:
+A named time span within an Experiment Type's facet structure. A Valence
+Experiment's phases come from its **default** cutoffs [10, 70] (which the user
+may change):
 - **Acclimation** — 0–10 min.
 - **Experiment** — 10–70 min. The phase the primary result is read from.
 - **Cooldown** — 70+ min.
-_Avoid_: facet (facet = the generic windowing mechanism; a Phase is a named,
-protocol-fixed facet).
+The phase names apply only while the cutoffs are the default; changing them
+yields plain minute-range labels instead.
+_Avoid_: facet (facet = the generic windowing mechanism; a Phase is a named
+facet at the type's default cutoffs).

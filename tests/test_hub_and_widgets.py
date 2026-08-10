@@ -382,6 +382,23 @@ def test_experiment_honours_an_alternative_config_path(tmp_path):
     assert exp.facet_cutoffs == (3,), "the alternative config was not the one loaded"
 
 
+def test_project_summary_shows_experiment_type_on_open(hub, tmp_path):
+    (tmp_path / "tracking_config.yaml").write_text(yaml.safe_dump({
+        "global": {"experiment_type": "Valence", "tracking_rig": "arena_max"},
+        "counting_regions": {"Light": {"alias": "L"}, "NoLight": {"alias": "N"}},
+        "tracking_regions": {f"T_{i}": {"experimental_factors": "control"}
+                             for i in range(36)},
+    }, sort_keys=False))
+    hub._set_project_dir(tmp_path)
+
+    # isVisible() needs the whole window shown; isHidden() reflects our setVisible.
+    assert not hub._project_summary.isHidden()
+    text = hub._project_summary.text()
+    assert "Valence Experiment" in text
+    assert "TWOCHOICETRACKER" in text
+    assert "control ×36" in text
+
+
 def test_selecting_the_canonical_config_hides_the_warning(hub, tmp_path):
     _write_config(tmp_path / "tracking_config.yaml", "canonical")
     _write_config(tmp_path / "alt_config.yaml", "alternative")

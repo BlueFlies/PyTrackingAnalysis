@@ -93,6 +93,30 @@ class SidebarNav(QWidget):
             btn.setChecked(True)
         return btn
 
+    def add_action(
+        self,
+        label: str,
+        icon_name: str,
+        *,
+        category: Category | None = None,
+        tooltip: str | None = None,
+    ) -> QPushButton:
+        """Add a plain action button to the rail (not a checkable nav anchor).
+
+        Unlike :meth:`add_item`, this is not part of the exclusive selection
+        group and does not scroll to a card — the caller connects ``clicked`` to
+        whatever it should do. Useful for a rail entry that acts like a button.
+        """
+        btn = QPushButton(label, self)
+        btn.setObjectName("PtrackSidebarItem")
+        btn.setIcon(icon(icon_name, category=category))
+        btn.setIconSize(QSize(16, 16))
+        if tooltip:
+            btn.setToolTip(tooltip)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._lay.addWidget(btn)
+        return btn
+
     def add_separator(self) -> None:
         line = QFrame(self)
         line.setFrameShape(QFrame.Shape.HLine)

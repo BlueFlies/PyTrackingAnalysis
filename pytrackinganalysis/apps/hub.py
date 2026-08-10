@@ -194,6 +194,11 @@ class HubWindow(QMainWindow):
 
         self._sidebar = SidebarNav()
         self._sidebar.add_item("project", "Project", "project", category=Category.NEUTRAL)
+        # A rail button (not a scroll anchor): create a new project from a type.
+        create_proj_btn = self._sidebar.add_action(
+            "Create project", "new", category=Category.LOAD,
+            tooltip="Create a new project from an Experiment Type")
+        create_proj_btn.clicked.connect(lambda: self._create_experiment())
         self._sidebar.add_item("load", "Load", "load", category=Category.LOAD)
         self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
         self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
@@ -311,6 +316,19 @@ class HubWindow(QMainWindow):
         self._config_note.setStyleSheet("color: #f59e0b; font-size: 9pt;")
         self._config_note.setVisible(False)
         card.add_body(self._config_note)
+
+        # A summary of the selected config, shown as soon as it is read: the
+        # Experiment Type, tracking type/rig, phases, and treatment breakdown.
+        self._project_summary = QLabel()
+        self._project_summary.setWordWrap(True)
+        self._project_summary.setTextFormat(Qt.TextFormat.RichText)
+        self._project_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._project_summary.setStyleSheet(
+            "QLabel { background: palette(alternate-base); border: 1px solid "
+            "palette(mid); border-radius: 6px; padding: 8px; font-size: 9pt; }")
+        self._project_summary.setVisible(False)
+        card.add_body(self._project_summary)
 
         launchers = QHBoxLayout()
         edit_cfg = ActionButton("Edit config…", Category.TOOLS, icon_name="config")
@@ -568,6 +586,20 @@ class HubWindow(QMainWindow):
         if chosen:
             self._set_project_dir(chosen)
 
+    def _create_experiment(self) -> None:
+        """Open the Create Experiment wizard; on success, select the new project."""
+        from .create_experiment import ConfigureExperimentDialog
+
+        start = str(self._project_dir.parent) if self._project_dir else os.getcwd()
+        dialog = ConfigureExperimentDialog(self, start_dir=start)
+        if dialog.exec() and dialog.created_path is not None:
+            project = dialog.created_path.parent
+            self._set_project_dir(project)
+            self._log.append_line(
+                f"Created experiment at {project}. "
+                "Assign region treatments in the Config Editor, then add the "
+                "DTrack export to data/ before loading.")
+
     def _on_mode_changed(self) -> None:
         is_batch = self._mode_batch.isChecked()
         self._load_btn.setText("Run batch script" if is_batch else "Load experiment")
@@ -640,7 +672,45 @@ class HubWindow(QMainWindow):
                 f"{_CANONICAL_CONFIG} for validation, scripts and analysis."
             )
             self._config_note.setVisible(True)
+        self._refresh_project_summary()
         self._refresh_scripts()
+
+    def _refresh_project_summary(self) -> None:
+        """Render a short summary of the selected config in the project card."""
+        import yaml
+
+        from .. import config_summary
+
+        cfg_path = self._config_path()
+        if cfg_path is None or not cfg_path.exists():
+            self._project_summary.setVisible(False)
+            return
+        try:
+            with open(cfg_path, encoding="utf-8") as handle:
+                config = yaml.safe_load(handle)
+            rows = config_summary.summarize(config)
+        except Exception as err:  # noqa: BLE001
+            self._project_summary.setText(f"<i>Could not read config: {err}</i>")
+            self._project_summary.setVisible(True)
+            return
+        self._project_summary.setText(self._format_summary_html(rows))
+        self._project_summary.setVisible(True)
+
+    @staticmethod
+    def _format_summary_html(rows) -> str:
+        import html as _html
+
+        out = []
+        for label, value in rows:
+            lab = _html.escape(str(label))
+            val = _html.escape(str(value))
+            if label == "Experiment type":
+                out.append(f"<div style='margin-bottom:3px'><b>{lab}:</b> "
+                           f"<b>{val}</b></div>")
+            else:
+                out.append(f"<div><span style='color:#64748b'>{lab}:</span> "
+                           f"{val}</div>")
+        return "".join(out)
 
     def _refresh_scripts(self) -> None:
         from ..script_editor.runner import load_scripts
