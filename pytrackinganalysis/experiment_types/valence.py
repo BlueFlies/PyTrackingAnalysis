@@ -44,6 +44,14 @@ class ValenceExperimentType(ExperimentType):
         # The data outputs a Valence run is expected to produce in analysis/.
         return ["_Summary.csv", "_Summary_Facet.csv", "_Stats.txt"]
 
+    def report_sections(self, experiment) -> list:
+        # Valence-first blocks: headline Experiment-phase PI, PI over time,
+        # per-animal persistence. Built in report_figures so matplotlib stays
+        # out of the experiment_types package; imported lazily for the same
+        # reason.
+        from .. import report_figures
+        return report_figures.build_valence_sections(experiment)
+
     def validate(self, config: dict) -> list[str]:
         global_cfg = config.get("global") or {}
         problems: list[str] = []
@@ -73,19 +81,24 @@ class ValenceExperimentType(ExperimentType):
             "tracking_regions": {},
         }
 
-    def build_config(self, *, rig=None, facet_cutoffs=None, factors=None, **_) -> dict:
+    def build_config(self, *, rig=None, facet_cutoffs=None, facet_labels=None,
+                     factors=None, **_) -> dict:
         """Full Valence config for the create wizard.
 
         Lays out the rig's plate with the correct X multipliers (Arena Max flips
         the first 18 wells; Colosseum is all +1), the Light/NoLight counting
-        regions, the chosen (or default) facets, and any design factors. Region
-        treatments are left blank for the user to assign.
+        regions, the chosen (or default) facets with their phase names
+        (Acclimation/Experiment/Cooldown by default), and any design factors.
+        Region treatments are left blank for the user to assign.
         """
         g: dict = {"experiment_type": self.name}
         if rig:
             g["tracking_rig"] = rig
         cutoffs = facet_cutoffs if facet_cutoffs else self.facet_cutoffs
         g["facet_cutoffs"] = self._clean_cutoffs(cutoffs)
+        labels = self._default_facet_labels(cutoffs, facet_labels)
+        if labels:
+            g["facet_labels"] = labels
         if factors:
             g["experimental_design_factors"] = dict(factors)
 

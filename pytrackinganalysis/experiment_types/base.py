@@ -108,15 +108,26 @@ class ExperimentType:
         fmt = lambda v: f"{int(v)}" if float(v) == int(v) else f"{v:g}"  # noqa: E731
         return f"{fmt(start)}+" if end == float("inf") else f"{fmt(start)}–{fmt(end)}"
 
-    def phase_labels_for(self, windows) -> list[str]:
+    def resolve_facet_labels(self, global_cfg: dict) -> tuple[str, ...] | None:
+        """User-chosen phase names from the yaml (``facet_labels``), or ``None``."""
+        raw = (global_cfg or {}).get("facet_labels")
+        if not raw or not isinstance(raw, (list, tuple)):
+            return None
+        return tuple(str(label) for label in raw)
+
+    def phase_labels_for(self, windows, global_cfg: dict | None = None) -> list[str]:
         """Labels for each facet window (a list of ``(start, end)`` tuples).
 
-        The type's named phases (e.g. Acclimation/Experiment/Cooldown) are used
-        only when the actual windows match the type's *default* facet structure —
-        so a user who changes the cutoffs gets honest minute-range labels rather
-        than mislabelled phases.
+        Precedence: the yaml's ``facet_labels`` (when it names every window),
+        then the type's named phases (e.g. Acclimation/Experiment/Cooldown) —
+        used only when the actual windows match the type's *default* facet
+        structure — then honest minute-range labels, so mismatched or missing
+        names never mislabel a phase.
         """
         windows = list(windows)
+        user_labels = self.resolve_facet_labels(global_cfg or {})
+        if user_labels and len(user_labels) == len(windows):
+            return list(user_labels)
         if self.phase_labels and self.facet_cutoffs is not None \
                 and len(windows) == len(self.phase_labels):
             from .. import windowing
@@ -133,6 +144,12 @@ class ExperimentType:
     def report_intro(self) -> str | None:
         """Optional narrative paragraph for the top of the report."""
         return None
+
+    def report_sections(self, experiment) -> list:
+        """Type-specific report blocks, inserted after the report intro and
+        before the generic figures (ADR-0002: the type decides what its report
+        leads with). Base/Custom: none — the generic report stands alone."""
+        return []
 
     def output_manifest(self) -> list[str]:
         """Filename suffixes (within ``analysis/``) this type is expected to
@@ -163,7 +180,7 @@ class ExperimentType:
         return [int(c) if float(c) == int(c) else c for c in cutoffs]
 
     def build_config(self, *, tracking_type=None, rig=None, facet_cutoffs=None,
-                     factors=None) -> dict:
+                     facet_labels=None, factors=None) -> dict:
         """Build a full ``tracking_config.yaml`` dict from create-wizard inputs.
 
         Base (Custom) build: writes ``tracking_type`` (from the wizard), the rig,
@@ -179,9 +196,20 @@ class ExperimentType:
             g["tracking_rig"] = rig
         if facet_cutoffs:
             g["facet_cutoffs"] = self._clean_cutoffs(facet_cutoffs)
+            labels = self._default_facet_labels(facet_cutoffs, facet_labels)
+            if labels:
+                g["facet_labels"] = labels
         if factors:
             g["experimental_design_factors"] = dict(factors)
         return {"global": g, "tracking_regions": {}}
+
+    def _default_facet_labels(self, cutoffs, facet_labels) -> list[str] | None:
+        """Phase names to write for a new config: the wizard's, else the type's
+        defaults — but only when they name every window of *cutoffs*."""
+        for candidate in (facet_labels, self.phase_labels):
+            if candidate and len(candidate) == len(cutoffs) + 1:
+                return [str(label) for label in candidate]
+        return None
 
     # ---- shared validation helpers (for subclasses) -------------------
 

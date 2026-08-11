@@ -666,6 +666,65 @@ def test_a_failed_task_shows_a_dialog(hub, no_dialogs):
     assert no_dialogs["warning"], "a failed analysis looked exactly like a finished one"
 
 
+# --------------------------------------------------------------------------
+# Run-notes dialog on the analysis / report buttons
+# --------------------------------------------------------------------------
+
+class _NotesExp:
+    def __init__(self, existing="old note"):
+        self.existing = existing
+        self.saved = None
+
+    def read_run_notes(self):
+        return self.existing
+
+    def write_run_notes(self, text):
+        self.saved = text
+
+    def run_analysis(self):
+        pass
+
+    def create_report(self):
+        return "done"
+
+
+def test_run_notes_dialog_saves_before_the_report_task(hub, monkeypatch):
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    exp = _NotesExp()
+    hub._exp = exp
+    spawned = []
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda title, fn: spawned.append(title))
+    seen = {}
+
+    def _fake_dialog(parent, title, label, text=""):
+        seen["prefill"] = text
+        return "fresh notes", True
+
+    monkeypatch.setattr(hub_mod.QInputDialog, "getMultiLineText",
+                        staticmethod(_fake_dialog))
+    hub._run_create_report()
+    assert seen["prefill"] == "old note", "existing notes were not offered for editing"
+    assert exp.saved == "fresh notes"
+    assert spawned == ["PDF report"]
+
+
+def test_run_notes_dialog_cancel_keeps_existing_notes(hub, monkeypatch):
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    exp = _NotesExp()
+    hub._exp = exp
+    spawned = []
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda title, fn: spawned.append(title))
+    monkeypatch.setattr(hub_mod.QInputDialog, "getMultiLineText",
+                        staticmethod(lambda *a, **k: ("ignored", False)))
+    hub._run_full_analysis()
+    assert exp.saved is None, "cancel must not touch the saved notes"
+    assert spawned == ["Run analysis"], "cancelling notes must not cancel the run"
+
+
 def test_finished_child_apps_are_reaped(hub):
     class _FakeProcess:
         def __init__(self, code):

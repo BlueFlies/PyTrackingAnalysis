@@ -75,6 +75,12 @@ def _parse_cutoffs(text: str):
             for p in (x.strip() for x in text.split(",")) if p]
 
 
+def _parse_labels(text: str):
+    """Parse a phase-names field into a list of names, or None when blank."""
+    names = [p for p in (x.strip() for x in (text or "").split(",")) if p]
+    return names or None
+
+
 class ConfigureExperimentDialog(QDialog):
     """Collects new-project inputs and writes the config on accept."""
 
@@ -121,6 +127,16 @@ class ConfigureExperimentDialog(QDialog):
         self.facets_edit = QLineEdit("10, 70")
         self.facets_edit.setPlaceholderText("e.g. 10, 70  (blank = no faceting)")
         form.addRow("Facet cutoffs:", self.facets_edit)
+
+        # Phase names only exist when there are facets, so the field follows
+        # the cutoffs field: blank cutoffs = nothing to name = disabled.
+        self.facet_labels_edit = QLineEdit()
+        self.facet_labels_edit.setPlaceholderText(
+            "e.g. Acclimation, Experiment, Cooldown  (optional)")
+        self.facets_edit.textChanged.connect(
+            lambda text: self.facet_labels_edit.setEnabled(bool(text.strip())))
+        self.facet_labels_edit.setEnabled(bool(self.facets_edit.text().strip()))
+        form.addRow("Phase names:", self.facet_labels_edit)
 
         outer.addLayout(form)
 
@@ -188,9 +204,11 @@ class ConfigureExperimentDialog(QDialog):
         idx = _find_data(self.rig_combo, keep)
         self.rig_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.rig_combo.blockSignals(False)
-        # Facets default from the type (10, 70 for Valence).
+        # Facets default from the type (10, 70 for Valence), as do the phase
+        # names (Acclimation, Experiment, Cooldown for Valence).
         if t.facet_cutoffs is not None:
             self.facets_edit.setText(", ".join(str(c) for c in t.facet_cutoffs))
+        self.facet_labels_edit.setText(", ".join(t.phase_labels) if t.phase_labels else "")
 
     def factors(self) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
@@ -210,6 +228,7 @@ class ConfigureExperimentDialog(QDialog):
             tracking_type=self.tracking_type_combo.currentData(),
             rig=self.rig_combo.currentData(),
             facet_cutoffs=_parse_cutoffs(self.facets_edit.text()),
+            facet_labels=_parse_labels(self.facet_labels_edit.text()),
             factors=self.factors() or None,
         )
 
@@ -228,10 +247,18 @@ class ConfigureExperimentDialog(QDialog):
                                 "Choose where to create the project.")
             return
         try:
-            _parse_cutoffs(self.facets_edit.text())  # validate only
+            cutoffs = _parse_cutoffs(self.facets_edit.text())  # validate only
         except ValueError:
             QMessageBox.warning(self, "Create project",
                                 "Facet cutoffs must be numbers, comma-separated (or blank).")
+            return
+        names = _parse_labels(self.facet_labels_edit.text())
+        if cutoffs and names and len(names) != len(cutoffs) + 1:
+            QMessageBox.warning(
+                self, "Create project",
+                f"{len(cutoffs)} facet cutoffs create {len(cutoffs) + 1} phases, "
+                f"so give {len(cutoffs) + 1} phase names (or leave them blank); "
+                f"got {len(names)}.")
             return
         try:
             self._created_path = create_project(parent, name, self.build_config())

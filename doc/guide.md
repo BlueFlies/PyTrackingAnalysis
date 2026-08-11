@@ -237,6 +237,7 @@ MyExperiment/                        ← project directory (pass this to the UI)
 │   ├── ExperimentName_Summary.csv
 │   ├── ExperimentName_Summary_Facet.csv
 │   ├── ExperimentName_Stats.txt
+│   ├── ExperimentName_Notes.txt     ← run notes typed in at Run Analysis (optional)
 │   ├── ExperimentName_report.pdf
 │   ├── ExperimentName_plot_pi_facet.png
 │   ├── ExperimentName_plot_percentage_facet.png
@@ -349,7 +350,9 @@ Rules for a typed experiment:
 
 - The file omits `tracking_type` — it comes from the type; a conflicting value
   is an error. `facet_cutoffs` is an **editable default** (10, 70 for Valence):
-  it *is* written to the file and you may change it.
+  it *is* written to the file and you may change it. The same goes for
+  `facet_labels`, the phase names (Acclimation, Experiment, Cooldown for
+  Valence): written to the file by default, yours to rename.
 - A typed config is validated **at load** and **fails hard** on any violation
   (wrong rig, missing Light/NoLight, a disallowed override), rather than
   crashing mid-analysis.
@@ -433,6 +436,12 @@ global:
   # Remove this key entirely to disable faceted analysis.
   facet_cutoffs: [10, 70]
 
+  # Optional names for those phases, one per phase (= one more than the number
+  # of cutoffs). Used in faceted figures, the report, and project summaries;
+  # omit it to fall back to the Experiment Type's defaults (for Valence:
+  # Acclimation / Experiment / Cooldown) or plain minute ranges.
+  facet_labels: [Acclimation, Experiment, Cooldown]
+
   # Only needed for the 'movie' rig, or to override a hardware preset.
   fps: 30
   mm_per_pixel: 0.108
@@ -465,7 +474,9 @@ carried along but ignored by the parameter system, so a typo like
 `facet_cutoffs` is read separately (not a parameter override): it becomes the
 default for every faceted plot, summary, and statistics run, and is inherited
 by script steps whose own `cutoffs` field is blank (see
-[scripts_guide.md](scripts_guide.md)).
+[scripts_guide.md](scripts_guide.md)).  `facet_labels` names those phases; it
+must list exactly one name per phase (cutoffs + 1) and is validated against
+`facet_cutoffs`.
 
 **How time windows are defined.**  Every window — a `facet_cutoffs` phase or an
 explicit `range_minutes=(start, end)` — is *half-open*: it contains rows where
@@ -828,10 +839,24 @@ exp.save_plots()
 # Build a multi-page PDF report in analysis/
 exp.create_report()
 
+# Optionally attach run notes — rendered near the top of the report and saved
+# as <Experiment>_Notes.txt in analysis/ (the Hub prompts for these when you
+# press Run Analysis / Create PDF Report; blank clears saved notes).
+exp.create_report(notes="Pilot run; lights at 50% intensity.")
+
 # ── OR run the complete pipeline in one call: ────────────────────────────────
 exp.run_analysis()       # summary → qc → save_summary → save_plots → stats
 exp.create_report()      # PDF report (separate call so you can skip it)
 ```
+
+For a **Valence Experiment** the report opens with type-specific sections
+before the generic figures: the **headline result** (per-animal PI during the
+Experiment phase — the phase the primary result is read from — with a
+pairwise-comparison table), **preference over time** (sliding-window PI,
+treatment mean ± SEM, phase boundaries marked), and **emergence &
+persistence** (each animal's PI across phases plus the within-animal change
+from Acclimation to Experiment). A Custom Experiment gets the generic report
+unchanged.
 
 ### Accessing individual plots interactively
 

@@ -44,6 +44,17 @@ def test_partially_assigned_treatments():
     assert "unassigned ×2" in _rows(cfg)["Treatments"]
 
 
+def test_summary_uses_configured_facet_labels():
+    cfg = {
+        "global": {"experiment_type": "Valence", "tracking_rig": "colosseum",
+                   "facet_labels": ["Baseline", "Stimulus", "Recovery"]},
+        "tracking_regions": {f"T_{i}": {} for i in range(24)},
+    }
+    phases = _rows(cfg)["Phases"]
+    assert "Baseline / Stimulus / Recovery" in phases
+    assert "Acclimation" not in phases
+
+
 def test_custom_summary_reads_yaml_tracking_type_and_flat_phases():
     cfg = {"global": {"tracking_type": "TRACKER", "tracking_rig": "small_arena"},
            "tracking_regions": {"T_0": {"experimental_factors": "A"}}}

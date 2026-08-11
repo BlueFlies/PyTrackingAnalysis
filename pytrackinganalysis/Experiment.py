@@ -83,6 +83,23 @@ _TRACKING_TYPE_METRICS = {
     Parameters.TrackingType.COUNTER:                   [],
 }
 
+## One-line reader-facing descriptions for the metrics stats() compares, used
+## as section headings in *_Stats.txt so a reader never has to guess what a
+## column name measures. PercentInteracting_<d> is described at runtime.
+_METRIC_DESCRIPTIONS = {
+    'FinalPI': ('final preference index, -1..+1: (frames in counting region 1 '
+                '- frames in region 2) / (frames in either). Positive = '
+                'preference for region 1 (Light in a Valence Experiment); '
+                '0 = indifference.'),
+    'FinalPercentage': ('fraction of scored frames spent in counting region 1 '
+                        '(Light in a Valence Experiment), 0..1; 0.5 = '
+                        'indifference.'),
+    'TotalDistancePerMin': ('distance travelled per observed minute (mm/min); '
+                            'locomotor activity, typically read as a control.'),
+    'AvgAdjX_mm': ('mean polarity-adjusted X position (mm); positive = toward '
+                   'the side the design file orients as positive.'),
+}
+
 
 class Experiment:
     """
@@ -839,22 +856,19 @@ class Experiment:
                 else:
                     print(f"Warning: tracking type {tracking_type.name} has no statistics policy "
                           f"defined in this version. No comparisons were run.")
-            elif cutoffs is None:
-                print("(No facet_cutoffs configured — running flat pairwise comparisons.)\n")
-                for metric in metrics:
-                    try:
-                        self.arena.run_pairwise_comparisons(metric=metric)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"Warning: could not run comparison for '{metric}': {e}")
             else:
+                self._print_stats_preamble(cutoffs)
                 for metric in metrics:
-                    remove_partners = 'Interacting' in metric
+                    self._print_metric_heading(metric)
                     try:
-                        self.arena.run_pairwise_comparisons_facet(
-                            metric=metric,
-                            cutoffs=cutoffs,
-                            remove_partners=remove_partners,
-                        )
+                        if cutoffs is None:
+                            self.arena.run_pairwise_comparisons(metric=metric)
+                        else:
+                            self.arena.run_pairwise_comparisons_facet(
+                                metric=metric,
+                                cutoffs=cutoffs,
+                                remove_partners='Interacting' in metric,
+                            )
                     except Exception as e:  # noqa: BLE001
                         print(f"Warning: could not run comparison for '{metric}': {e}")
         finally:
@@ -865,11 +879,76 @@ class Experiment:
 
         if save:
             path = os.path.join(self.analysis_path, f"{self.arena.experiment_name}_Stats.txt")
-            with open(path, 'w') as f:
+            with open(path, 'w', encoding='utf-8') as f:
                 f.write(stats_text)
             print(f"Saved: {path}")
 
         return stats_text
+
+    def _print_stats_preamble(self, cutoffs) -> None:
+        """Orient the Stats.txt reader before any numbers: what is compared, in
+        which time windows (with their phase names), and which test applies."""
+        bar = '=' * 72
+        print(bar)
+        print(f"Statistical comparisons - {self.arena.experiment_name}")
+        if not self.experiment_type.is_custom:
+            print(f"Experiment type : {self.experiment_type.display_name}")
+        print(f"Tracking type   : {self.parameters.get_tracking_type().name}")
+
+        if cutoffs is not None:
+            from . import windowing
+            windows = list(windowing.facet_windows(cutoffs))
+            global_cfg = (self.config.get('global') or {}) \
+                if isinstance(self.config, dict) else {}
+            labels = self.experiment_type.phase_labels_for(windows, global_cfg)
+
+            def fmt(window):
+                start, end = window
+                if end == float('inf'):
+                    return f"{start:g}+ min"
+                return f"{start:g}-{end:g} min"
+
+            ## Only prepend names when the phases actually have them — unnamed
+            ## phases would otherwise read "0–10 = 0-10 min".
+            plain = [self.experiment_type._minute_label(w) for w in windows]
+            if labels == plain:
+                parts = [fmt(w) for w in windows]
+            else:
+                parts = [f"{label} = {fmt(w)}" for w, label in zip(windows, labels)]
+            print(f"Phases          : {';  '.join(parts)}")
+            print()
+            print("Every metric below is compared between treatments once per phase.")
+            print("The window of each test appears as 'Range Minutes' / 'Facet Range'")
+            print("(start, end) in the output. Windows are half-open [start, end): a")
+            print("row landing exactly on a boundary counts in the later phase.")
+        else:
+            print()
+            print("No facet phases are configured: every comparison below runs over")
+            print("the whole recording.")
+        print()
+        print("Tests: two treatment levels -> Welch's t-test (no equal-variance")
+        print("assumption); three or more -> Tukey HSD at alpha = 0.05. Group N is")
+        print("reported per test; animals with no numeric value for a metric in a")
+        print("window are excluded and noted. P-values are per test - where one")
+        print("metric is tested in several phases, a note gives the Bonferroni-")
+        print("adjusted threshold.")
+        print(bar)
+        print()
+
+    def _print_metric_heading(self, metric: str) -> None:
+        """A ruled section heading naming the metric and what it measures."""
+        if metric.startswith('PercentInteracting_'):
+            distance = metric.rsplit('_', 1)[-1]
+            description = (f"fraction of valid frames spent within {distance} mm "
+                           f"of the partner, 0..1.")
+        else:
+            description = _METRIC_DESCRIPTIONS.get(metric, '')
+        bar = '-' * 72
+        print(bar)
+        print(f"Metric: {metric}")
+        if description:
+            print(f"  {description}")
+        print(bar)
 
     def plot_totaldistance_facet(self, cutoffs=None, save: bool = True) -> None:
         """
@@ -1177,7 +1256,7 @@ class Experiment:
             return None
 
     def create_report(self, cutoffs=None, qc_cutoff: float = 0.9,
-                      backend: str = "reportlab") -> str:
+                      backend: str = "reportlab", notes: str | None = None) -> str:
         """Assemble a professional report for this experiment.
 
         Builds a backend-agnostic document model (see
@@ -1190,12 +1269,16 @@ class Experiment:
         consolidated multi-panel figures rather than re-embedding the
         interactive ``save_plots`` PNGs, and reads the freshly written
         ``*_Stats.txt`` and ``*_Summary*.csv`` artifacts for its text and
-        tables. ``cutoffs`` is accepted for back-compat and unused. Returns the
-        path to the written report.
+        tables. ``cutoffs`` is accepted for back-compat and unused. *notes*,
+        when given, is persisted via :meth:`write_run_notes` (blank clears) and
+        rendered near the top of the report; ``None`` keeps whatever notes are
+        already saved. Returns the path to the written report.
         """
         from .report import render as _render
 
         del cutoffs  # report sources the current analysis outputs, not a re-run.
+        if notes is not None:
+            self.write_run_notes(notes)
         report = self.build_report_model(qc_cutoff=qc_cutoff)
         ext = {"reportlab": "pdf"}.get(backend, "pdf")
         out_path = os.path.join(
@@ -1203,6 +1286,39 @@ class Experiment:
         _render(report, out_path, backend=backend)
         print(f"Saved: {out_path}")
         return out_path
+
+    # ------------------------------------------------------------------
+    # Run notes — user-provided context captured when a run is launched,
+    # persisted beside the other analysis artifacts and rendered near the
+    # top of the report.
+    # ------------------------------------------------------------------
+
+    def _run_notes_path(self) -> str:
+        return os.path.join(self.analysis_path,
+                            f"{self.arena.experiment_name}_Notes.txt")
+
+    def read_run_notes(self) -> str:
+        """The saved run notes, or an empty string when there are none."""
+        try:
+            with open(self._run_notes_path(), encoding="utf-8") as handle:
+                return handle.read().strip()
+        except OSError:
+            return ""
+
+    def write_run_notes(self, text) -> None:
+        """Persist *text* as the run notes; blank (or None) removes them, so
+        stale notes never outlive the run they described."""
+        path = self._run_notes_path()
+        text = (text or "").strip()
+        if not text:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
 
     # ------------------------------------------------------------------
     # Report model assembly (analysis-side; imports the document model only,
@@ -1234,6 +1350,9 @@ class Experiment:
         metadata += [
             ("Tracking type", self.parameters.get_tracking_type().name),
             ("Tracking rig", str(global_cfg.get("tracking_rig", "—"))),
+        ]
+        metadata += self._cover_phase_and_region_metadata(global_cfg)
+        metadata += [
             ("Project", os.path.abspath(self.project_directory)),
             ("Generated", _dt.now().strftime("%Y-%m-%d %H:%M")),
         ]
@@ -1242,6 +1361,16 @@ class Experiment:
         report.add(_m.Cover(exp_name, self.experiment_type.report_title(),
                             metadata=metadata,
                             status=self._qc_status_line(qc_cutoff)))
+
+        # ---- Run notes ----
+        # User-provided context typed in when the run was launched (or written
+        # to <name>_Notes.txt by hand). Rendered up front, not as an appendix.
+        notes = self.read_run_notes()
+        if notes:
+            report.add(_m.Heading("Notes", level=2))
+            for line in notes.splitlines():
+                if line.strip():
+                    report.add(_m.Paragraph(line.strip()))
 
         # ---- Analysis section ----
         # Whole-recording figures, then the per-phase (faceted) figures when
@@ -1253,6 +1382,11 @@ class Experiment:
         intro = self.experiment_type.report_intro()
         if intro:
             report.add(_m.Paragraph(intro))
+        # Type-specific sections lead (ADR-0002) — e.g. Valence's headline
+        # Experiment-phase PI, PI-over-time, and persistence blocks. Empty for
+        # a Custom Experiment.
+        for block in self.experiment_type.report_sections(self):
+            report.add(block)
         for fig in report_figures.build_analysis_figures(self):
             report.add(fig)
         for fig in report_figures.build_faceted_figures(self):
@@ -1266,6 +1400,39 @@ class Experiment:
         self._add_text_blocks(report, _Path(self.qc_path), _m)
 
         return report
+
+    def _cover_phase_and_region_metadata(self, global_cfg: dict) -> list:
+        """Cover rows for the phase structure and the plate: what was measured,
+        when, and on how many animals — visible before any figure."""
+        from collections import Counter as _Counter
+
+        from . import report_figures, windowing as _w
+
+        rows: list = []
+        if self.facet_cutoffs:
+            windows = list(_w.facet_windows(self.facet_cutoffs))
+            labels = self.experiment_type.phase_labels_for(windows, global_cfg)
+            parts = []
+            for window, label in zip(windows, labels):
+                rng = report_figures._phase_label(window)
+                parts.append(rng if label == rng else f"{label} {rng}")
+            rows.append(("Phases (min)", " · ".join(parts)))
+
+        regions = (self.config.get("tracking_regions") or {}) \
+            if isinstance(self.config, dict) else {}
+        if regions:
+            counts: _Counter = _Counter()
+            for region in regions.values():
+                factors = (str(region.get("experimental_factors", "")).strip()
+                           if isinstance(region, dict) else "")
+                if factors:
+                    counts[factors] += 1
+            value = str(len(regions))
+            if counts:
+                value += "  (" + ", ".join(
+                    f"{name} ×{n}" for name, n in sorted(counts.items())) + ")"
+            rows.append(("Tracking regions", value))
+        return rows
 
     def _qc_status_line(self, qc_cutoff: float):
         """Cover-page QC one-liner as a semantic StatusLine, or None."""
@@ -1286,11 +1453,15 @@ class Experiment:
             return None
 
     def _add_text_blocks(self, report, directory, _m) -> None:
-        """Add each non-empty ``*.txt`` in *directory* as a Preformatted block."""
+        """Add each non-empty ``*.txt`` in *directory* as a Preformatted block.
+
+        The run-notes file is excluded: it is rendered as prose right after the
+        cover, so dumping it here again would duplicate it as an appendix."""
         if not directory.exists():
             return
+        notes_name = os.path.basename(self._run_notes_path())
         for path in sorted(directory.glob("*.txt")):
-            if path.name.startswith("."):
+            if path.name.startswith(".") or path.name == notes_name:
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")

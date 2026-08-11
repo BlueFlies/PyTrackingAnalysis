@@ -76,6 +76,11 @@ def _parse_cutoffs(text: str) -> list[int]:
     return [int(part.strip()) for part in text.split(",") if part.strip()]
 
 
+def _parse_labels(text: str) -> list[str]:
+    """Parse the phase-names field into a list of names (blank entries dropped)."""
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
 def _section_label(text: str) -> QLabel:
     lbl = QLabel(text)
     font = QFont()
@@ -226,6 +231,17 @@ class GlobalTab(QWidget):
         facet_row.addWidget(self.facet_cutoffs)
         outer.addLayout(facet_row)
 
+        # Phase names: one per window (cutoffs + 1). Only meaningful when
+        # faceting is on, so the field follows the checkbox's enabled state.
+        label_row = QHBoxLayout()
+        self._facet_labels_caption = QLabel("Phase names (optional):")
+        self.facet_labels = QLineEdit()
+        self.facet_labels.setPlaceholderText("e.g. Acclimation, Experiment, Cooldown")
+        self.facet_labels.setEnabled(False)
+        label_row.addWidget(self._facet_labels_caption)
+        label_row.addWidget(self.facet_labels)
+        outer.addLayout(label_row)
+
         outer.addSpacing(12)
         outer.addWidget(_section_label("Parameter overrides (leave blank to use rig defaults)"))
 
@@ -327,8 +343,11 @@ class GlobalTab(QWidget):
         if t.facet_cutoffs is not None:
             self.use_facets.setChecked(True)
             self.facet_cutoffs.setText(", ".join(str(c) for c in t.facet_cutoffs))
+            if t.phase_labels:
+                self.facet_labels.setText(", ".join(t.phase_labels))
         self.use_facets.setEnabled(not facets_owned)
         self.facet_cutoffs.setEnabled(not facets_owned and self.use_facets.isChecked())
+        self.facet_labels.setEnabled(self.use_facets.isChecked())
 
         # Calibration overrides: disabled when the type forbids them.
         if not custom and not t.allow_calibration_override:
@@ -343,8 +362,8 @@ class GlobalTab(QWidget):
             phases = " · ".join(t.phase_labels) if t.phase_labels else "—"
             self._type_summary.setText(
                 f"Fixed by {t.display_name}: tracking type "
-                f"{t.tracking_type.name}; phases {phases}; "
-                f"rig one of {', '.join(t.allowed_rigs)}."
+                f"{t.tracking_type.name}; rig one of "
+                f"{', '.join(t.allowed_rigs)}. Default phases: {phases}."
             )
 
         self.experimentTypeChanged.emit()
@@ -386,6 +405,9 @@ class GlobalTab(QWidget):
 
     def _on_facet_toggled(self, state) -> None:
         self.facet_cutoffs.setEnabled(bool(state))
+        # Names only make sense when there are phases to name; the cutoffs may
+        # be fixed by the type, but the names always stay the user's to edit.
+        self.facet_labels.setEnabled(bool(state))
 
     def _add_factor_row(self) -> None:
         r = self.factors_table.rowCount()
@@ -462,6 +484,22 @@ class GlobalTab(QWidget):
                 self.use_facets.setChecked(False)
                 self.facet_cutoffs.clear()
 
+        # Phase names: the yaml's, else the type's defaults when they name every
+        # window of the effective cutoffs; else cleared (never carried over from
+        # a previously loaded file).
+        labels = g.get("facet_labels")
+        if labels:
+            self.facet_labels.setText(", ".join(str(l) for l in labels))
+        else:
+            effective = g.get("facet_cutoffs")
+            if effective is None and t.facet_cutoffs is not None:
+                effective = list(t.facet_cutoffs)
+            if (self.use_facets.isChecked() and effective and t.phase_labels
+                    and len(t.phase_labels) == len(effective) + 1):
+                self.facet_labels.setText(", ".join(t.phase_labels))
+            else:
+                self.facet_labels.clear()
+
         self.fps.setText(str(g["fps"]) if "fps" in g else "")
         self.mm_per_pixel.setText(str(g["mm_per_pixel"]) if "mm_per_pixel" in g else "")
         self.speed_window.setText(str(g["speed_window_seconds"]) if "speed_window_seconds" in g else "")
@@ -489,6 +527,7 @@ class GlobalTab(QWidget):
         "tracking_rig",
         "experimental_design_factors",
         "facet_cutoffs",
+        "facet_labels",
         "fps",
         "mm_per_pixel",
         "speed_window_seconds",
@@ -558,6 +597,12 @@ class GlobalTab(QWidget):
                         errors.append("Facet cutoffs: values must increase from left to right")
                     if len(set(values)) != len(values):
                         errors.append("Facet cutoffs: values must be distinct")
+                    names = _parse_labels(self.facet_labels.text())
+                    if names and len(names) != len(values) + 1:
+                        errors.append(
+                            f"Phase names: {len(values)} cutoffs create "
+                            f"{len(values) + 1} phases, so give {len(values) + 1} "
+                            f"names (or none) — got {len(names)}")
 
         idist = self.interaction_distances.text().strip()
         if idist:
@@ -598,6 +643,9 @@ class GlobalTab(QWidget):
             # same parser and blocks the save, so anything that reaches this
             # point parses; swallowing the error instead deleted the key.
             g["facet_cutoffs"] = _parse_cutoffs(self.facet_cutoffs.text())
+            names = _parse_labels(self.facet_labels.text())
+            if names:
+                g["facet_labels"] = names
 
         def _float(w):
             t = w.text().strip()

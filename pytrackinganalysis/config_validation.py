@@ -146,6 +146,29 @@ def validate_config(config) -> list[str]:
             if any(v <= 0 for v in values):
                 problems.append("global.facet_cutoffs values must be greater than zero.")
 
+    labels = global_cfg.get('facet_labels')
+    if labels is not None:
+        if not isinstance(labels, (list, tuple)) or not labels:
+            problems.append("global.facet_labels must be a non-empty list of phase names.")
+        elif not all(isinstance(v, str) and v.strip() for v in labels):
+            problems.append("global.facet_labels values must be non-empty strings.")
+        else:
+            try:
+                resolved = exp_type.resolve_facet_cutoffs(global_cfg)
+            except Exception:  # noqa: BLE001 — malformed cutoffs already reported
+                resolved = None
+            if resolved is None:
+                problems.append(
+                    "global.facet_labels requires facet_cutoffs — without phases "
+                    "there is nothing to name."
+                )
+            elif len(labels) != len(resolved) + 1:
+                problems.append(
+                    f"global.facet_labels must name every phase: facet_cutoffs "
+                    f"{list(resolved)} creates {len(resolved) + 1} phases, but "
+                    f"{len(labels)} names were given."
+                )
+
     tracking_regions = config.get('tracking_regions')
     if not tracking_regions:
         problems.append("No tracking_regions defined — the analysis would have nothing to load.")

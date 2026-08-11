@@ -87,6 +87,27 @@ def test_valence_phase_labels():
     assert t.phase_labels_for([(0, 5), (5, float("inf"))]) == ["0–5", "5+"]
 
 
+def test_yaml_facet_labels_override_the_type_defaults():
+    t = et.get_experiment_type("Valence")
+    windows = [(0, 10), (10, 70), (70, float("inf"))]
+    g = {"facet_labels": ["Baseline", "Stimulus", "Recovery"]}
+    assert t.phase_labels_for(windows, g) == ["Baseline", "Stimulus", "Recovery"]
+    # Custom names also apply to non-default cutoffs when the count matches.
+    assert t.phase_labels_for([(0, 5), (5, float("inf"))],
+                              {"facet_labels": ["Before", "After"]}) == ["Before", "After"]
+    # A count mismatch falls back rather than mislabelling phases.
+    assert t.phase_labels_for(windows, {"facet_labels": ["Only", "Two"]}) \
+        == ["Acclimation", "Experiment", "Cooldown"]
+
+
+def test_custom_type_reads_facet_labels_from_yaml():
+    t = et.get_experiment_type(None)
+    windows = [(0, 5), (5, float("inf"))]
+    assert t.phase_labels_for(windows) == ["0–5", "5+"]
+    assert t.phase_labels_for(windows, {"facet_labels": ["Warmup", "Assay"]}) \
+        == ["Warmup", "Assay"]
+
+
 # ---- validation -----------------------------------------------------------
 
 def test_valence_accepts_a_well_formed_config():
@@ -214,6 +235,40 @@ def test_valence_build_config_colosseum_all_positive():
     assert cfg["global"]["facet_cutoffs"] == [10, 70]  # default when not given
 
 
+def test_valence_build_config_writes_default_facet_labels():
+    t = et.get_experiment_type("Valence")
+    g = t.build_config(rig="colosseum")["global"]
+    assert g["facet_labels"] == ["Acclimation", "Experiment", "Cooldown"]
+    from pytrackinganalysis import config_validation
+    assert config_validation.validate_config(t.build_config(rig="colosseum")) == []
+
+
+def test_valence_build_config_honours_wizard_facet_labels():
+    t = et.get_experiment_type("Valence")
+    g = t.build_config(rig="colosseum", facet_cutoffs=[10, 70],
+                       facet_labels=["Dark", "Light on", "Dark again"])["global"]
+    assert g["facet_labels"] == ["Dark", "Light on", "Dark again"]
+
+
+def test_valence_build_config_drops_labels_that_cannot_name_every_phase():
+    t = et.get_experiment_type("Valence")
+    # Four windows from three cutoffs: neither the wizard's two names nor the
+    # type's three fit, so no labels are written (minute ranges at runtime).
+    g = t.build_config(rig="colosseum", facet_cutoffs=[5, 20, 40],
+                       facet_labels=["A", "B"])["global"]
+    assert "facet_labels" not in g
+
+
+def test_custom_build_config_writes_facet_labels_only_with_cutoffs():
+    t = et.get_experiment_type(None)
+    g = t.build_config(tracking_type="TRACKER", rig="small_arena",
+                       facet_cutoffs=[5, 30], facet_labels=["A", "B", "C"])["global"]
+    assert g["facet_labels"] == ["A", "B", "C"]
+    g2 = t.build_config(tracking_type="TRACKER", rig="small_arena",
+                        facet_labels=["A", "B", "C"])["global"]
+    assert "facet_cutoffs" not in g2 and "facet_labels" not in g2
+
+
 def test_custom_build_config_writes_tracking_type():
     t = et.get_experiment_type(None)
     cfg = t.build_config(tracking_type="TWOCHOICECOUNTER", rig="small_arena",
@@ -223,6 +278,17 @@ def test_custom_build_config_writes_tracking_type():
     assert g["tracking_type"] == "TWOCHOICECOUNTER"
     assert g["tracking_rig"] == "small_arena"
     assert g["facet_cutoffs"] == [5, 30]
+
+
+def test_report_sections_hook(monkeypatch):
+    # Custom: no type-specific report blocks. Valence: delegates to the
+    # report_figures builder (matplotlib stays out of experiment_types).
+    assert et.get_experiment_type(None).report_sections(object()) == []
+
+    import pytrackinganalysis.report_figures as rf
+    sentinel = [object()]
+    monkeypatch.setattr(rf, "build_valence_sections", lambda exp: sentinel)
+    assert et.get_experiment_type("Valence").report_sections(object()) is sentinel
 
 
 def test_report_title_and_intro():

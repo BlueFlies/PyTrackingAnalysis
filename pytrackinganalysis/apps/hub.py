@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -560,8 +561,18 @@ class HubWindow(QMainWindow):
             "convert to data/ layout, rename subdirectories, and combine summary CSVs."
         )
         btn_batch_tools.clicked.connect(self._open_batch_tools)
-        for b in (btn_open_analysis, btn_open_qc, btn_batch_tools, btn_validate, btn_clear_cache):
-            card.add_body(b)
+        # Two columns: five full-width stacked buttons made the card oddly wide
+        # and tall for what are small housekeeping actions.
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        buttons = (btn_open_analysis, btn_open_qc, btn_batch_tools, btn_validate,
+                   btn_clear_cache)
+        for i, b in enumerate(buttons):
+            grid.addWidget(b, i // 2, i % 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        card.add_body(grid)
         self._cards["tools"] = card
         self._cards_lay.addWidget(card)
 
@@ -991,10 +1002,36 @@ class HubWindow(QMainWindow):
     # Behaviour — analysis tasks (threaded)
     # ==================================================================
 
+    def _prompt_run_notes(self, exp) -> None:
+        """Collect optional user notes for the run about to start.
+
+        Prefilled with any existing notes so they can be revised; OK saves
+        (blank clears), Cancel keeps the existing notes. Saved notes are
+        rendered near the top of the report.
+        """
+        try:
+            existing = exp.read_run_notes()
+        except Exception:  # noqa: BLE001 — a broken notes file must not block a run
+            existing = ""
+        text, ok = QInputDialog.getMultiLineText(
+            self, "Run notes",
+            "Notes for this run (optional) — shown at the top of the report.\n"
+            "Leave blank to clear saved notes. Cancel keeps them unchanged.",
+            existing,
+        )
+        if not ok:
+            return
+        try:
+            exp.write_run_notes(text)
+        except OSError as err:
+            QMessageBox.warning(self, "Run notes",
+                                f"Could not save the notes:\n{err}")
+
     def _run_full_analysis(self) -> None:
         if self._exp is None:
             return
         exp = self._exp
+        self._prompt_run_notes(exp)
         self._spawn_task(
             "Run analysis",
             lambda: (exp.run_analysis(), exp.create_report(), "Analysis + report complete.")[-1],
@@ -1010,6 +1047,7 @@ class HubWindow(QMainWindow):
         if self._exp is None:
             return
         exp = self._exp
+        self._prompt_run_notes(exp)
         self._spawn_task("PDF report", lambda: exp.create_report())
 
     def _run_summarize(self) -> None:

@@ -86,6 +86,23 @@ def test_facet_cutoffs_must_be_numeric():
     assert "must be numbers" in problems_for(base_config(facet_cutoffs=["ten"]))
 
 
+def test_facet_labels_must_name_every_phase():
+    ok = base_config(facet_cutoffs=[10, 70],
+                     facet_labels=["Warmup", "Assay", "Rest"])
+    assert validate_config(ok) == []
+    bad = base_config(facet_cutoffs=[10, 70], facet_labels=["Warmup", "Assay"])
+    assert "3 phases" in problems_for(bad)
+
+
+def test_facet_labels_require_cutoffs_and_real_names():
+    assert "requires facet_cutoffs" in problems_for(
+        base_config(facet_labels=["A", "B"]))
+    assert "non-empty list" in problems_for(
+        base_config(facet_cutoffs=[10], facet_labels="Warmup, Assay"))
+    assert "non-empty strings" in problems_for(
+        base_config(facet_cutoffs=[10], facet_labels=["Warmup", ""]))
+
+
 def test_micromove_range_must_be_ordered():
     assert "minimum must be below" in problems_for(base_config(micromove_speed_mm_sec=[2, 0.2]))
 

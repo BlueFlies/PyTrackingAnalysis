@@ -33,7 +33,7 @@ def summarize(config) -> list[tuple[str, str]]:
 
     cutoffs = exp_type.resolve_facet_cutoffs(g)
     if cutoffs:
-        labels = exp_type.phase_labels_for(windowing.facet_windows(cutoffs))
+        labels = exp_type.phase_labels_for(windowing.facet_windows(cutoffs), g)
         cut_str = ", ".join(str(c) for c in cutoffs)
         rows.append(("Phases", f"{cut_str}  ({' / '.join(labels)})"))
     else:
