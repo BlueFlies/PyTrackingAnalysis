@@ -63,6 +63,12 @@ def dialogs(monkeypatch):
             ce.QMessageBox, kind,
             lambda *args, _kind=kind, **kwargs: seen[_kind].append(args),
         )
+    # A modal question() (e.g. the "seed required regions?" prompt) would block a
+    # headless run forever. Default to "No" so nothing is auto-inserted.
+    monkeypatch.setattr(
+        ce.QMessageBox, "question",
+        lambda *args, **kwargs: ce.QMessageBox.StandardButton.No,
+    )
     return seen
 
 
@@ -124,6 +130,227 @@ def test_movie_rig_without_calibration_is_flagged(editor):
     editor._global_tab.mm_per_pixel.setText("")
     errors = " | ".join(editor._global_tab.validation_errors())
     assert "FPS" in errors and "mm per pixel" in errors
+
+
+# --------------------------------------------------------------------------
+# Experiment Type UI (Phase 5)
+# --------------------------------------------------------------------------
+
+def _select_experiment_type(tab, name):
+    from pytrackinganalysis.apps._config_tabs import _find_data
+    tab.experiment_type.setCurrentIndex(_find_data(tab.experiment_type, name))
+
+
+def test_global_tab_defaults_to_custom_and_is_unconstrained(qapp):
+    from pytrackinganalysis.apps._config_tabs import GlobalTab, TRACKING_RIGS
+    tab = GlobalTab()
+    assert tab.current_experiment_type().is_custom
+    assert tab.tracking_type.isEnabled()          # editable for Custom
+    # Full rig list available for Custom.
+    assert tab.tracking_rig.count() == len(TRACKING_RIGS)
+
+
+def test_selecting_valence_locks_owned_fields_and_constrains_rig(qapp):
+    from pytrackinganalysis.apps._config_tabs import GlobalTab
+    tab = GlobalTab()
+    _select_experiment_type(tab, "Valence")
+    # Tracking type fixed + disabled.
+    assert tab.tracking_type.currentData() == "TWOCHOICETRACKER"
+    assert not tab.tracking_type.isEnabled()
+    # Rig constrained to Max/Colosseum.
+    rigs = {tab.tracking_rig.itemData(i) for i in range(tab.tracking_rig.count())}
+    assert rigs == {"arena_max", "colosseum"}
+    # Facets default-filled but EDITABLE (a default, not owned); calibration disabled.
+    assert tab.facet_cutoffs.text().replace(" ", "") == "10,70"
+    assert tab.facet_cutoffs.isEnabled()
+    assert not tab.fps.isEnabled() and not tab.mm_per_pixel.isEnabled()
+
+
+def test_valence_dump_is_minimal_and_omits_owned_fields(qapp):
+    from pytrackinganalysis.apps._config_tabs import GlobalTab, _find_data
+    tab = GlobalTab()
+    _select_experiment_type(tab, "Valence")
+    tab.tracking_rig.setCurrentIndex(_find_data(tab.tracking_rig, "colosseum"))
+    g = tab.dump()["global"]
+    assert g["experiment_type"] == "Valence"
+    assert g["tracking_rig"] == "colosseum"
+    # Owned/derived fields must NOT be written to disk (ADR-0001).
+    assert "tracking_type" not in g
+    assert "fps" not in g and "mm_per_pixel" not in g
+    # facet_cutoffs is an editable default, so it IS written.
+    assert g["facet_cutoffs"] == [10, 70]
+
+
+def test_custom_dump_has_no_experiment_type_key(qapp):
+    from pytrackinganalysis.apps._config_tabs import GlobalTab
+    tab = GlobalTab()  # defaults to Custom
+    g = tab.dump()["global"]
+    assert "experiment_type" not in g          # absence == Custom (back-compat)
+    assert g["tracking_type"] == "TRACKER"
+
+
+def test_load_then_dump_round_trips_a_valence_config(qapp):
+    from pytrackinganalysis.apps._config_tabs import GlobalTab
+    tab = GlobalTab()
+    tab.load({"global": {"experiment_type": "Valence", "tracking_rig": "arena_max"}})
+    assert tab.current_experiment_type().name == "Valence"
+    assert tab.tracking_rig.currentData() == "arena_max"
+    g = tab.dump()["global"]
+    assert g["experiment_type"] == "Valence" and g["tracking_rig"] == "arena_max"
+    assert "tracking_type" not in g
+
+
+def test_editor_blocks_saving_an_incomplete_valence_config(editor, tmp_path, dialogs):
+    # Switch to Valence but leave counting regions as the loaded Custom set
+    # (which are not Light/NoLight) -> save must be refused.
+    _select_experiment_type(editor._global_tab, "Valence")
+    out = tmp_path / "bad_valence.yaml"
+    editor._write(out)
+    assert dialogs["warning"], "an invalid typed config was allowed through"
+    assert not out.exists()
+
+
+def _valence_editor(qapp, tmp_path, rig):
+    from pytrackinganalysis.apps.config_editor import ConfigEditorWindow
+    cfg = {"global": {"experiment_type": "Valence", "tracking_rig": rig},
+           "counting_regions": {"Light": {"alias": "L"}, "NoLight": {"alias": "N"}}}
+    path = tmp_path / "tracking_config.yaml"
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return ConfigEditorWindow(str(path))
+
+
+def test_opening_a_valence_max_project_lays_out_36_regions(qapp, tmp_path, dialogs):
+    win = _valence_editor(qapp, tmp_path, "arena_max")
+    assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(36)]
+    win.close()
+
+
+def test_opening_a_valence_colosseum_project_lays_out_24_regions(qapp, tmp_path, dialogs):
+    win = _valence_editor(qapp, tmp_path, "colosseum")
+    assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(24)]
+    win.close()
+
+
+def test_changing_valence_rig_regenerates_the_plate_on_confirm(qapp, tmp_path, dialogs, monkeypatch):
+    from pytrackinganalysis.apps import config_editor as ce
+    from pytrackinganalysis.apps._config_tabs import _find_data
+    win = _valence_editor(qapp, tmp_path, "arena_max")
+    assert len(win._tracking_tab.region_names()) == 36
+    # Confirm the destructive regenerate.
+    monkeypatch.setattr(ce.QMessageBox, "question",
+                        lambda *a, **k: ce.QMessageBox.StandardButton.Yes)
+    gt = win._global_tab
+    gt.tracking_rig.setCurrentIndex(_find_data(gt.tracking_rig, "colosseum"))
+    assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(24)]
+    win.close()
+
+
+def test_declining_valence_rig_change_keeps_existing_regions(qapp, tmp_path, dialogs):
+    # dialogs fixture answers question() with No -> plate is left untouched.
+    from pytrackinganalysis.apps._config_tabs import _find_data
+    win = _valence_editor(qapp, tmp_path, "arena_max")
+    gt = win._global_tab
+    gt.tracking_rig.setCurrentIndex(_find_data(gt.tracking_rig, "colosseum"))
+    assert len(win._tracking_tab.region_names()) == 36  # unchanged
+    win.close()
+
+
+def test_scaffold_project_creates_a_shaped_incomplete_valence_project(qapp, tmp_path):
+    from pytrackinganalysis.apps.config_editor import ConfigEditorWindow
+    from pytrackinganalysis import config_validation
+
+    config_path = ConfigEditorWindow.scaffold_project(tmp_path, "MyValence", "Valence")
+    project = config_path.parent
+    assert (project / "data").is_dir()
+    assert (project / "analysis").is_dir() and (project / "qc").is_dir()
+
+    cfg = yaml.safe_load(config_path.read_text())
+    assert cfg["global"]["experiment_type"] == "Valence"
+    assert list(cfg["counting_regions"]) == ["Light", "NoLight"]
+    # Intentionally incomplete: rig is blank, so it does not yet validate.
+    problems = config_validation.validate_config(cfg)
+    assert any("tracking_rig" in p for p in problems)
+
+
+def test_scaffold_project_refuses_to_overwrite(qapp, tmp_path):
+    from pytrackinganalysis.apps.config_editor import ConfigEditorWindow
+    (tmp_path / "Dup").mkdir()
+    with pytest.raises(FileExistsError):
+        ConfigEditorWindow.scaffold_project(tmp_path, "Dup", "Valence")
+
+
+# --------------------------------------------------------------------------
+# Create Experiment wizard
+# --------------------------------------------------------------------------
+
+def test_create_project_writes_config_and_dirs(qapp, tmp_path):
+    from pytrackinganalysis.apps.create_experiment import create_project
+    from pytrackinganalysis import experiment_types as et
+    cfg = et.get_experiment_type("Valence").build_config(rig="colosseum")
+    path = create_project(tmp_path, "Exp1", cfg)
+    proj = path.parent
+    assert proj == tmp_path / "Exp1" and path.name == "tracking_config.yaml"
+    assert (proj / "data").is_dir() and (proj / "analysis").is_dir() and (proj / "qc").is_dir()
+    loaded = yaml.safe_load(path.read_text())
+    assert loaded["global"]["experiment_type"] == "Valence"
+    assert len(loaded["tracking_regions"]) == 24
+
+
+def test_create_project_refuses_existing(qapp, tmp_path):
+    from pytrackinganalysis.apps.create_experiment import create_project
+    (tmp_path / "Dup").mkdir()
+    with pytest.raises(FileExistsError):
+        create_project(tmp_path, "Dup", {"global": {}})
+
+
+def _valence_dialog(qapp, tmp_path, rig):
+    from pytrackinganalysis.apps.create_experiment import ConfigureExperimentDialog
+    from pytrackinganalysis.apps._config_tabs import _find_data
+    d = ConfigureExperimentDialog(start_dir=str(tmp_path))
+    d.type_combo.setCurrentIndex(_find_data(d.type_combo, "Valence"))
+    d.rig_combo.setCurrentIndex(_find_data(d.rig_combo, rig))
+    return d
+
+
+def test_wizard_builds_valence_config_with_factors(qapp, tmp_path):
+    from PyQt6.QtWidgets import QTableWidgetItem
+    d = _valence_dialog(qapp, tmp_path, "arena_max")
+    d.facets_edit.setText("10, 70")
+    d.factors_table.insertRow(0)
+    d.factors_table.setItem(0, 0, QTableWidgetItem("feeding"))
+    d.factors_table.setItem(0, 1, QTableWidgetItem("Starved, Control"))
+    cfg = d.build_config()
+    g = cfg["global"]
+    assert g["experiment_type"] == "Valence" and g["tracking_rig"] == "arena_max"
+    assert g["facet_cutoffs"] == [10, 70]
+    assert g["experimental_design_factors"] == {"feeding": ["Starved", "Control"]}
+    assert len(cfg["tracking_regions"]) == 36
+    assert cfg["tracking_regions"]["T_0"]["x_location_multiplier"] == -1
+    assert cfg["tracking_regions"]["T_18"]["x_location_multiplier"] == 1
+    d.close()
+
+
+def test_wizard_constrains_rig_and_locks_tracking_type_for_valence(qapp, tmp_path):
+    d = _valence_dialog(qapp, tmp_path, "arena_max")
+    rigs = {d.rig_combo.itemData(i) for i in range(d.rig_combo.count())}
+    assert rigs == {"arena_max", "colosseum"}
+    assert not d.tracking_type_combo.isEnabled()
+    d.close()
+
+
+def test_wizard_accept_creates_the_project(qapp, tmp_path):
+    d = _valence_dialog(qapp, tmp_path, "colosseum")
+    d.name_edit.setText("MyExp")
+    d.dir_edit.setText(str(tmp_path))           # parent dir; MyExp is created in it
+    d._on_accept()
+    project = tmp_path / "MyExp"
+    assert d.created_path == project / "tracking_config.yaml"
+    assert d.created_path.exists() and (project / "data").is_dir()
+    # And the written config validates.
+    from pytrackinganalysis import config_validation
+    cfg = yaml.safe_load(d.created_path.read_text())
+    assert config_validation.validate_config(cfg) == []
+    d.close()
 
 
 def test_editor_rig_calibrations_match_the_analysis(qapp):

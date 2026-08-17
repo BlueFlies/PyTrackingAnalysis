@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -29,6 +30,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import config_validation
+from .. import experiment_types as _et
 from ..io_utils import atomic_write_text
 from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
@@ -53,6 +56,9 @@ class ConfigEditorWindow(QMainWindow):
         self.resize(1200, 820)
         self._current_path: Optional[Path] = None
         self._disk_text: str = ""  # yaml serialized at last load/save
+        # True while _load_path is populating the tabs, so the experiment-type
+        # change signal does not pop a "seed regions?" dialog during a load.
+        self._loading: bool = False
         # The document as loaded. Saving edits only the sections this editor
         # owns, so keys it does not display (scripts:, anything hand-added)
         # survive a load/save round trip.
@@ -95,6 +101,14 @@ class ConfigEditorWindow(QMainWindow):
 
         # ── Top bar ─────────────────────────────────────────────────────
         self._top_bar = TopBar("Config Editor")
+        btn_new = QToolButton()
+        btn_new.setIcon(icon("new"))
+        btn_new.setIconSize(QSize(18, 18))
+        btn_new.setAutoRaise(True)
+        btn_new.setToolTip("New project from an Experiment Type…")
+        btn_new.clicked.connect(self._new_project)
+        self._top_bar.add_right(btn_new)
+
         btn_open = QToolButton()
         btn_open.setIcon(icon("open"))
         btn_open.setIconSize(QSize(18, 18))
@@ -172,6 +186,12 @@ class ConfigEditorWindow(QMainWindow):
         self._tabs.addTab(self._global_tab, "Global")
         self._tabs.addTab(self._tracking_tab, "Tracking regions")
         self._tabs.addTab(self._counting_tab, "Counting regions")
+        # When the user picks a typed Experiment Type, offer to seed its required
+        # counting regions (never deleting existing ones).
+        self._global_tab.experimentTypeChanged.connect(self._maybe_seed_required_regions)
+        # When a typed rig fixes the plate (Valence Max=36, Colosseum=24), lay
+        # out the tracking regions on rig change.
+        self._global_tab.rigChanged.connect(self._maybe_populate_tracking_regions)
         tabs_card.add_body(self._tabs)
         outer.addWidget(tabs_card, 1)
 
@@ -184,6 +204,61 @@ class ConfigEditorWindow(QMainWindow):
     # ==================================================================
     # Load / save
     # ==================================================================
+
+    @staticmethod
+    def scaffold_project(parent_dir, name: str, type_name: str):
+        """Create a new project folder for an Experiment Type and return the path
+        to its ``tracking_config.yaml``.
+
+        Makes ``<parent>/<name>/`` with ``data/``, ``analysis/``, ``qc/`` and a
+        minimal, intentionally-incomplete ``tracking_config.yaml`` from the
+        type's scaffold (rig unset, required regions stubbed). Pure filesystem
+        work — no Qt — so it is unit-testable. Raises if the folder exists.
+        """
+        project = Path(parent_dir) / name
+        if project.exists():
+            raise FileExistsError(f"'{project}' already exists.")
+        (project / "data").mkdir(parents=True, exist_ok=False)
+        (project / "analysis").mkdir(exist_ok=True)
+        (project / "qc").mkdir(exist_ok=True)
+        config = _et.get_experiment_type(type_name).scaffold_config()
+        config_path = project / "tracking_config.yaml"
+        atomic_write_text(
+            config_path,
+            lambda handle: yaml.dump(config, handle, default_flow_style=False,
+                                     allow_unicode=True, sort_keys=False),
+        )
+        return config_path
+
+    def _new_project(self) -> None:
+        types = _et.available_experiment_types()
+        labels = [t.display_name for t in types]
+        label, ok = QInputDialog.getItem(
+            self, "New project", "Experiment type:", labels, 0, False)
+        if not ok:
+            return
+        chosen = next(t for t in types if t.display_name == label)
+        name, ok = QInputDialog.getText(self, "New project", "Project folder name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        parent = QFileDialog.getExistingDirectory(self, "Choose where to create the project")
+        if not parent:
+            return
+        try:
+            config_path = self.scaffold_project(parent, name, chosen.name)
+        except FileExistsError:
+            QMessageBox.warning(self, "New project",
+                                f"A folder named '{name}' already exists there.")
+            return
+        except Exception as err:  # noqa: BLE001
+            QMessageBox.critical(self, "New project", f"Could not create project:\n{err}")
+            return
+        self._load_path(config_path)
+        QMessageBox.information(
+            self, "New project",
+            f"Created {config_path.parent}.\n\nNext: choose a rig, fill in the "
+            "tracking regions, and put the DTrack export in data/.")
 
     def _open_dialog(self) -> None:
         start = str(self._current_path.parent) if self._current_path else os.getcwd()
@@ -202,9 +277,21 @@ class ConfigEditorWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not load file:\n{err}")
             return
         self._loaded_config = config if isinstance(config, dict) else {}
-        self._global_tab.load(config)
-        self._tracking_tab.load(config)
-        self._counting_tab.load(config)
+        self._loading = True
+        try:
+            self._global_tab.load(config)
+            self._tracking_tab.load(config)
+            self._counting_tab.load(config)
+        finally:
+            self._loading = False
+        # A freshly opened typed project whose rig fixes the plate but has no
+        # regions yet (e.g. a scaffolded Valence project) gets them laid out
+        # silently. Only when empty — an existing plate is never touched on load.
+        t = self._global_tab.current_experiment_type()
+        rig = self._global_tab.tracking_rig.currentData()
+        expected = t.regions_for_rig(rig) if hasattr(t, "regions_for_rig") else None
+        if expected and not self._tracking_tab.region_names():
+            self._tracking_tab.set_region_names(expected)
         self._current_path = path
         self._disk_text = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
         self._set_title(path)
@@ -227,6 +314,68 @@ class ConfigEditorWindow(QMainWindow):
             self._current_path = Path(path)
             self._set_title(self._current_path)
 
+    def _maybe_seed_required_regions(self) -> None:
+        """Offer to add a typed Experiment Type's required counting regions.
+
+        Fires when the user changes the Experiment Type (suppressed during a
+        load). Never deletes existing regions — it only appends the missing
+        required ones, so the user resolves any extras themselves.
+        """
+        if self._loading:
+            return
+        t = self._global_tab.current_experiment_type()
+        required = getattr(t, "required_counting_regions", None)
+        if not required:
+            return
+        have = self._counting_tab.labels()
+        missing = [k for k in required if k not in have]
+        if not missing:
+            return
+        stub = t.scaffold_config().get("counting_regions") or {}
+        resp = QMessageBox.question(
+            self,
+            f"{t.display_name} counting regions",
+            f"{t.display_name} requires counting regions {list(required)} "
+            f"(in that order).\nMissing: {missing}.\n\n"
+            "Add the missing region(s) now? Existing regions are kept — remove "
+            "any extras manually.",
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            for key in missing:
+                aliases = (stub.get(key) or {}).get("alias", key)
+                self._counting_tab.add_region(key, aliases)
+            self._tabs.setCurrentWidget(self._counting_tab)
+
+    def _maybe_populate_tracking_regions(self, rig: str) -> None:
+        """Lay out a typed Experiment Type's fixed plate when the rig is chosen.
+
+        Fires on rig change (suppressed during a load). Fills an empty table
+        silently; if regions are already present and don't match, asks before
+        replacing them, so treatment assignments are never wiped without consent.
+        """
+        if self._loading:
+            return
+        t = self._global_tab.current_experiment_type()
+        expected = t.regions_for_rig(rig) if hasattr(t, "regions_for_rig") else None
+        if not expected:
+            return
+        have = self._tracking_tab.region_names()
+        if have == expected:
+            return
+        if have:
+            resp = QMessageBox.question(
+                self,
+                f"{t.display_name} tracking regions",
+                f"{t.display_name} on this rig needs {len(expected)} tracking "
+                f"regions ({expected[0]}..{expected[-1]}).\n\n"
+                f"Replace the current {len(have)} region(s)? Treatment "
+                "assignments will be reset.",
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        self._tracking_tab.set_region_names(expected)
+        self._tabs.setCurrentWidget(self._tracking_tab)
+
     def _write(self, path: Path) -> None:
         errors = self._global_tab.validation_errors()
         if errors:
@@ -240,6 +389,20 @@ class ConfigEditorWindow(QMainWindow):
             return
 
         config = self._dump_config()
+
+        # A typed experiment fails hard at load (ADR-0001), so block a save that
+        # would produce a config the pipeline will refuse. Custom stays lenient.
+        exp_type = self._global_tab.current_experiment_type()
+        if not exp_type.is_custom:
+            problems = config_validation.validate_config(config)
+            if problems:
+                QMessageBox.warning(
+                    self,
+                    f"{exp_type.display_name} configuration is incomplete",
+                    "The config was not saved — a typed experiment must be valid "
+                    "to load:\n\n  • " + "\n  • ".join(problems),
+                )
+                return
         try:
             # Atomic: the config is the project's only definition of the
             # experiment, and a plain open(path, "w") truncates it before the

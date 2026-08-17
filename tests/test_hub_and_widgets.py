@@ -382,6 +382,23 @@ def test_experiment_honours_an_alternative_config_path(tmp_path):
     assert exp.facet_cutoffs == (3,), "the alternative config was not the one loaded"
 
 
+def test_project_summary_shows_experiment_type_on_open(hub, tmp_path):
+    (tmp_path / "tracking_config.yaml").write_text(yaml.safe_dump({
+        "global": {"experiment_type": "Valence", "tracking_rig": "arena_max"},
+        "counting_regions": {"Light": {"alias": "L"}, "NoLight": {"alias": "N"}},
+        "tracking_regions": {f"T_{i}": {"experimental_factors": "control"}
+                             for i in range(36)},
+    }, sort_keys=False))
+    hub._set_project_dir(tmp_path)
+
+    # isVisible() needs the whole window shown; isHidden() reflects our setVisible.
+    assert not hub._project_summary.isHidden()
+    text = hub._project_summary.text()
+    assert "Valence Experiment" in text
+    assert "TWOCHOICETRACKER" in text
+    assert "control ×36" in text
+
+
 def test_selecting_the_canonical_config_hides_the_warning(hub, tmp_path):
     _write_config(tmp_path / "tracking_config.yaml", "canonical")
     _write_config(tmp_path / "alt_config.yaml", "alternative")
@@ -647,6 +664,65 @@ def test_worker_output_does_not_steal_main_thread_prints(qapp, capsys):
 def test_a_failed_task_shows_a_dialog(hub, no_dialogs):
     hub._on_task_failed("Run analysis failed:\nTraceback…")
     assert no_dialogs["warning"], "a failed analysis looked exactly like a finished one"
+
+
+# --------------------------------------------------------------------------
+# Run-notes dialog on the analysis / report buttons
+# --------------------------------------------------------------------------
+
+class _NotesExp:
+    def __init__(self, existing="old note"):
+        self.existing = existing
+        self.saved = None
+
+    def read_run_notes(self):
+        return self.existing
+
+    def write_run_notes(self, text):
+        self.saved = text
+
+    def run_analysis(self):
+        pass
+
+    def create_report(self):
+        return "done"
+
+
+def test_run_notes_dialog_saves_before_the_report_task(hub, monkeypatch):
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    exp = _NotesExp()
+    hub._exp = exp
+    spawned = []
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda title, fn: spawned.append(title))
+    seen = {}
+
+    def _fake_dialog(parent, title, label, text=""):
+        seen["prefill"] = text
+        return "fresh notes", True
+
+    monkeypatch.setattr(hub_mod.QInputDialog, "getMultiLineText",
+                        staticmethod(_fake_dialog))
+    hub._run_create_report()
+    assert seen["prefill"] == "old note", "existing notes were not offered for editing"
+    assert exp.saved == "fresh notes"
+    assert spawned == ["PDF report"]
+
+
+def test_run_notes_dialog_cancel_keeps_existing_notes(hub, monkeypatch):
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    exp = _NotesExp()
+    hub._exp = exp
+    spawned = []
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda title, fn: spawned.append(title))
+    monkeypatch.setattr(hub_mod.QInputDialog, "getMultiLineText",
+                        staticmethod(lambda *a, **k: ("ignored", False)))
+    hub._run_full_analysis()
+    assert exp.saved is None, "cancel must not touch the saved notes"
+    assert spawned == ["Run analysis"], "cancelling notes must not cancel the run"
 
 
 def test_finished_child_apps_are_reaped(hub):

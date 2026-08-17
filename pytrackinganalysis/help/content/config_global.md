@@ -25,6 +25,7 @@ Define factor names and levels (e.g. Genotype: CS, Mutant). Tracking-region rows
 Common optional keys include:
 
 - **`facet_cutoffs`** — minute boundaries for faceted summaries/plots (e.g. `10, 70`).
+- **`facet_labels`** — optional names for the resulting phases, one per phase (e.g. `Acclimation, Experiment, Cooldown`). Falls back to the Experiment Type's defaults, then plain minute ranges.
 - Parameter overrides (sleep threshold, walking speed, interaction distances, …) when you need to leave rig defaults.
 
 Use the Hub **Faceted** checkbox / plot buttons with the same cutoffs after load.

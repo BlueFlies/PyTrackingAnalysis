@@ -26,6 +26,12 @@ global:
   # Example: [10, 70] creates three phases — 0-10 min, 10-70 min, 70+ min.
   facet_cutoffs: [10, 70]
 
+  # Optional names for those phases, one per phase (= cutoffs + 1). Shown in
+  # faceted figures, the report, and project summaries. Omit to use the
+  # Experiment Type's defaults (Valence: Acclimation / Experiment / Cooldown)
+  # or plain minute ranges.
+  # facet_labels: [Acclimation, Experiment, Cooldown]
+
   # ── Optional: Parameter Overrides ─────────────────────────────────────────
   #
   # These override the values set by tracking_rig. Only specify what you need

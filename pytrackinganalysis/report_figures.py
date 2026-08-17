@@ -148,9 +148,13 @@ def _phase_label(window) -> str:
 
 
 def _phase_panel(ax, fsummary, metric, treatments, phases, ylabel, ylim=None,
-                 ref_line=None):
+                 ref_line=None, phase_labels=None):
     """A metric-by-phase panel: for each phase, one dodged, jittered cluster of
-    points per treatment with a mean bar. The x-axis is the facet phase."""
+    points per treatment with a mean bar. The x-axis is the facet phase.
+
+    ``phase_labels`` (aligned to ``phases``) overrides the default minute-range
+    tick labels — an Experiment Type supplies named phases (e.g. Acclimation).
+    """
     _style_ax(ax)
     rng = np.random.default_rng(0)
     n_t = max(1, len(treatments))
@@ -175,8 +179,9 @@ def _phase_panel(ax, fsummary, metric, treatments, phases, ylabel, ylim=None,
                           color=_MEAN_COLOR, linewidth=1.8, zorder=4)
     if ref_line is not None:
         ax.axhline(ref_line, color="#94a3b8", linewidth=0.8, linestyle="--")
+    labels = phase_labels if phase_labels is not None else [_phase_label(p) for p in phases]
     ax.set_xticks(range(len(phases)))
-    ax.set_xticklabels([_phase_label(p) for p in phases])
+    ax.set_xticklabels(labels)
     ax.set_xlabel("Phase (min)", fontsize=8, color=_MUTED)
     ax.set_ylabel(ylabel, fontsize=9, color=_INK)
     if ylim is not None:
@@ -316,6 +321,16 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         if w not in phases:
             phases.append(w)
 
+    # Named phase labels: the config's facet_labels first, then the Experiment
+    # Type's defaults (e.g. Valence: Acclimation/Experiment/Cooldown), then
+    # minute ranges.
+    exp_type = getattr(experiment, "experiment_type", None)
+    if exp_type is not None:
+        global_cfg = (getattr(experiment, "config", None) or {}).get("global") or {}
+        phase_labels = exp_type.phase_labels_for(phases, global_cfg)
+    else:
+        phase_labels = [_phase_label(w) for w in phases]
+
     def _panels(specs, title, caption):
         """Build a one-row figure of phase panels from (metric, ylabel, ...) specs."""
         specs = [s for s in specs if s[0] in fsummary.columns]
@@ -326,7 +341,7 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
                                      squeeze=False)
             for ax, (metric, ylabel, ylim, ref) in zip(axes[0], specs):
                 _phase_panel(ax, fsummary, metric, treatments, phases, ylabel,
-                             ylim=ylim, ref_line=ref)
+                             ylim=ylim, ref_line=ref, phase_labels=phase_labels)
                 ax.set_title(ylabel, fontsize=10, color=_INK)
             # No matplotlib suptitle: the reportlab block title already labels
             # the figure, so a suptitle would duplicate it and waste space.
@@ -386,17 +401,20 @@ def build_qc_figures(experiment) -> list[m.Figure]:
                   else "#d97706" if (v == v and v >= 0.80)
                   else "#dc2626" for v in hq_sorted]
         n = len(hq_sorted)
-        fig, ax = plt.subplots(figsize=(9, max(2.4, 0.22 * n + 1.0)))
+        # Taller rows and larger type than the analysis figures: this chart is
+        # read tracker-by-tracker, so the names and scale must stay legible.
+        fig, ax = plt.subplots(figsize=(9, max(3.2, 0.32 * n + 1.2)))
         _style_ax(ax)
         ax.grid(True, axis="x", color=_GRID, linewidth=0.7)
         ax.barh(range(n), hq_sorted.fillna(0).values, color=colors,
                 edgecolor="white", linewidth=0.4)
         ax.axvline(0.90, color="#94a3b8", linewidth=0.9, linestyle="--")
         ax.set_yticks(range(n))
-        ax.set_yticklabels(labels.values, fontsize=6.5)
+        ax.set_yticklabels(labels.values, fontsize=10)
+        ax.tick_params(axis="x", labelsize=10)
         ax.set_xlim(0, 1)
-        ax.set_xlabel("Fraction high-quality frames", fontsize=9, color=_INK)
-        ax.set_title("Per-tracker data quality", fontsize=10, color=_INK)
+        ax.set_xlabel("Fraction high-quality frames", fontsize=13, color=_INK)
+        ax.set_title("Per-tracker data quality", fontsize=14, color=_INK)
         fig.tight_layout()
         blocks.append(_fig_to_block(
             fig, title="Data quality",
@@ -405,3 +423,309 @@ def build_qc_figures(experiment) -> list[m.Figure]:
     except Exception:  # noqa: BLE001
         plt.close("all")
     return blocks
+
+
+# --------------------------------------------------------------------------
+# Valence-specific sections (served through ExperimentType.report_sections)
+# --------------------------------------------------------------------------
+
+# Sliding-window PI, matching the old notebooks' plot_trackers_pis defaults.
+_PI_WINDOW_MIN = 10
+_PI_STEP_MIN = 5
+
+
+def _global_cfg(experiment) -> dict:
+    return (getattr(experiment, "config", None) or {}).get("global") or {}
+
+
+def _facet_windows_and_labels(experiment):
+    """The experiment's facet windows with display labels, or ``([], [])``."""
+    cutoffs = getattr(experiment, "facet_cutoffs", None)
+    if not cutoffs:
+        return [], []
+    from . import windowing
+    windows = list(windowing.facet_windows(cutoffs))
+    exp_type = getattr(experiment, "experiment_type", None)
+    if exp_type is not None:
+        labels = exp_type.phase_labels_for(windows, _global_cfg(experiment))
+    else:
+        labels = [_phase_label(w) for w in windows]
+    return windows, labels
+
+
+def build_valence_sections(experiment) -> list:
+    """Valence-first report blocks, in reading order: the headline
+    Experiment-phase result (figure, sentence, pairwise-stats table), the
+    treatment-level PI-over-time trace, and per-animal phase persistence.
+
+    Defensive like the generic builders: each section is skipped when its data
+    cannot be built, so a thin dataset degrades to a shorter report rather than
+    no report.
+    """
+    blocks: list = []
+    blocks += _valence_headline(experiment)
+    blocks += _valence_pi_over_time(experiment)
+    blocks += _valence_persistence(experiment)
+    return blocks
+
+
+def _primary_phase(windows, labels):
+    """The phase the primary result is read from: the second window of the
+    Valence structure (Experiment), else the only window there is."""
+    idx = 1 if len(windows) >= 2 else 0
+    return windows[idx], labels[idx]
+
+
+def _valence_headline(experiment) -> list:
+    """Experiment-phase PI: the report's first, headline answer."""
+    windows, labels = _facet_windows_and_labels(experiment)
+    if windows:
+        window, label = _primary_phase(windows, labels)
+        where = f"{label} phase ({_phase_label(window)} min)"
+    else:
+        window, where = None, "whole recording"
+    try:
+        summary = (experiment.arena.summarize(range_minutes=window)
+                   if window is not None else experiment.arena.summarize())
+    except Exception:  # noqa: BLE001
+        return []
+    if summary is None or "FinalPI" not in getattr(summary, "columns", []):
+        return []
+    treatments = _treatments(summary)
+    if not treatments:
+        return []
+
+    blocks: list = []
+    try:
+        fig, ax = plt.subplots(figsize=(5.2, 4.2))
+        _strip_panel(ax, summary, "FinalPI", treatments, "Final PI",
+                     ylim=(-1.05, 1.05), ref_line=0.0)
+        ax.set_title(f"Preference index — {where}", fontsize=10, color=_INK)
+        fig.tight_layout()
+        blocks.append(_fig_to_block(
+            fig, title="Headline result",
+            caption=f"Per-animal preference index during the {where} — the "
+                    "phase the primary result is read from. Positive PI = "
+                    "preference for Light. Red bar = group mean; dashed line "
+                    "= indifference."))
+    except Exception:  # noqa: BLE001
+        plt.close("all")
+        return []
+
+    parts = []
+    for treat in treatments:
+        mask = summary["Treatment"].astype(str).str.strip() == treat
+        vals = _numeric(summary[mask], "FinalPI").dropna()
+        if len(vals):
+            parts.append(f"{treat} {float(vals.mean()):+.2f} (n={len(vals)})")
+    if parts:
+        blocks.append(m.Paragraph(
+            f"Mean preference index during the {where}: {'; '.join(parts)}. "
+            "Positive PI indicates preference for Light over NoLight."))
+
+    table = _pairwise_table(summary, "FinalPI", treatments, where)
+    if table is not None:
+        blocks.append(table)
+    return blocks
+
+
+def _pairwise_table(summary, metric, treatments, where):
+    """Pairwise treatment comparisons as a semantic Table — Welch's t-test for
+    two groups, Tukey HSD beyond, the same policy as ``Experiment.stats``.
+    Returns ``None`` when fewer than two groups have enough data."""
+    groups: dict[str, np.ndarray] = {}
+    for treat in treatments:
+        mask = summary["Treatment"].astype(str).str.strip() == treat
+        vals = _numeric(summary[mask], metric).dropna().values
+        if len(vals) >= 2:
+            groups[treat] = vals
+    if len(groups) < 2:
+        return None
+    rows, levels = [], []
+    try:
+        if len(groups) == 2:
+            from scipy import stats as sstats
+            (name_a, vals_a), (name_b, vals_b) = groups.items()
+            _stat, p = sstats.ttest_ind(vals_a, vals_b, equal_var=False)
+            significant = bool(p < 0.05)
+            rows.append([name_a, name_b,
+                         f"{float(np.mean(vals_b) - np.mean(vals_a)):+.3f}",
+                         f"{float(p):.4g}", "yes" if significant else "no"])
+            levels.append(m.Level.OK if significant else None)
+            method = "Welch's t-test"
+        else:
+            import itertools
+
+            from statsmodels.stats.multicomp import pairwise_tukeyhsd
+            endog = np.concatenate(list(groups.values()))
+            group_labels = np.concatenate(
+                [[t] * len(v) for t, v in groups.items()])
+            res = pairwise_tukeyhsd(endog=endog, groups=group_labels, alpha=0.05)
+            pairs = list(itertools.combinations(res.groupsunique, 2))
+            for (ga, gb), diff, p, rej in zip(pairs, res.meandiffs,
+                                             res.pvalues, res.reject):
+                rows.append([str(ga), str(gb), f"{float(diff):+.3f}",
+                             f"{float(p):.4g}", "yes" if rej else "no"])
+                levels.append(m.Level.OK if rej else None)
+            method = "Tukey HSD"
+    except Exception:  # noqa: BLE001
+        return None
+    return m.Table(
+        columns=["Group A", "Group B", "Mean diff (B − A)", "p-value",
+                 "Significant"],
+        rows=rows, row_levels=levels,
+        title=f"{metric} — pairwise comparisons",
+        caption=f"{method} on per-animal {metric} during the {where}; "
+                f"α = 0.05.")
+
+
+def _valence_pi_over_time(experiment) -> list:
+    """Treatment-mean sliding-window PI across the recording, phases marked."""
+    trackers = getattr(getattr(experiment, "arena", None), "trackers", None)
+    if not trackers:
+        return []
+    # treatment -> window end minute -> per-animal PIs in that window.
+    series: dict[str, dict[float, list[float]]] = {}
+    for tracker in trackers.values():
+        try:
+            treat = str(tracker.get_treatment() or "").strip()
+            td = tracker.get_time_dependent_pi(_PI_WINDOW_MIN, _PI_STEP_MIN)
+        except Exception:  # noqa: BLE001
+            continue
+        if not treat or td is None or len(td) == 0:
+            continue
+        for end, pi in zip(td["EndMin"], td["PI"]):
+            if pi == pi:  # drop NaN (no occupancy data in the window)
+                series.setdefault(treat, {}).setdefault(
+                    float(end), []).append(float(pi))
+    if not series:
+        return []
+
+    windows, labels = _facet_windows_and_labels(experiment)
+    try:
+        fig, ax = plt.subplots(figsize=(9, 4.2))
+        _style_ax(ax)
+        for i, (treat, per_end) in enumerate(series.items()):
+            ends = sorted(per_end)
+            means = np.array([np.mean(per_end[e]) for e in ends])
+            sems = np.array([
+                np.std(per_end[e], ddof=1) / np.sqrt(len(per_end[e]))
+                if len(per_end[e]) > 1 else 0.0
+                for e in ends])
+            color = _TREAT_PALETTE[i % len(_TREAT_PALETTE)]
+            n = max(len(v) for v in per_end.values())
+            ax.plot(ends, means, color=color, linewidth=1.8,
+                    label=f"{treat} (n={n})")
+            ax.fill_between(ends, means - sems, means + sems,
+                            color=color, alpha=0.15, linewidth=0)
+        ax.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
+        for cutoff in (getattr(experiment, "facet_cutoffs", None) or []):
+            ax.axvline(float(cutoff), color="#cbd5e1", linewidth=0.9)
+        if windows:
+            x_right = ax.get_xlim()[1]
+            for win, label in zip(windows, labels):
+                lo = float(win[0])
+                hi = x_right if win[1] == float("inf") else float(win[1])
+                if min(hi, x_right) > lo:
+                    ax.text((lo + min(hi, x_right)) / 2, 1.02, label,
+                            fontsize=8, color=_MUTED, ha="center",
+                            transform=ax.get_xaxis_transform())
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xlabel("Minutes", fontsize=9, color=_INK)
+        ax.set_ylabel("PI", fontsize=9, color=_INK)
+        ax.legend(fontsize=8, frameon=False, loc="lower right")
+        fig.tight_layout()
+        return [_fig_to_block(
+            fig, title="Preference over time",
+            caption=f"Sliding-window preference index (window "
+                    f"{_PI_WINDOW_MIN} min, step {_PI_STEP_MIN} min), mean ± "
+                    "SEM per treatment. Vertical lines mark phase boundaries; "
+                    "positive PI = toward Light.")]
+    except Exception:  # noqa: BLE001
+        plt.close("all")
+        return []
+
+
+def _valence_persistence(experiment) -> list:
+    """Per-animal PI across phases: emergence of the light response and its
+    persistence, plus the within-animal change from baseline."""
+    windows, labels = _facet_windows_and_labels(experiment)
+    if len(windows) < 2:
+        return []
+    try:
+        fsummary = experiment.arena.summarize_facet(
+            getattr(experiment, "facet_cutoffs", None))
+    except Exception:  # noqa: BLE001
+        return []
+    needed = {"FinalPI", "Treatment", "FacetRange"}
+    if fsummary is None or len(fsummary) == 0 \
+            or not needed <= set(fsummary.columns):
+        return []
+
+    # One column per phase, one row per animal. Every phase's rows come from
+    # the same per-tracker summarize, so identity is the Name column when
+    # present, else the row's position within its phase.
+    per_phase = []
+    for win in windows:
+        sub = fsummary[fsummary["FacetRange"] == win].reset_index(drop=True)
+        if len(sub) == 0:
+            return []
+        animal = (sub["Name"].astype(str) if "Name" in sub.columns
+                  else sub.index.astype(str))
+        per_phase.append(pd.DataFrame({
+            "animal": animal,
+            "Treatment": sub["Treatment"].astype(str).str.strip(),
+            "pi": _numeric(sub, "FinalPI"),
+        }))
+    treatments = [t for t in _treatments(per_phase[0]) if t]
+    if not treatments:
+        return []
+    wide = per_phase[0][["animal", "Treatment"]].copy()
+    for j, frame in enumerate(per_phase):
+        wide = wide.merge(frame[["animal", "pi"]].rename(columns={"pi": f"p{j}"}),
+                          on="animal", how="left")
+
+    _primary_win, primary_label = _primary_phase(windows, labels)
+    primary_col = f"p{1 if len(windows) >= 2 else 0}"
+    try:
+        fig, axes = plt.subplots(1, 2, figsize=(9.4, 4.2))
+        # Left: per-animal slope lines with treatment means.
+        ax = axes[0]
+        _style_ax(ax)
+        xs = range(len(windows))
+        for i, treat in enumerate(treatments):
+            color = _TREAT_PALETTE[i % len(_TREAT_PALETTE)]
+            rows = wide[wide["Treatment"] == treat]
+            for _, row in rows.iterrows():
+                ax.plot(xs, [row[f"p{j}"] for j in xs], color=color,
+                        alpha=0.3, linewidth=0.9, zorder=2)
+            means = [float(_numeric(rows, f"p{j}").mean()) for j in xs]
+            ax.plot(xs, means, color=color, linewidth=2.4, marker="o",
+                    markersize=4, zorder=4, label=treat)
+        ax.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
+        ax.set_xticks(list(xs))
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_ylabel("Final PI", fontsize=9, color=_INK)
+        ax.set_title("PI across phases", fontsize=10, color=_INK)
+        ax.legend(fontsize=7, frameon=False, ncol=len(treatments),
+                  loc="upper center", bbox_to_anchor=(0.5, -0.08))
+
+        # Right: within-animal change from baseline to the primary phase.
+        delta = pd.DataFrame({
+            "Treatment": wide["Treatment"],
+            "DeltaPI": _numeric(wide, primary_col) - _numeric(wide, "p0"),
+        })
+        _strip_panel(axes[1], delta, "DeltaPI", treatments,
+                     f"Δ PI ({primary_label} − {labels[0]})", ref_line=0.0)
+        axes[1].set_title("Change from baseline", fontsize=10, color=_INK)
+        fig.tight_layout()
+        return [_fig_to_block(
+            fig, title="Emergence & persistence",
+            caption=f"Left: each animal's PI across phases (thin lines) with "
+                    f"treatment means (bold). Right: within-animal change from "
+                    f"{labels[0]} to {primary_label}; positive = toward "
+                    "Light.")]
+    except Exception:  # noqa: BLE001
+        plt.close("all")
+        return []

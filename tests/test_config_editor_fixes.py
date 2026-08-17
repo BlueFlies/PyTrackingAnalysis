@@ -232,6 +232,30 @@ def test_whole_minute_cutoffs_still_round_trip(editor, config_path):
     assert yaml.safe_load(config_path.read_text())["global"]["facet_cutoffs"] == [5, 15, 30]
 
 
+def test_facet_labels_round_trip(editor, config_path):
+    editor._global_tab.facet_labels.setText("Warmup, Assay, Rest")
+    editor._save()
+    g = yaml.safe_load(config_path.read_text())["global"]
+    assert g["facet_labels"] == ["Warmup", "Assay", "Rest"]
+
+
+def test_mismatched_facet_labels_block_the_save(editor, config_path, dialogs):
+    # Two cutoffs = three phases; two names cannot label them.
+    editor._global_tab.facet_labels.setText("Warmup, Assay")
+    editor._save()
+    assert dialogs["warning"], "the user was told nothing"
+    assert "facet_labels" not in yaml.safe_load(config_path.read_text())["global"]
+
+
+def test_facet_labels_field_follows_the_faceting_checkbox(editor):
+    tab = editor._global_tab
+    assert tab.use_facets.isChecked() and tab.facet_labels.isEnabled()
+    tab.use_facets.setChecked(False)
+    assert not tab.facet_labels.isEnabled()
+    tab.use_facets.setChecked(True)
+    assert tab.facet_labels.isEnabled()
+
+
 # ==========================================================================
 # C3 — clearing a region table must actually clear it on disk
 # ==========================================================================

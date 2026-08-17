@@ -6,7 +6,7 @@ The Hub is the day-to-day driver: load an experiment, run analyses, view plots, 
 
 1. **Project** — choose the experiment folder and YAML; launch Config Editor or QC Viewer; Reload to re-scan.
 2. **Load** — **Single project** caches the experiment for reuse. **Batch experiments** runs the `batch` script in every child folder (see Batch experiments help).
-3. **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report**, **Summarize**, **Run pairwise comparisons**. Tasks run in the background; logs stream to **Output**.
+3. **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report**, **Summarize**, **Run pairwise comparisons**. Tasks run in the background; logs stream to **Output**. Run Analysis and Create PDF Report first ask for optional **run notes** (prefilled with the last notes; Cancel keeps them, blank clears them) — the notes are saved as `<Experiment>_Notes.txt` in `analysis/` and rendered near the top of the report.
 4. **Plots** — buttons for plots valid for the loaded tracking type. Each click adds a PlotDock tab. Toggle **Interactive plots** in the top bar for live zoom/pan.
 5. **Scripts** — run saved recipes from the YAML `scripts:` section.
 6. **Tools** — validate YAML, open `analysis/` / `qc/`, Batch tools, clear matplotlib cache.
