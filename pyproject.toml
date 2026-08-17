@@ -47,9 +47,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["pytrackinganalysis"]
 
-# Ensure in-app help markdown ships with the installed package.
-[tool.hatch.build.targets.wheel.force-include]
-"pytrackinganalysis/help/content" = "pytrackinganalysis/help/content"
 
 [dependency-groups]
 dev = [
