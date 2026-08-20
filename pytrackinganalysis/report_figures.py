@@ -76,9 +76,15 @@ def _numeric(summary: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(summary.get(col), errors="coerce")
 
 
+def _sem(vals) -> float:
+    """Standard error of the mean; 0 for a single observation."""
+    return float(np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else 0.0
+
+
 def _strip_panel(ax, summary, metric, treatments, ylabel, ylim=None,
                  ref_line=None):
-    """One metric-by-treatment panel: jittered points plus a mean bar per group."""
+    """One metric-by-treatment panel: jittered points plus a mean bar with SEM
+    whiskers per group."""
     _style_ax(ax)
     rng = np.random.default_rng(0)
     for i, treat in enumerate(treatments):
@@ -92,6 +98,8 @@ def _strip_panel(ax, summary, metric, treatments, ylabel, ylim=None,
             mean = float(np.mean(vals))
             ax.hlines(mean, i - 0.28, i + 0.28, color=_MEAN_COLOR,
                       linewidth=2.2, zorder=4)
+            ax.errorbar(i, mean, yerr=_sem(vals), fmt="none",
+                        ecolor=_MEAN_COLOR, elinewidth=1.3, capsize=3, zorder=4)
             # Label just above the right end of the mean bar so it never sits on
             # top of the jittered points or the line itself.
             ax.annotate(f"{mean:.3g}", xy=(i + 0.3, mean), fontsize=7,
@@ -147,47 +155,40 @@ def _phase_label(window) -> str:
     return f"{fmt(start)}–{fmt(end)}"
 
 
-def _phase_panel(ax, fsummary, metric, treatments, phases, ylabel, ylim=None,
-                 ref_line=None, phase_labels=None):
-    """A metric-by-phase panel: for each phase, one dodged, jittered cluster of
-    points per treatment with a mean bar. The x-axis is the facet phase.
+def _treatment_dot_panel(ax, sub, metric, treatments, ylim=None, ref_line=None,
+                         threshold=None):
+    """One facet's panel: per-treatment jittered dots with a mean point and SEM
+    bars overlaid. *sub* is the summary already restricted to one facet window.
 
-    ``phase_labels`` (aligned to ``phases``) overrides the default minute-range
-    tick labels — an Experiment Type supplies named phases (e.g. Acclimation).
-    """
+    ``threshold`` draws a dashed criterion line (e.g. the Low-Transition
+    Exclusion's ``min_transitions``) so the cut is visually auditable."""
     _style_ax(ax)
     rng = np.random.default_rng(0)
-    n_t = max(1, len(treatments))
-    slot = 0.8 / n_t
-    for ti, treat in enumerate(treatments):
-        color = _TREAT_PALETTE[ti % len(_TREAT_PALETTE)]
-        offset = (ti - (n_t - 1) / 2) * slot
-        drew_label = False
-        for pi, phase in enumerate(phases):
-            mask = ((fsummary["Treatment"].astype(str).str.strip() == treat)
-                    & (fsummary["FacetRange"] == phase))
-            vals = _numeric(fsummary[mask], metric).dropna().values
-            x0 = pi + offset
-            if len(vals):
-                x = x0 + (rng.random(len(vals)) - 0.5) * slot * 0.7
-                ax.scatter(x, vals, s=13, color=color, alpha=0.6,
-                           edgecolor="white", linewidth=0.3, zorder=3,
-                           label=treat if not drew_label else None)
-                drew_label = True
-                mean = float(np.mean(vals))
-                ax.hlines(mean, x0 - slot * 0.42, x0 + slot * 0.42,
-                          color=_MEAN_COLOR, linewidth=1.8, zorder=4)
+    for i, treat in enumerate(treatments):
+        mask = sub["Treatment"].astype(str).str.strip() == treat
+        vals = _numeric(sub[mask], metric).dropna().values
+        color = _TREAT_PALETTE[i % len(_TREAT_PALETTE)]
+        if len(vals):
+            x = i + (rng.random(len(vals)) - 0.5) * 0.32
+            ax.scatter(x, vals, s=14, color=color, alpha=0.55,
+                       edgecolor="white", linewidth=0.35, zorder=3)
+            ax.errorbar(i, float(np.mean(vals)), yerr=_sem(vals), fmt="D",
+                        color=_MEAN_COLOR, markersize=4.5, elinewidth=1.5,
+                        capsize=3.5, zorder=5)
     if ref_line is not None:
         ax.axhline(ref_line, color="#94a3b8", linewidth=0.8, linestyle="--")
-    labels = phase_labels if phase_labels is not None else [_phase_label(p) for p in phases]
-    ax.set_xticks(range(len(phases)))
-    ax.set_xticklabels(labels)
-    ax.set_xlabel("Phase (min)", fontsize=8, color=_MUTED)
-    ax.set_ylabel(ylabel, fontsize=9, color=_INK)
+    if threshold is not None:
+        ax.axhline(threshold, color=_MEAN_COLOR, linewidth=0.9, linestyle=":")
+        ax.annotate(f"min {threshold:g}", xy=(0.02, threshold), fontsize=6.5,
+                    color=_MEAN_COLOR, va="bottom", ha="left",
+                    xycoords=ax.get_yaxis_transform())
+    ax.set_xticks(range(len(treatments)))
+    ax.set_xticklabels(
+        [f"{t}\n(n={int(_numeric(sub[sub['Treatment'].astype(str).str.strip() == t], metric).notna().sum())})"
+         for t in treatments], fontsize=7)
+    ax.set_xlim(-0.6, len(treatments) - 0.4)
     if ylim is not None:
         ax.set_ylim(*ylim)
-    ax.legend(fontsize=7, frameon=False, ncol=n_t, loc="upper center",
-              bbox_to_anchor=(0.5, -0.12), columnspacing=1.0, handlelength=1.0)
 
 
 def build_analysis_figures(experiment) -> list[m.Figure]:
@@ -331,18 +332,36 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
     else:
         phase_labels = [_phase_label(w) for w in phases]
 
-    def _panels(specs, title, caption):
-        """Build a one-row figure of phase panels from (metric, ylabel, ...) specs."""
-        specs = [s for s in specs if s[0] in fsummary.columns]
-        if not specs:
+    # The Low-Transition Exclusion threshold, drawn on the Transitions figure's
+    # Primary-Phase panel so the criterion's cut is visually auditable.
+    threshold, primary_idx = None, None
+    if exp_type is not None:
+        try:
+            threshold = exp_type.resolve_min_transitions(
+                (getattr(experiment, "config", None) or {}).get("global") or {})
+        except Exception:  # noqa: BLE001
+            threshold = None
+        if threshold:
+            primary_idx = 1 if len(phases) >= 2 else 0
+
+    def _facet_figure(metric, ylabel, title, caption, ylim=None, ref=None,
+                      threshold_at=None):
+        """One figure for *metric*: a shared-y panel per facet phase, each with
+        per-treatment dots and a mean point with SEM bars."""
+        if metric not in fsummary.columns:
             return
         try:
-            fig, axes = plt.subplots(1, len(specs), figsize=(4.8 * len(specs), 4.4),
-                                     squeeze=False)
-            for ax, (metric, ylabel, ylim, ref) in zip(axes[0], specs):
-                _phase_panel(ax, fsummary, metric, treatments, phases, ylabel,
-                             ylim=ylim, ref_line=ref, phase_labels=phase_labels)
-                ax.set_title(ylabel, fontsize=10, color=_INK)
+            fig, axes = plt.subplots(
+                1, len(phases), figsize=(max(3.0, 1.1 * len(treatments)) * len(phases), 4.2),
+                sharey=True, squeeze=False)
+            for pi, (window, plabel) in enumerate(zip(phases, phase_labels)):
+                sub = fsummary[fsummary["FacetRange"] == window]
+                _treatment_dot_panel(
+                    axes[0][pi], sub, metric, treatments, ylim=ylim,
+                    ref_line=ref,
+                    threshold=threshold_at if pi == primary_idx else None)
+                axes[0][pi].set_title(plabel, fontsize=10, color=_INK)
+            axes[0][0].set_ylabel(ylabel, fontsize=9, color=_INK)
             # No matplotlib suptitle: the reportlab block title already labels
             # the figure, so a suptitle would duplicate it and waste space.
             fig.tight_layout()
@@ -350,29 +369,44 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         except Exception:  # noqa: BLE001
             plt.close("all")
 
-    _panels(
-        [("FinalPI", "Final PI", (-1.05, 1.05), 0.0),
-         ("FinalPercentage", "Final percentage", (-0.02, 1.02), 0.5)],
-        "Choice by phase",
-        "Final preference index and percentage across phases, by treatment. "
-        "Red bar = group mean.")
-    _panels(
-        [("Transitions", "Transitions", None, None)],
-        "Transitions by phase",
-        "Region transitions across phases, by treatment.")
-    _panels(
-        [("TotalDistancePerMin", "Distance (mm/min)", None, None)],
-        "Locomotion by phase",
-        "Distance travelled per minute across phases, by treatment.")
-    _panels(
-        [("AvgAdjX_mm", "Adjusted X (mm)", None, 0.0)],
-        "Position by phase",
-        "Mean polarity-adjusted X position across phases, by treatment.")
-    interacting = [(c, f"< {c.rsplit('_', 1)[-1]} mm", (-0.02, 1.02), None)
-                   for c in fsummary.columns if c.startswith("PercentInteracting_")]
-    if interacting:
-        _panels(interacting, "Interactions by phase",
-                "Fraction of valid frames interacting, across phases, by treatment.")
+    region1 = _region1_name(experiment)
+    _facet_figure(
+        "FinalPI", "PI", "Preference index by phase",
+        "Per-animal preference index in each phase, by treatment. Red point = "
+        "group mean ± SEM; dashed line = indifference.",
+        ylim=(-1.05, 1.05), ref=0.0)
+    _facet_figure(
+        "FinalPercentage", f"% time in {region1}",
+        f"Time in {region1} by phase",
+        f"Fraction of time each animal spent in the {region1} region in each "
+        "phase, by treatment. Red point = group mean ± SEM; dashed line = "
+        "indifference.",
+        ylim=(-0.02, 1.02), ref=0.5)
+    _facet_figure(
+        "Transitions", "Transitions", "Transitions by phase",
+        "Region transitions per animal in each phase, by treatment. Red point "
+        "= group mean ± SEM."
+        + (" Dotted line marks the exclusion criterion (min_transitions) in "
+           "the phase it is measured over." if threshold else ""),
+        threshold_at=threshold)
+    _facet_figure(
+        "TotalDistancePerMin", "Movement (mm/min)", "Movement by phase",
+        "Average movement (distance travelled per minute) in each phase, by "
+        "treatment. Red point = group mean ± SEM.")
+    _facet_figure(
+        "AvgAdjX_mm", "Adjusted X (mm)", "Position by phase",
+        "Mean polarity-adjusted X position in each phase, by treatment. Red "
+        "point = group mean ± SEM.",
+        ref=0.0)
+    for col in fsummary.columns:
+        if col.startswith("PercentInteracting_"):
+            dist = col.rsplit("_", 1)[-1]
+            _facet_figure(
+                col, f"Fraction of frames < {dist} mm",
+                f"Interactions < {dist} mm by phase",
+                "Fraction of valid frames interacting in each phase, by "
+                "treatment. Red point = group mean ± SEM.",
+                ylim=(-0.02, 1.02))
 
     return blocks
 
@@ -438,6 +472,15 @@ def _global_cfg(experiment) -> dict:
     return (getattr(experiment, "config", None) or {}).get("global") or {}
 
 
+def _region1_name(experiment) -> str:
+    """The first counting region's name — the region PI is scored toward
+    ('Light' for Valence) — else a generic label."""
+    regions = (getattr(experiment, "config", None) or {}).get("counting_regions") or {}
+    for name in regions:
+        return str(name)
+    return "region 1"
+
+
 def _facet_windows_and_labels(experiment):
     """The experiment's facet windows with display labels, or ``([], [])``."""
     cutoffs = getattr(experiment, "facet_cutoffs", None)
@@ -463,10 +506,50 @@ def build_valence_sections(experiment) -> list:
     no report.
     """
     blocks: list = []
+    blocks += _valence_exclusions(experiment)
     blocks += _valence_headline(experiment)
     blocks += _valence_pi_over_time(experiment)
     blocks += _valence_persistence(experiment)
     return blocks
+
+
+def _valence_exclusions(experiment) -> list:
+    """Accounting for the Low-Transition Exclusion (ADR-0003): a sentence, and
+    a table of the removed flies when there are any. Placed first so the reader
+    knows the population before any result."""
+    excluded = getattr(experiment, "excluded_flies", None)
+    if excluded is None:
+        return []
+    threshold = excluded.attrs.get("min_transitions")
+    phase = excluded.attrs.get("phase_label", "Primary")
+    if not threshold:
+        return [m.Paragraph(
+            "Low-transition exclusion is off (min_transitions = 0): every fly "
+            "is included in the results below.")]
+    if len(excluded) == 0:
+        return [m.Paragraph(
+            f"No flies were excluded: every fly made at least {threshold} "
+            f"transitions during the {phase} phase (min_transitions = "
+            f"{threshold}).")]
+    rows = []
+    for _, row in excluded.iterrows():
+        t = pd.to_numeric(pd.Series([row.get("Transitions")]), errors="coerce").iloc[0]
+        rows.append([str(row.get("Name", "")),
+                     str(row.get("TrackingRegion", "")),
+                     str(row.get("Treatment", "")),
+                     "no data" if pd.isna(t) else f"{t:g}"])
+    return [
+        m.Paragraph(
+            f"{len(excluded)} fly(ies) were excluded from all figures, summary "
+            f"measures, statistics, and data files: fewer than {threshold} "
+            f"transitions during the {phase} phase (min_transitions = "
+            f"{threshold}; see the _Excluded.csv output)."),
+        m.Table(
+            columns=["Fly", "Region", "Treatment", f"Transitions ({phase})"],
+            rows=rows, title="Excluded flies",
+            caption="Flies failing the low-transition criterion; 'no data' "
+                    "means the fly had no occupancy data in the phase."),
+    ]
 
 
 def _primary_phase(windows, labels):
@@ -581,12 +664,18 @@ def _pairwise_table(summary, metric, treatments, where):
 
 def _valence_pi_over_time(experiment) -> list:
     """Treatment-mean sliding-window PI across the recording, phases marked."""
-    trackers = getattr(getattr(experiment, "arena", None), "trackers", None)
+    arena = getattr(experiment, "arena", None)
+    trackers = getattr(arena, "trackers", None)
     if not trackers:
         return []
+    ## This builder reads trackers directly rather than through summarize(),
+    ## so it must honour the Low-Transition Exclusion itself (ADR-0003).
+    excluded = getattr(arena, "excluded_names", set()) or set()
     # treatment -> window end minute -> per-animal PIs in that window.
     series: dict[str, dict[float, list[float]]] = {}
     for tracker in trackers.values():
+        if str(getattr(tracker, "name", "")) in excluded:
+            continue
         try:
             treat = str(tracker.get_treatment() or "").strip()
             td = tracker.get_time_dependent_pi(_PI_WINDOW_MIN, _PI_STEP_MIN)

@@ -112,6 +112,7 @@ def _twochoice_summary():
         "PercResting": np.linspace(0.5, 0.3, n),
         "FinalPI": np.linspace(-0.5, 0.5, n),
         "FinalPercentage": np.linspace(0.3, 0.8, n),
+        "Transitions": np.linspace(2, 16, n),
     })
 
 
@@ -164,24 +165,25 @@ def test_faceted_figures_built_with_cutoffs():
 
 def test_faceted_figures_use_experiment_type_phase_labels(monkeypatch):
     # A Valence experiment_type should label phases Acclimation/Experiment/…
-    # rather than raw minute ranges. Capture the tick labels the panel sets.
+    # rather than raw minute ranges. Phases are the per-panel titles in the
+    # faceted layout; capture what each panel's set_title receives.
     from pytrackinganalysis import experiment_types as et
     from pytrackinganalysis import report_figures as rf
 
-    captured = {}
-    real = rf.plt.Axes.set_xticklabels
+    captured = []
+    real = rf.plt.Axes.set_title
 
-    def _spy(self, labels, *a, **k):
-        captured.setdefault("labels", list(labels))
-        return real(self, labels, *a, **k)
+    def _spy(self, label, *a, **k):
+        captured.append(str(label))
+        return real(self, label, *a, **k)
 
-    monkeypatch.setattr(rf.plt.Axes, "set_xticklabels", _spy)
+    monkeypatch.setattr(rf.plt.Axes, "set_title", _spy)
 
     exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
                    facet_cutoffs=[10, 70])
     exp.experiment_type = et.get_experiment_type("Valence")
     rf.build_faceted_figures(exp)
-    assert captured.get("labels") == ["Acclimation", "Experiment", "Cooldown"]
+    assert captured[:3] == ["Acclimation", "Experiment", "Cooldown"]
 
 
 def test_faceted_figures_prefer_configured_facet_labels(monkeypatch):
@@ -189,21 +191,21 @@ def test_faceted_figures_prefer_configured_facet_labels(monkeypatch):
     from pytrackinganalysis import experiment_types as et
     from pytrackinganalysis import report_figures as rf
 
-    captured = {}
-    real = rf.plt.Axes.set_xticklabels
+    captured = []
+    real = rf.plt.Axes.set_title
 
-    def _spy(self, labels, *a, **k):
-        captured.setdefault("labels", list(labels))
-        return real(self, labels, *a, **k)
+    def _spy(self, label, *a, **k):
+        captured.append(str(label))
+        return real(self, label, *a, **k)
 
-    monkeypatch.setattr(rf.plt.Axes, "set_xticklabels", _spy)
+    monkeypatch.setattr(rf.plt.Axes, "set_title", _spy)
 
     exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
                    facet_cutoffs=[10, 70])
     exp.experiment_type = et.get_experiment_type("Valence")
     exp.config = {"global": {"facet_labels": ["Baseline", "Stimulus", "Recovery"]}}
     rf.build_faceted_figures(exp)
-    assert captured.get("labels") == ["Baseline", "Stimulus", "Recovery"]
+    assert captured[:3] == ["Baseline", "Stimulus", "Recovery"]
 
 
 def _model_exp(tmp_path, exp_type_name=None, facet_cutoffs=(10, 70)):
@@ -304,6 +306,27 @@ def test_valence_pi_over_time_uses_trackers():
               for b in report_figures.build_valence_sections(exp)]
     assert "Preference over time" in titles
 
+    # The trace reads trackers directly, so it must honour the Low-Transition
+    # Exclusion itself: with every 'chr' fly excluded (by name), the trace only
+    # carries 'control'.
+    for name, tracker in exp.arena.trackers.items():
+        tracker.name = name
+    exp.arena.excluded_names = {"T_2"}
+    captured = {}
+    real_plot = report_figures.plt.Axes.plot
+
+    def _spy(self, *a, **k):
+        if "label" in k:
+            captured.setdefault("labels", []).append(k["label"])
+        return real_plot(self, *a, **k)
+
+    report_figures.plt.Axes.plot = _spy
+    try:
+        report_figures._valence_pi_over_time(exp)
+    finally:
+        report_figures.plt.Axes.plot = real_plot
+    assert captured["labels"] and all("control" in l for l in captured["labels"])
+
 
 def test_valence_sections_survive_thin_data():
     # No assigned treatments -> every section skips; no exception, no blocks.
@@ -382,3 +405,66 @@ def test_cover_lists_phases_and_regions(tmp_path):
         "Acclimation 0–10 · Experiment 10–70 · Cooldown 70+"
     assert metadata["Tracking regions"].startswith("3")
     assert "control ×1" in metadata["Tracking regions"]
+
+
+# ---- Low-Transition Exclusion accounting (ADR-0003) ------------------------
+
+def _excluded_df(rows):
+    df = pd.DataFrame(rows, columns=["Name", "TrackingRegion", "Treatment",
+                                     "Transitions"])
+    df.attrs.update({"min_transitions": 5, "window": (10, 70),
+                     "phase_label": "Experiment"})
+    return df
+
+
+def test_exclusion_section_lists_removed_flies():
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    exp.excluded_flies = _excluded_df([
+        ["T_1_0", "T_1", "control", 2.0],
+        ["T_2_0", "T_2", "chr", float("nan")],
+    ])
+    blocks = report_figures._valence_exclusions(exp)
+    assert len(blocks) == 2
+    assert isinstance(blocks[0], m.Paragraph) and "2 fly(ies)" in blocks[0].text
+    table = blocks[1]
+    assert isinstance(table, m.Table)
+    assert [r[0] for r in table.rows] == ["T_1_0", "T_2_0"]
+    # NA transitions (no data in the Primary Phase) is shown honestly.
+    assert table.rows[1][3] == "no data"
+    assert table.rows[0][3] == "2"
+
+
+def test_exclusion_section_zero_excluded_and_off():
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    exp.excluded_flies = _excluded_df([])
+    blocks = report_figures._valence_exclusions(exp)
+    assert len(blocks) == 1 and "No flies were excluded" in blocks[0].text
+
+    off = _excluded_df([])
+    off.attrs["min_transitions"] = 0
+    exp.excluded_flies = off
+    blocks = report_figures._valence_exclusions(exp)
+    assert len(blocks) == 1 and "exclusion is off" in blocks[0].text
+
+    # No criterion at all (Custom / attr absent): no block.
+    exp2 = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    assert report_figures._valence_exclusions(exp2) == []
+
+
+def test_faceted_figures_include_transitions_and_movement():
+    from pytrackinganalysis import experiment_types as et
+
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
+                   facet_cutoffs=[10, 70])
+    exp.experiment_type = et.get_experiment_type("Valence")
+    figs = report_figures.build_faceted_figures(exp)
+    titles = [f.title for f in figs]
+    assert "Preference index by phase" in titles
+    assert "Transitions by phase" in titles
+    assert "Movement by phase" in titles
+    # Percentage figure is labelled by the actual region-1 name when known.
+    exp.config = {"global": {},
+                  "counting_regions": {"Light": {"alias": "L"},
+                                       "NoLight": {"alias": "N"}}}
+    figs = report_figures.build_faceted_figures(exp)
+    assert "Time in Light by phase" in [f.title for f in figs]

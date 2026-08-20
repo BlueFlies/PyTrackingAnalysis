@@ -33,6 +33,10 @@ class ValenceExperimentType(ExperimentType):
     # The plate is fixed by the rig: Arena Max has 36 wells (T_0..T_35),
     # Colosseum has 24 (T_0..T_23).
     region_counts = {"arena_max": 36, "colosseum": 24}
+    # Low-Transition Exclusion (ADR-0003): flies with fewer than this many
+    # transitions during the Primary Phase are excluded from every result.
+    # yaml `min_transitions` overrides; 0 turns the exclusion off.
+    default_min_transitions = 5
 
     def report_intro(self) -> str:
         return ("A two-choice light-preference (valence) assay. Positive PI means "
@@ -42,7 +46,48 @@ class ValenceExperimentType(ExperimentType):
 
     def output_manifest(self) -> list[str]:
         # The data outputs a Valence run is expected to produce in analysis/.
-        return ["_Summary.csv", "_Summary_Facet.csv", "_Stats.txt"]
+        # _Excluded.csv is written even when nothing is excluded, so its absence
+        # never needs interpreting (ADR-0003).
+        return ["_Summary.csv", "_Summary_Facet.csv", "_Stats.txt",
+                "_Excluded.csv"]
+
+    def compute_exclusions(self, experiment):
+        """The Low-Transition Exclusion (ADR-0003): flies with fewer than
+        ``min_transitions`` transitions during the Primary Phase, including
+        flies with no data there at all (``Transitions`` NA).
+
+        Returns a DataFrame (possibly empty) of Name / TrackingRegion /
+        Treatment / Transitions rows, with the threshold and window recorded in
+        ``.attrs`` for the report, Stats preamble, and Excluded.csv.
+        """
+        import pandas as pd
+
+        from .. import windowing
+
+        global_cfg = (getattr(experiment, "config", None) or {}).get("global") or {}
+        threshold = self.resolve_min_transitions(global_cfg)
+
+        cutoffs = getattr(experiment, "facet_cutoffs", None)
+        if cutoffs:
+            windows = list(windowing.facet_windows(cutoffs))
+            primary = windows[1] if len(windows) >= 2 else windows[0]
+            label = self.phase_labels_for(windows, global_cfg)[windows.index(primary)]
+        else:
+            primary, label = (0, 0), "whole recording"
+
+        columns = ["Name", "TrackingRegion", "Treatment", "Transitions"]
+        excluded = pd.DataFrame(columns=columns)
+        if threshold and threshold > 0:
+            summary = experiment.arena.summarize(range_minutes=primary,
+                                                 include_excluded=True)
+            transitions = pd.to_numeric(summary.get("Transitions"), errors="coerce")
+            mask = transitions.isna() | (transitions < threshold)
+            kept_cols = [c for c in columns if c in summary.columns]
+            excluded = summary.loc[mask, kept_cols].reset_index(drop=True)
+        excluded.attrs["min_transitions"] = threshold
+        excluded.attrs["window"] = tuple(primary)
+        excluded.attrs["phase_label"] = label
+        return excluded
 
     def report_sections(self, experiment) -> list:
         # Valence-first blocks: headline Experiment-phase PI, PI over time,
@@ -57,6 +102,7 @@ class ValenceExperimentType(ExperimentType):
         problems: list[str] = []
         problems += self._validate_owned_fields(global_cfg)
         problems += self._validate_rig(global_cfg)
+        problems += self._validate_min_transitions(global_cfg)
         problems += self._validate_required_counting_regions(config)
         if not config.get("tracking_regions"):
             problems.append(
@@ -66,6 +112,19 @@ class ValenceExperimentType(ExperimentType):
             problems += self._validate_required_tracking_regions(config)
         return problems
 
+    def _validate_min_transitions(self, global_cfg: dict) -> list[str]:
+        raw = global_cfg.get("min_transitions")
+        if raw is None:
+            return []
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = -1.0
+        if value < 0 or value != int(value):
+            return [f"{self.display_name}: min_transitions must be a whole "
+                    f"number ≥ 0 (0 turns the exclusion off); got {raw!r}."]
+        return []
+
     def scaffold_config(self) -> dict:
         # Rig is intentionally left blank: the user must choose Max or Colosseum,
         # so a freshly scaffolded project fails validation until they do.
@@ -73,6 +132,7 @@ class ValenceExperimentType(ExperimentType):
             "global": {
                 "experiment_type": self.name,
                 "tracking_rig": "",
+                "min_transitions": self.default_min_transitions,
             },
             "counting_regions": {
                 "Light": {"alias": _LIGHT_ALIAS},
@@ -82,7 +142,7 @@ class ValenceExperimentType(ExperimentType):
         }
 
     def build_config(self, *, rig=None, facet_cutoffs=None, facet_labels=None,
-                     factors=None, **_) -> dict:
+                     factors=None, min_transitions=None, **_) -> dict:
         """Full Valence config for the create wizard.
 
         Lays out the rig's plate with the correct X multipliers (Arena Max flips
@@ -101,6 +161,10 @@ class ValenceExperimentType(ExperimentType):
             g["facet_labels"] = labels
         if factors:
             g["experimental_design_factors"] = dict(factors)
+        # The Low-Transition Exclusion is written explicitly so the knob is
+        # visible where users already edit facets (ADR-0003).
+        g["min_transitions"] = int(min_transitions) if min_transitions is not None \
+            else self.default_min_transitions
 
         names = self.regions_for_rig(rig) or []
         flip = _MAX_XFLIP_COUNT if config_validation.normalize_rig(rig) == "arena_max" else 0

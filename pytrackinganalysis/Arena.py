@@ -79,6 +79,25 @@ class Arena:
         self.get_experimental_design()
         self.create_trackers(force_preprocessing)
         self.computed_summaries={}
+        ## Names excluded from every summary-derived result (ADR-0003). The
+        ## cache stays unfiltered; the rows are dropped on the way out of
+        ## summarize(), so plots, stats and CSVs cannot disagree about who's in.
+        self.excluded_names: set = set()
+
+    def set_excluded_trackers(self, names):
+        """Exclude these tracker names (the summary's ``Name`` column) from all
+        summaries — and therefore from figures, statistics, and the summary CSV
+        outputs. Data-quality reporting deliberately still sees every tracker
+        (QC describes the recording, not the analysis population)."""
+        ## `names or []` is ambiguous for a pandas Series, so spell it out.
+        self.excluded_names = set() if names is None else {str(n) for n in names}
+
+    def _drop_excluded(self, summary):
+        """Filter excluded rows out of a summary on its way to a consumer."""
+        if not self.excluded_names or 'Name' not in summary.columns:
+            return summary
+        keep = ~summary['Name'].astype(str).isin(self.excluded_names)
+        return summary[keep].reset_index(drop=True)
 
     def _abbrev_df(self, df):
         """Return a copy of df with the Treatment column abbreviated for plot labels."""
@@ -484,7 +503,7 @@ class Arena:
 
         return combined_df        
 
-    def summarize(self,range_minutes=(0,0),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False):
+    def summarize(self,range_minutes=(0,0),copy_to_clipboard=False, write_to_csvfile=False, remove_partners=False, include_excluded=False):
         """
         Summarize data.
 
@@ -493,6 +512,10 @@ class Arena:
         copy_to_clipboard (bool): Flag to copy results to clipboard.
         write_to_csvfile (bool): Flag to write results to CSV file.
         remove_partners (bool): Flag to remove partners from the summary.This is relevant for pairwise data where pairs may have identical values (e.g., interaction percentage).
+        include_excluded (bool): Keep rows for trackers named in
+            ``set_excluded_trackers`` (ADR-0003). Only the exclusion audit
+            itself should pass True; every analysis consumer gets the filtered
+            population by default.
 
         Returns:
         DataFrame: Summarized data.
@@ -505,7 +528,8 @@ class Arena:
                 ## into whatever it gets back, which used to leak straight into
                 ## the cached flat summary and out again through the next
                 ## summarize(write_to_csvfile=True).
-                return self.computed_summaries[cache_key].copy()
+                cached = self.computed_summaries[cache_key].copy()
+                return cached if include_excluded else self._drop_excluded(cached)
 
 
         summaries = []
@@ -523,12 +547,17 @@ class Arena:
             ## To avoid confusion, if we remove partners, we won't save a copy to speed things up.
             self.computed_summaries[cache_key] = all_summaries.copy()
 
-   
+        ## The cache above stays unfiltered; excluded rows are dropped on the
+        ## way out so the clipboard/CSV outputs match what the plots and stats
+        ## see (ADR-0003).
+        if not include_excluded:
+            all_summaries = self._drop_excluded(all_summaries)
+
         ## Note that for the this function to work in linux, you need to install xclip or xsel (verified with xclip)
-        if(copy_to_clipboard):            
+        if(copy_to_clipboard):
             all_summaries.to_clipboard(index=False, na_rep='NA')
-        if(write_to_csvfile==True):            
-            all_summaries.to_csv(self._output_path("_Summary.csv"), index=False, na_rep='NA') 
+        if(write_to_csvfile==True):
+            all_summaries.to_csv(self._output_path("_Summary.csv"), index=False, na_rep='NA')
         return all_summaries
     
 #endregion ########### Basic Computation Functions ############

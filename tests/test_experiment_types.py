@@ -354,3 +354,119 @@ def test_custom_experiment_warns_but_does_not_raise(capsys):
            "tracking_regions": {"T_0": {}}}
     _exp_stub(cfg, None)._validate_config()  # lenient: no raise
     assert "Warning" in capsys.readouterr().out
+
+
+# ---- Low-Transition Exclusion (ADR-0003) ----------------------------------
+
+def test_min_transitions_default_override_and_off():
+    t = et.get_experiment_type("Valence")
+    assert t.resolve_min_transitions({}) == 5
+    assert t.resolve_min_transitions({"min_transitions": 8}) == 8
+    assert t.resolve_min_transitions({"min_transitions": 0}) == 0
+    # Custom has no exclusion criterion at all, even with the key set.
+    assert et.get_experiment_type(None).resolve_min_transitions(
+        {"min_transitions": 3}) is None
+
+
+def test_valence_validates_min_transitions():
+    t = et.get_experiment_type("Valence")
+    assert t.validate(_valence_config(min_transitions=5)) == []
+    assert t.validate(_valence_config(min_transitions=0)) == []
+    for bad in (-1, 2.5, "many"):
+        problems = t.validate(_valence_config(min_transitions=bad))
+        assert any("min_transitions" in p for p in problems), bad
+
+
+def test_valence_scaffold_and_build_config_write_min_transitions():
+    t = et.get_experiment_type("Valence")
+    assert t.scaffold_config()["global"]["min_transitions"] == 5
+    assert t.build_config(rig="arena_max")["global"]["min_transitions"] == 5
+    assert t.build_config(rig="arena_max",
+                          min_transitions=7)["global"]["min_transitions"] == 7
+
+
+def test_valence_manifest_includes_excluded_csv():
+    assert "_Excluded.csv" in et.get_experiment_type("Valence").output_manifest()
+
+
+class _ExclusionArena:
+    """Just enough arena for compute_exclusions: records the window asked for."""
+
+    def __init__(self, summary):
+        self._summary = summary
+        self.calls = []
+
+    def summarize(self, range_minutes=(0, 0), include_excluded=False, **kw):
+        self.calls.append((tuple(range_minutes), include_excluded))
+        return self._summary.copy()
+
+
+def _exclusion_exp(summary, global_cfg=None, facet_cutoffs=(10, 70)):
+    from types import SimpleNamespace
+    return SimpleNamespace(config={"global": dict(global_cfg or {})},
+                           facet_cutoffs=facet_cutoffs,
+                           arena=_ExclusionArena(summary))
+
+
+def _exclusion_summary():
+    import pandas as pd
+    return pd.DataFrame({
+        "Name": ["a", "b", "c", "d"],
+        "TrackingRegion": ["T_0", "T_1", "T_2", "T_3"],
+        "Treatment": ["x", "x", "y", "y"],
+        "Transitions": [2, 7, float("nan"), 5],
+    })
+
+
+def test_valence_compute_exclusions_below_threshold_and_na():
+    t = et.get_experiment_type("Valence")
+    exp = _exclusion_exp(_exclusion_summary())
+    excluded = t.compute_exclusions(exp)
+    # 2 < 5 excluded; NA (no data in the window) excluded; 7 and exactly 5 kept.
+    assert list(excluded["Name"]) == ["a", "c"]
+    assert excluded.attrs["min_transitions"] == 5
+    assert excluded.attrs["window"] == (10, 70)   # the Primary Phase
+    assert excluded.attrs["phase_label"] == "Experiment"
+    # Computed over the unfiltered population.
+    assert exp.arena.calls == [((10, 70), True)]
+
+
+def test_valence_compute_exclusions_off_and_custom_none():
+    t = et.get_experiment_type("Valence")
+    exp = _exclusion_exp(_exclusion_summary(), {"min_transitions": 0})
+    excluded = t.compute_exclusions(exp)
+    assert len(excluded) == 0
+    assert excluded.attrs["min_transitions"] == 0
+    assert exp.arena.calls == []  # off -> no summary computed
+    assert et.get_experiment_type(None).compute_exclusions(exp) is None
+
+
+def test_valence_compute_exclusions_primary_window():
+    t = et.get_experiment_type("Valence")
+    # Non-default cutoffs: Primary Phase is still window index 1.
+    exp = _exclusion_exp(_exclusion_summary(), facet_cutoffs=(5, 20, 40))
+    excluded = t.compute_exclusions(exp)
+    assert excluded.attrs["window"] == (5, 20)
+    # A single window (one facet would need no cutoffs) -> the only window.
+    exp2 = _exclusion_exp(_exclusion_summary(), facet_cutoffs=None)
+    excluded2 = t.compute_exclusions(exp2)
+    assert excluded2.attrs["window"] == (0, 0)
+    assert excluded2.attrs["phase_label"] == "whole recording"
+
+
+def test_arena_drops_excluded_rows_on_the_way_out():
+    import pandas as pd
+
+    from pytrackinganalysis import Arena as ArenaModule
+
+    arena = ArenaModule.Arena.__new__(ArenaModule.Arena)
+    arena.computed_summaries = {}
+    arena.excluded_names = set()
+    df = pd.DataFrame({"Name": ["a", "b"], "Transitions": [1, 9]})
+    arena.computed_summaries[(0, 0)] = df
+
+    arena.set_excluded_trackers(["a"])
+    assert list(arena.summarize()["Name"]) == ["b"]
+    # The audit path still sees everyone; the cache itself stays unfiltered.
+    assert list(arena.summarize(include_excluded=True)["Name"]) == ["a", "b"]
+    assert list(arena.computed_summaries[(0, 0)]["Name"]) == ["a", "b"]

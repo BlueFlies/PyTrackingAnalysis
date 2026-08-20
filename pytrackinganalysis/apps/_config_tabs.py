@@ -242,6 +242,23 @@ class GlobalTab(QWidget):
         label_row.addWidget(self.facet_labels)
         outer.addLayout(label_row)
 
+        # Low-transition exclusion (ADR-0003): only shown for a type that has
+        # the criterion (Valence). Kept next to the facets because it is
+        # measured over one of them (the Primary Phase).
+        outer.addSpacing(12)
+        self._exclusion_section = _section_label("Low-transition exclusion")
+        outer.addWidget(self._exclusion_section)
+        excl_row = QHBoxLayout()
+        self._min_transitions_caption = QLabel(
+            "min_transitions (fewer during the primary phase excludes the fly; 0 = off):")
+        self.min_transitions = QLineEdit()
+        self.min_transitions.setPlaceholderText("e.g. 5")
+        self.min_transitions.setMaximumWidth(80)
+        excl_row.addWidget(self._min_transitions_caption)
+        excl_row.addWidget(self.min_transitions)
+        excl_row.addStretch()
+        outer.addLayout(excl_row)
+
         outer.addSpacing(12)
         outer.addWidget(_section_label("Parameter overrides (leave blank to use rig defaults)"))
 
@@ -348,6 +365,17 @@ class GlobalTab(QWidget):
         self.use_facets.setEnabled(not facets_owned)
         self.facet_cutoffs.setEnabled(not facets_owned and self.use_facets.isChecked())
         self.facet_labels.setEnabled(self.use_facets.isChecked())
+
+        # Low-transition exclusion: visible only for a type that has the
+        # criterion, pre-filled with the type default when empty.
+        has_exclusion = t.default_min_transitions is not None
+        for w in (self._exclusion_section, self._min_transitions_caption,
+                  self.min_transitions):
+            w.setVisible(has_exclusion)
+        if has_exclusion and not self.min_transitions.text().strip():
+            self.min_transitions.setText(str(t.default_min_transitions))
+        elif not has_exclusion:
+            self.min_transitions.clear()
 
         # Calibration overrides: disabled when the type forbids them.
         if not custom and not t.allow_calibration_override:
@@ -484,6 +512,13 @@ class GlobalTab(QWidget):
                 self.use_facets.setChecked(False)
                 self.facet_cutoffs.clear()
 
+        # Low-transition exclusion: the yaml's value, else the type default.
+        if t.default_min_transitions is not None:
+            self.min_transitions.setText(
+                str(g.get("min_transitions", t.default_min_transitions)))
+        else:
+            self.min_transitions.clear()
+
         # Phase names: the yaml's, else the type's defaults when they name every
         # window of the effective cutoffs; else cleared (never carried over from
         # a previously loaded file).
@@ -528,6 +563,7 @@ class GlobalTab(QWidget):
         "experimental_design_factors",
         "facet_cutoffs",
         "facet_labels",
+        "min_transitions",
         "fps",
         "mm_per_pixel",
         "speed_window_seconds",
@@ -611,6 +647,18 @@ class GlobalTab(QWidget):
             except ValueError:
                 errors.append(f"Interaction distances: '{idist}' is not a comma-separated list of numbers")
 
+        if self.current_experiment_type().default_min_transitions is not None:
+            text = self.min_transitions.text().strip()
+            if text:
+                try:
+                    value = float(text)
+                    if value < 0 or value != int(value):
+                        raise ValueError
+                except ValueError:
+                    errors.append(
+                        f"min_transitions: '{text}' must be a whole number ≥ 0 "
+                        f"(0 turns the exclusion off)")
+
         if self.tracking_rig.currentData() == "movie":
             for label, widget in (("FPS", self.fps), ("mm per pixel", self.mm_per_pixel)):
                 if not widget.text().strip():
@@ -689,6 +737,17 @@ class GlobalTab(QWidget):
             g["experiment_type"] = t.name
             for key in t.owned_keys():
                 g.pop(key, None)
+
+        ## Low-transition exclusion: written only for a type that has the
+        ## criterion. An empty field falls back to the type default at load,
+        ## so nothing is written for it.
+        if t.default_min_transitions is not None:
+            text = self.min_transitions.text().strip()
+            if text:
+                try:
+                    g["min_transitions"] = int(float(text))
+                except ValueError:
+                    pass  # validation_errors() blocks the save first
 
         return {"global": g}
 

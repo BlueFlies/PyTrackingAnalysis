@@ -52,3 +52,22 @@ The phase names apply only while the cutoffs are the default; changing them
 yields plain minute-range labels instead.
 _Avoid_: facet (facet = the generic windowing mechanism; a Phase is a named
 facet at the type's default cutoffs).
+
+**Primary Phase**:
+The facet window the headline result — and the Low-Transition Exclusion — is
+read from: the second window when there are two or more, else the only one.
+Equals the Experiment phase at Valence's default cutoffs.
+_Avoid_: middle facet, experiment window
+
+**Low-Transition Exclusion**:
+Valence-only inclusion criterion: a fly is kept only if its Transitions count
+during the Primary Phase is at least `min_transitions` (yaml `global:` key;
+Valence default 5; 0 = off; no data in the window counts as excluded).
+_Avoid_: QC filter (data quality is a separate, always-reported concern)
+
+**Excluded Fly**:
+A fly removed by the Low-Transition Exclusion — absent from figures, summary
+measures, statistics, and the summary CSVs, but listed with its transition
+count in the report's removal table and `<exp>_Excluded.csv`, and still shown
+in data-quality output.
+_Avoid_: dropped fly, filtered fly

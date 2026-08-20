@@ -7,6 +7,7 @@ All outputs are written relative to the project directory. Open them from the Hu
 - `*_experiment_summary.txt` — rig, design, quality overview, per-tracker table
 - `*_Summary.csv` — per-tracker summary statistics
 - `*_Summary_Facet.csv` — same, split by `facet_cutoffs` phases
+- `*_Excluded.csv` — (Valence) flies removed by the low-transition exclusion (`min_transitions`, default 5, measured over the primary phase; 0 = off)
 - `*_Stats.txt` — pairwise comparisons across treatments (Welch t-test or Tukey HSD)
 - `*_plot_*.png` — saved figures named after each plot method
 - `*_report.pdf` — multi-page PDF: summary → QC → tracker grids → plots

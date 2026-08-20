@@ -47,6 +47,11 @@ class ExperimentType:
     #: For a type whose plate is fixed by the rig, the number of tracking regions
     #: per canonical rig name, e.g. ``{"arena_max": 36}``. Empty = no constraint.
     region_counts: dict = {}
+    #: Default for the Low-Transition Exclusion (see CONTEXT.md / ADR-0003):
+    #: a fly is kept only if its Transitions count during the Primary Phase is
+    #: at least ``min_transitions`` (yaml-overridable; 0 = off). ``None`` means
+    #: the type has no exclusion criterion at all (Custom and most types).
+    default_min_transitions: int | None = None
 
     # ---- identity -----------------------------------------------------
 
@@ -81,6 +86,23 @@ class ExperimentType:
         if raw is not None:
             return tuple(raw)
         return tuple(self.facet_cutoffs) if self.facet_cutoffs is not None else None
+
+    def resolve_min_transitions(self, global_cfg: dict) -> int | None:
+        """The effective Low-Transition Exclusion threshold, or ``None`` when
+        the type has no such criterion. The yaml's ``min_transitions`` wins
+        over the type default; 0 disables the exclusion."""
+        if self.default_min_transitions is None:
+            return None
+        raw = (global_cfg or {}).get("min_transitions")
+        if raw is None:
+            return int(self.default_min_transitions)
+        return int(raw)
+
+    def compute_exclusions(self, experiment):
+        """Flies the type excludes from every result (ADR-0003), as a DataFrame
+        of Name/TrackingRegion/Treatment/Transitions rows, or ``None`` when the
+        type has no exclusion criterion. Base/Custom: none."""
+        return None
 
     def regions_for_rig(self, rig) -> list[str] | None:
         """Expected tracking-region names for *rig*, or ``None`` when the type

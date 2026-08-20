@@ -211,6 +211,18 @@ class Experiment:
         self.facet_cutoffs: tuple | None = self.experiment_type.resolve_facet_cutoffs(
             self.config.get('global', {}))
 
+        ## Low-Transition Exclusion (ADR-0003): the type decides who is out
+        ## (None = the type has no such criterion), and Arena enforces it once
+        ## so plots, stats and CSVs can never disagree about the population.
+        ## Computed eagerly at load — interactive arena calls must be filtered
+        ## too, not just the pipeline entry points.
+        self.excluded_flies = self.experiment_type.compute_exclusions(self)
+        if self.excluded_flies is not None and len(self.excluded_flies):
+            self.arena.set_excluded_trackers(self.excluded_flies['Name'])
+            print(f"Excluded {len(self.excluded_flies)} fly(ies): fewer than "
+                  f"{self.excluded_flies.attrs.get('min_transitions')} transitions "
+                  f"during the {self.excluded_flies.attrs.get('phase_label')} phase.")
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -800,6 +812,16 @@ class Experiment:
         summary.to_csv(path, index=False, na_rep='NA')
         print(f"Saved: {path}")
 
+        ## Exclusion audit (ADR-0003): written whenever the type has a
+        ## criterion — even with zero exclusions — so absence of the file never
+        ## needs interpreting.
+        excluded = getattr(self, 'excluded_flies', None)
+        if excluded is not None:
+            path_excl = os.path.join(self.analysis_path,
+                                     f"{self.arena.experiment_name}_Excluded.csv")
+            excluded.to_csv(path_excl, index=False, na_rep='NA')
+            print(f"Saved: {path_excl} ({len(excluded)} excluded)")
+
         summary_facet = None
         if cutoffs is not None:
             summary_facet = self.arena.summarize_facet(cutoffs=cutoffs)
@@ -894,6 +916,19 @@ class Experiment:
         if not self.experiment_type.is_custom:
             print(f"Experiment type : {self.experiment_type.display_name}")
         print(f"Tracking type   : {self.parameters.get_tracking_type().name}")
+
+        ## Low-Transition Exclusion accounting (ADR-0003): the reader of every
+        ## p-value below must know the population it was computed on.
+        excluded = getattr(self, 'excluded_flies', None)
+        if excluded is not None:
+            threshold = excluded.attrs.get('min_transitions')
+            phase = excluded.attrs.get('phase_label', 'Primary')
+            if threshold:
+                print(f"Excluded        : {len(excluded)} fly(ies) with fewer than "
+                      f"{threshold} transitions during the {phase} phase "
+                      f"(min_transitions = {threshold}; see _Excluded.csv).")
+            else:
+                print("Excluded        : none (min_transitions = 0, exclusion off).")
 
         if cutoffs is not None:
             from . import windowing
