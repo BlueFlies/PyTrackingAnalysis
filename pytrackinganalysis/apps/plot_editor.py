@@ -75,11 +75,39 @@ class ColorButton(QPushButton):
             self.changed.emit()
 
 
+# Wheel-transparent controls: ignoring the wheel makes Qt bubble the event up
+# to the scroll area, so scrolling the options panel never edits whatever
+# control the cursor happens to be over.
+class _NoWheelSpin(QDoubleSpinBox):
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
+class _NoWheelCombo(QComboBox):
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
+class _NoWheelFontCombo(QFontComboBox):
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
 def _spin(lo, hi, step, decimals=1) -> QDoubleSpinBox:
-    box = QDoubleSpinBox()
+    box = _NoWheelSpin()
     box.setRange(lo, hi)
     box.setSingleStep(step)
     box.setDecimals(decimals)
+    return box
+
+
+def _combo(items=()) -> QComboBox:
+    """A combo that always sizes to its longest item — squeezed layouts were
+    clipping item text off the right edge."""
+    box = _NoWheelCombo()
+    box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+    for item in items:
+        box.addItem(item)
     return box
 
 
@@ -124,14 +152,14 @@ class PlotEditorWindow(QMainWindow):
         bar.addSpacing(16)
 
         bar.addWidget(QLabel("Plot:"))
-        self.plot_combo = QComboBox()
+        self.plot_combo = _combo()
         for plot_id, info in pf.PLOT_TYPES.items():
             self.plot_combo.addItem(info["display"], plot_id)
         self.plot_combo.currentIndexChanged.connect(self._on_plot_switched)
         bar.addWidget(self.plot_combo)
 
         bar.addWidget(QLabel("Style:"))
-        self.style_combo = QComboBox()
+        self.style_combo = _combo()
         self.style_combo.currentIndexChanged.connect(self._on_style_switched)
         bar.addWidget(self.style_combo)
         save_style_btn = QPushButton("Save style as…")
@@ -140,6 +168,12 @@ class PlotEditorWindow(QMainWindow):
         self.default_btn = QPushButton("Set as project default")
         self.default_btn.clicked.connect(self._set_default_style)
         bar.addWidget(self.default_btn)
+        self.reset_btn = QPushButton("Restore defaults")
+        self.reset_btn.setToolTip(
+            "Reset this plot's content settings (labels, facets, treatments, "
+            "limits) to the defaults. Shared styles are not touched.")
+        self.reset_btn.clicked.connect(self._restore_defaults)
+        bar.addWidget(self.reset_btn)
 
         bar.addStretch()
         save_svg = QPushButton("Save SVG…")
@@ -185,11 +219,19 @@ class PlotEditorWindow(QMainWindow):
         size_holder = QWidget()
         size_holder.setLayout(size_row)
         form.addRow("Figure size:", size_holder)
+        self.facet_width = _spin(0.0, 200.0, 5.0)
+        self.facet_width.setToolTip(
+            "0 = off: the figure is the fixed width above and panels share "
+            "it.\n> 0: the figure width becomes margin + this × shown facets, "
+            "so each panel keeps the same width when facets are removed.")
+        form.addRow("Facet width (mm, 0 = auto):", self.facet_width)
 
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["classic", "bw", "minimal"])
+        self.theme_combo = _combo(["classic", "bw", "minimal"])
         form.addRow("Theme:", self.theme_combo)
-        self.font_combo = QFontComboBox()
+        self.font_combo = _NoWheelFontCombo()
+        # QFontComboBox sizes itself to the longest installed font name and
+        # blew the panel width; the popup still shows full names.
+        self.font_combo.setMaximumWidth(200)
         form.addRow("Font:", self.font_combo)
         self.base_pt = _spin(4, 24, 0.5)
         form.addRow("Base size (pt):", self.base_pt)
@@ -199,11 +241,37 @@ class PlotEditorWindow(QMainWindow):
         form.addRow("Point alpha:", self.point_alpha)
         self.jitter = _spin(0.0, 0.45, 0.02, decimals=2)
         form.addRow("Jitter width:", self.jitter)
-        self.mean_combo = QComboBox()
-        self.mean_combo.addItems(["point+sem", "bar+sem"])
+        self.point_stroke = _spin(0.0, 3.0, 0.1)
+        self.point_stroke.setToolTip("Black outline around each point; 0 = none")
+        form.addRow("Point outline (pt):", self.point_stroke)
+        self.mean_combo = _combo(["point+sem", "bar+sem"])
         form.addRow("Mean style:", self.mean_combo)
         self.mean_color = ColorButton("#111111")
         form.addRow("Mean color:", self.mean_color)
+        self.geom_combo = _combo(["dots", "box", "box+dots"])
+        form.addRow("Geometry:", self.geom_combo)
+        self.line_pt = _spin(0.2, 4.0, 0.1)
+        form.addRow("Line weight (pt):", self.line_pt)
+
+        strip_row = QHBoxLayout()
+        self.strip_combo = _combo(["plain", "boxed"])
+        self.strip_bg = ColorButton("#d9d9d9")
+        strip_row.addWidget(self.strip_combo)
+        strip_row.addWidget(self.strip_bg)
+        strip_row.addStretch()
+        strip_holder = QWidget()
+        strip_holder.setLayout(strip_row)
+        form.addRow("Facet strip:", strip_holder)
+
+        panel_row = QHBoxLayout()
+        self.panel_bg_check = QCheckBox("fill")
+        self.panel_bg = ColorButton("#fafafa")
+        panel_row.addWidget(self.panel_bg_check)
+        panel_row.addWidget(self.panel_bg)
+        panel_row.addStretch()
+        panel_holder = QWidget()
+        panel_holder.setLayout(panel_row)
+        form.addRow("Panel background:", panel_holder)
         lay.addWidget(style_box)
 
         # ---- Spec -------------------------------------------------------
@@ -237,6 +305,8 @@ class PlotEditorWindow(QMainWindow):
         ref_holder = QWidget()
         ref_holder.setLayout(ref_row)
         sform.addRow("Reference line:", ref_holder)
+        self.pvalues_check = QCheckBox("Welch / Tukey per facet")
+        sform.addRow("P-value brackets:", self.pvalues_check)
         lay.addWidget(spec_box)
 
         # ---- Facets -----------------------------------------------------
@@ -273,29 +343,38 @@ class PlotEditorWindow(QMainWindow):
         lay.addStretch()
 
         # Every control change flows through one funnel.
-        for widget in (self.width_mm, self.height_mm, self.base_pt,
-                       self.point_size, self.point_alpha, self.jitter,
+        for widget in (self.width_mm, self.height_mm, self.facet_width,
+                       self.base_pt, self.point_size, self.point_alpha,
+                       self.jitter, self.point_stroke, self.line_pt,
                        self.ylim_lo, self.ylim_hi, self.ref_value):
             widget.valueChanged.connect(self._on_changed)
-        for combo in (self.theme_combo, self.mean_combo):
+        for combo in (self.theme_combo, self.mean_combo, self.geom_combo,
+                      self.strip_combo):
             combo.currentIndexChanged.connect(self._on_changed)
         self.font_combo.currentFontChanged.connect(self._on_changed)
         for edit in (self.title_edit, self.x_label, self.y_label):
             edit.textChanged.connect(self._on_changed)
-        for check in (self.ylim_check, self.ref_check):
+        for check in (self.ylim_check, self.ref_check, self.pvalues_check,
+                      self.panel_bg_check):
             check.toggled.connect(self._on_changed)
-        self.mean_color.changed.connect(self._on_changed)
+        for swatch in (self.mean_color, self.strip_bg, self.panel_bg):
+            swatch.changed.connect(self._on_changed)
         self.facet_table.itemChanged.connect(self._on_changed)
         self.treat_table.itemChanged.connect(self._on_changed)
 
         scroll = QScrollArea()
         scroll.setWidget(panel)
         scroll.setWidgetResizable(True)
-        scroll.setMinimumWidth(410)
+        ## A fixed panel width with vertical-only scrolling: content used to
+        ## overflow sideways (and the panel width wandered) when values or
+        ## fonts changed.
+        scroll.setFixedWidth(440)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return scroll
 
     def _set_controls_enabled(self, on: bool) -> None:
-        for name in ("plot_combo", "style_combo", "default_btn"):
+        for name in ("plot_combo", "style_combo", "default_btn", "reset_btn"):
             getattr(self, name).setEnabled(on)
 
     # ------------------------------------------------------------ project
@@ -388,14 +467,23 @@ class PlotEditorWindow(QMainWindow):
         try:
             self.width_mm.setValue(style.width_mm)
             self.height_mm.setValue(style.height_mm)
+            self.facet_width.setValue(style.facet_width_mm)
             self.theme_combo.setCurrentText(style.theme)
             self.font_combo.setCurrentText(style.font_family)
             self.base_pt.setValue(style.base_pt)
             self.point_size.setValue(style.point_size)
             self.point_alpha.setValue(style.point_alpha)
             self.jitter.setValue(style.jitter_width)
+            self.point_stroke.setValue(style.point_stroke)
             self.mean_combo.setCurrentText(style.mean_style)
             self.mean_color.set_color(style.mean_color)
+            self.geom_combo.setCurrentText(style.geom)
+            self.line_pt.setValue(style.line_pt)
+            self.strip_combo.setCurrentText(style.strip_style)
+            self.strip_bg.set_color(style.strip_bg or "#d9d9d9")
+            self.panel_bg_check.setChecked(bool(style.panel_bg))
+            if style.panel_bg:
+                self.panel_bg.set_color(style.panel_bg)
 
             self.title_edit.setText(spec.title)
             self.x_label.setText(spec.x_label)
@@ -407,6 +495,7 @@ class PlotEditorWindow(QMainWindow):
             self.ref_check.setChecked(spec.ref_line is not None)
             if spec.ref_line is not None:
                 self.ref_value.setValue(spec.ref_line)
+            self.pvalues_check.setChecked(bool(spec.p_values))
 
             self._load_facet_table(spec)
             self._load_treatment_table(spec, style)
@@ -456,14 +545,21 @@ class PlotEditorWindow(QMainWindow):
         spec, style = self._current_spec(), self._current_style()
         style.width_mm = self.width_mm.value()
         style.height_mm = self.height_mm.value()
+        style.facet_width_mm = self.facet_width.value()
         style.theme = self.theme_combo.currentText()
         style.font_family = self.font_combo.currentText()
         style.base_pt = self.base_pt.value()
         style.point_size = self.point_size.value()
         style.point_alpha = self.point_alpha.value()
         style.jitter_width = self.jitter.value()
+        style.point_stroke = self.point_stroke.value()
         style.mean_style = self.mean_combo.currentText()
         style.mean_color = self.mean_color.color()
+        style.geom = self.geom_combo.currentText()
+        style.line_pt = self.line_pt.value()
+        style.strip_style = self.strip_combo.currentText()
+        style.strip_bg = self.strip_bg.color()
+        style.panel_bg = self.panel_bg.color() if self.panel_bg_check.isChecked() else ""
 
         spec.title = self.title_edit.text()
         spec.x_label = self.x_label.text()
@@ -472,6 +568,7 @@ class PlotEditorWindow(QMainWindow):
                          if self.ylim_check.isChecked() else None)
         spec.ref_line = (self.ref_value.value()
                          if self.ref_check.isChecked() else None)
+        spec.p_values = self.pvalues_check.isChecked()
 
         facets, facet_labels = [], {}
         for row in range(self.facet_table.rowCount()):
@@ -621,6 +718,22 @@ class PlotEditorWindow(QMainWindow):
         self._persist_specs()
         self.statusBar().showMessage(
             f"'{name}' is now the project default style")
+
+    def _restore_defaults(self) -> None:
+        """Reset the current plot's spec to its defaults (content only —
+        shared styles are never touched), pointing it at the project default
+        style."""
+        if self._experiment is None:
+            return
+        region1 = pf.region1_name(self._experiment)
+        spec = pf.default_spec(self._plot_id, region1)
+        spec.style = self._specs.default_style
+        self._specs.plots[self._plot_id] = spec
+        self._reload_style_combo()
+        self._load_controls()
+        self._schedule_render()
+        self.statusBar().showMessage(
+            f"{pf.PLOT_TYPES[self._plot_id]['display']} reset to defaults")
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if self._experiment is not None:

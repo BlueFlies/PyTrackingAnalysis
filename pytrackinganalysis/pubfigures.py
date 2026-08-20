@@ -31,6 +31,8 @@ DEFAULT_PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#d97706",
 
 _THEMES = ("classic", "bw", "minimal")
 _MEAN_STYLES = ("point+sem", "bar+sem")
+_GEOMS = ("dots", "box", "box+dots")
+_STRIP_STYLES = ("plain", "boxed")
 
 #: The faceted metric plots. ``ref_line`` / ``y_limits`` are per-type spec
 #: defaults; ``y_label`` may carry ``{region1}`` (resolved per experiment).
@@ -68,6 +70,11 @@ class PlotStyle:
 
     width_mm: float = 180.0
     height_mm: float = 70.0
+    #: Per-facet panel width (mm). 0 = off (the figure is ``width_mm`` wide
+    #: and panels share it). >0 = the figure width is derived as
+    #: ``axis margin + facet_width_mm × shown facets`` so each panel keeps the
+    #: same width when facets are added or removed.
+    facet_width_mm: float = 0.0
     theme: str = "classic"            # classic | bw | minimal
     font_family: str = "Arial"
     base_pt: float = 8.0
@@ -76,6 +83,21 @@ class PlotStyle:
     jitter_width: float = 0.18
     mean_style: str = "point+sem"     # point+sem | bar+sem
     mean_color: str = "#111111"
+    #: Black outline around each point (pt). 0 = no outline (points are drawn
+    #: solid in the treatment color); >0 = black edge of this weight with the
+    #: treatment color as the fill.
+    point_stroke: float = 0.0
+    #: Data geometry: jittered dots, boxplots, or boxplots with dots overlaid.
+    geom: str = "dots"                # dots | box | box+dots
+    #: ggplot-default facet strips: a bordered title box ("boxed") vs bare
+    #: text ("plain"). ``strip_bg`` fills the box; ``panel_bg`` (empty = theme
+    #: default) fills the plotting panels — the two are independent.
+    strip_style: str = "plain"        # plain | boxed
+    strip_bg: str = "#d9d9d9"
+    panel_bg: str = ""
+    #: Line weight (pt) for axis lines, ticks, panel/strip borders, and box
+    #: outlines.
+    line_pt: float = 0.8
     #: treatment name -> hex color; unmapped treatments cycle the palette.
     colors: dict = field(default_factory=dict)
     palette: list = field(default_factory=lambda: list(DEFAULT_PALETTE))
@@ -92,6 +114,10 @@ class PlotStyle:
             style.theme = "classic"
         if style.mean_style not in _MEAN_STYLES:
             style.mean_style = "point+sem"
+        if style.geom not in _GEOMS:
+            style.geom = "dots"
+        if style.strip_style not in _STRIP_STYLES:
+            style.strip_style = "plain"
         style.colors = dict(style.colors or {})
         style.palette = list(style.palette or DEFAULT_PALETTE)
         return style
@@ -121,6 +147,9 @@ class PlotSpec:
     treatments: dict = field(default_factory=dict)
     y_limits: list | None = None
     ref_line: float | None = None
+    #: Draw per-facet pairwise p-value brackets (Welch for two shown
+    #: treatments, Tukey HSD beyond — the same policy as Stats.txt).
+    p_values: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -297,22 +326,51 @@ def resolve_font_family(preferred: str) -> list[str]:
     return available or ["DejaVu Sans"]
 
 
-def _theme_for(style: PlotStyle):
+#: Width allowance (mm) for the y-axis title, tick labels, and outer padding
+#: when the figure width is derived from a per-facet width. Keeping it
+#: constant is what makes each panel come out the same width regardless of
+#: how many facets are shown.
+_AXIS_MARGIN_MM = 16.0
+
+
+def effective_width_mm(style: PlotStyle, n_facets: int | None) -> float:
+    """The figure width to render at: ``width_mm``, unless a per-facet width
+    is set — then margin + facet_width_mm × facets."""
+    if style.facet_width_mm and style.facet_width_mm > 0 and n_facets:
+        return _AXIS_MARGIN_MM + float(style.facet_width_mm) * int(n_facets)
+    return float(style.width_mm)
+
+
+def _theme_for(style: PlotStyle, n_facets: int | None = None):
     import plotnine as p9
 
     base = {"classic": p9.theme_classic,
             "bw": p9.theme_bw,
             "minimal": p9.theme_minimal}.get(style.theme, p9.theme_classic)
     families = resolve_font_family(style.font_family)
-    return (base(base_size=style.base_pt)
-            + p9.theme(
-                text=p9.element_text(family=families),
-                figure_size=(style.width_mm / 25.4, style.height_mm / 25.4),
-                legend_position="none",
-                strip_background=p9.element_blank(),
-                strip_text=p9.element_text(size=style.base_pt + 1),
-                plot_title=p9.element_text(size=style.base_pt + 2),
-            ))
+    lw = float(style.line_pt)
+    overrides = dict(
+        text=p9.element_text(family=families),
+        figure_size=(effective_width_mm(style, n_facets) / 25.4,
+                     style.height_mm / 25.4),
+        legend_position="none",
+        strip_text=p9.element_text(size=style.base_pt + 1),
+        plot_title=p9.element_text(size=style.base_pt + 2),
+        axis_line=p9.element_line(size=lw),
+        axis_ticks=p9.element_line(size=lw),
+    )
+    # ggplot-default facet look: a bordered, filled title box per panel.
+    if style.strip_style == "boxed":
+        overrides["strip_background"] = p9.element_rect(
+            fill=style.strip_bg or "#d9d9d9", color="black", size=lw)
+        # A boxed strip reads best sitting on a bordered panel.
+        overrides["panel_border"] = p9.element_rect(color="black", size=lw,
+                                                    fill=None)
+    else:
+        overrides["strip_background"] = p9.element_blank()
+    if style.panel_bg:
+        overrides["panel_background"] = p9.element_rect(fill=style.panel_bg)
+    return base(base_size=style.base_pt) + p9.theme(**overrides)
 
 
 def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
@@ -342,17 +400,7 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
             {n: str(treatments[n].get("label", n)) for n in order}),
         categories=labels, ordered=True)
 
-    stats = (data.groupby(["Phase", "Treatment"], observed=True)["Value"]
-             .agg(mean="mean", sd="std", n="count").reset_index())
-    stats["sem"] = stats["sd"] / np.sqrt(stats["n"].clip(lower=1))
-    stats["sem"] = stats["sem"].fillna(0.0)
-    stats["lo"] = stats["mean"] - stats["sem"]
-    stats["hi"] = stats["mean"] + stats["sem"]
-
     g = (p9.ggplot(data, p9.aes("Treatment", "Value", color="Treatment"))
-         + p9.geom_jitter(width=style.jitter_width, height=0,
-                          size=style.point_size, alpha=style.point_alpha,
-                          random_state=0)
          + p9.facet_wrap("~Phase", nrow=1)
          + p9.scale_color_manual(values=colors)
          + p9.labs(title=spec.title or "",
@@ -361,22 +409,169 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
     if spec.ref_line is not None:
         g = g + p9.geom_hline(yintercept=float(spec.ref_line),
                               linetype="dashed", color="#888888", size=0.3)
-    if style.mean_style == "bar+sem":
-        g = (g
-             + p9.geom_errorbar(p9.aes(x="Treatment", ymin="lo", ymax="hi"),
-                                data=stats, inherit_aes=False, width=0.18,
-                                color=style.mean_color, size=0.5)
-             + p9.geom_errorbar(p9.aes(x="Treatment", ymin="mean", ymax="mean"),
-                                data=stats, inherit_aes=False, width=0.45,
-                                color=style.mean_color, size=0.9))
-    else:
-        g = g + p9.geom_pointrange(
-            p9.aes(x="Treatment", y="mean", ymin="lo", ymax="hi"),
-            data=stats, inherit_aes=False, color=style.mean_color,
-            size=0.5, fatten=2.5)
-    if spec.y_limits is not None:
-        g = g + p9.coord_cartesian(ylim=tuple(spec.y_limits))
-    return g + _theme_for(style)
+
+    # ---- data geometry ----------------------------------------------------
+    boxed = style.geom in ("box", "box+dots")
+    if boxed:
+        g = g + p9.geom_boxplot(
+            fill="white", width=0.6, size=style.line_pt * 0.9,
+            outlier_size=(0 if style.geom == "box+dots"
+                          else max(style.point_size * 0.8, 0.5)),
+            outlier_alpha=style.point_alpha)
+    if style.geom in ("dots", "box+dots"):
+        stroke = max(0.0, float(style.point_stroke))
+        if stroke > 0:
+            # Outlined points: black edge, treatment color as the fill.
+            g = (g
+                 + p9.geom_jitter(p9.aes(fill="Treatment"), color="black",
+                                  stroke=stroke, width=style.jitter_width,
+                                  height=0, size=style.point_size,
+                                  alpha=style.point_alpha, random_state=0)
+                 + p9.scale_fill_manual(values=colors))
+        else:
+            g = g + p9.geom_jitter(width=style.jitter_width, height=0,
+                                   size=style.point_size,
+                                   alpha=style.point_alpha, random_state=0)
+    if not boxed:
+        # Mean ± SEM overlay belongs to the dot plot; a boxplot already
+        # carries its own centre and spread.
+        stats = (data.groupby(["Phase", "Treatment"], observed=True)["Value"]
+                 .agg(mean="mean", sd="std", n="count").reset_index())
+        stats["sem"] = (stats["sd"] / np.sqrt(stats["n"].clip(lower=1))).fillna(0.0)
+        stats["lo"] = stats["mean"] - stats["sem"]
+        stats["hi"] = stats["mean"] + stats["sem"]
+        if style.mean_style == "bar+sem":
+            g = (g
+                 + p9.geom_errorbar(p9.aes(x="Treatment", ymin="lo", ymax="hi"),
+                                    data=stats, inherit_aes=False, width=0.18,
+                                    color=style.mean_color, size=0.5)
+                 + p9.geom_errorbar(p9.aes(x="Treatment", ymin="mean",
+                                           ymax="mean"),
+                                    data=stats, inherit_aes=False, width=0.45,
+                                    color=style.mean_color, size=0.9))
+        else:
+            g = g + p9.geom_pointrange(
+                p9.aes(x="Treatment", y="mean", ymin="lo", ymax="hi"),
+                data=stats, inherit_aes=False, color=style.mean_color,
+                size=0.5, fatten=2.5)
+
+    # ---- p-value brackets -------------------------------------------------
+    y_limits = list(spec.y_limits) if spec.y_limits is not None else None
+    if spec.p_values:
+        layers, y_limits = _pvalue_layers(data, style, y_limits)
+        for layer in layers:
+            g = g + layer
+
+    if y_limits is not None:
+        g = g + p9.coord_cartesian(ylim=tuple(y_limits))
+    return g + _theme_for(style, n_facets=len(shown))
+
+
+def facet_pvalues(data: pd.DataFrame) -> pd.DataFrame:
+    """Per-facet pairwise p-values on the displayed groups — Welch's t-test
+    for two treatments, Tukey HSD beyond, the same policy as Stats.txt.
+    Columns: ``Phase, a, b, p`` (a/b are display labels)."""
+    def _levels(series: pd.Series):
+        if isinstance(series.dtype, pd.CategoricalDtype):
+            return list(series.cat.categories)
+        return list(dict.fromkeys(series))
+
+    rows: list = []
+    for phase in _levels(data["Phase"]):
+        sub = data[data["Phase"] == phase]
+        groups = {}
+        for treat in _levels(sub["Treatment"]):
+            vals = sub.loc[sub["Treatment"] == treat, "Value"].values
+            if len(vals) >= 2:
+                groups[str(treat)] = vals
+        if len(groups) < 2:
+            continue
+        try:
+            if len(groups) == 2:
+                from scipy import stats as sstats
+                (name_a, vals_a), (name_b, vals_b) = groups.items()
+                _stat, p = sstats.ttest_ind(vals_a, vals_b, equal_var=False)
+                rows.append((phase, name_a, name_b, float(p)))
+            else:
+                import itertools
+
+                import numpy as np
+                from statsmodels.stats.multicomp import pairwise_tukeyhsd
+                endog = np.concatenate(list(groups.values()))
+                labels = np.concatenate([[t] * len(v)
+                                         for t, v in groups.items()])
+                res = pairwise_tukeyhsd(endog=endog, groups=labels, alpha=0.05)
+                for (ga, gb), p in zip(
+                        itertools.combinations(res.groupsunique, 2),
+                        res.pvalues):
+                    rows.append((phase, str(ga), str(gb), float(p)))
+        except Exception:  # noqa: BLE001
+            continue
+    return pd.DataFrame(rows, columns=["Phase", "a", "b", "p"])
+
+
+def _pvalue_layers(data: pd.DataFrame, style: PlotStyle, y_limits):
+    """Bracket + label layers for per-facet pairwise p-values, ggpubr-style.
+
+    Brackets stack above each facet's data; when explicit y-limits would clip
+    them the upper limit is extended, so the annotation is never cut off.
+    Returns ``(layers, effective_y_limits)``.
+    """
+    import plotnine as p9
+
+    pvals = facet_pvalues(data)
+    if pvals.empty:
+        return [], y_limits
+    levels = (list(data["Treatment"].cat.categories)
+              if isinstance(data["Treatment"].dtype, pd.CategoricalDtype)
+              else list(dict.fromkeys(data["Treatment"])))
+    xpos = {t: i + 1 for i, t in enumerate(levels)}
+
+    lo = float(min(data["Value"].min(),
+                   y_limits[0] if y_limits is not None else data["Value"].min()))
+    hi = float(max(data["Value"].max(),
+                   y_limits[1] if y_limits is not None else data["Value"].max()))
+    span = (hi - lo) or 1.0
+    step, tick = 0.09 * span, 0.02 * span
+
+    seg_rows, label_rows = [], []
+    top = hi
+    for phase in pvals["Phase"].unique():
+        base = float(data.loc[data["Phase"] == phase, "Value"].max())
+        for k, (_, row) in enumerate(pvals[pvals["Phase"] == phase].iterrows()):
+            x1, x2 = xpos[row["a"]], xpos[row["b"]]
+            y = base + step * (k + 0.7)
+            seg_rows += [
+                (phase, x1, x2, y, y),           # bracket bar
+                (phase, x1, x1, y, y - tick),    # left tick
+                (phase, x2, x2, y, y - tick),    # right tick
+            ]
+            label_rows.append((phase, (x1 + x2) / 2, y + tick * 0.6,
+                               f"{row['p']:.2g}"))
+            top = max(top, y + step * 0.6)
+    segments = pd.DataFrame(seg_rows,
+                            columns=["Phase", "x", "xend", "y", "yend"])
+    labels = pd.DataFrame(label_rows, columns=["Phase", "x", "y", "label"])
+    ## Layer data participates in facet layout: plain strings here would union
+    ## alphabetically and scramble the phase order, so mirror the categorical.
+    if isinstance(data["Phase"].dtype, pd.CategoricalDtype):
+        cats = data["Phase"].cat.categories
+        segments["Phase"] = pd.Categorical(segments["Phase"], categories=cats,
+                                           ordered=True)
+        labels["Phase"] = pd.Categorical(labels["Phase"], categories=cats,
+                                         ordered=True)
+
+    layers = [
+        p9.geom_segment(p9.aes(x="x", xend="xend", y="y", yend="yend"),
+                        data=segments, inherit_aes=False, color="#111111",
+                        size=max(style.line_pt * 0.6, 0.3)),
+        p9.geom_text(p9.aes(x="x", y="y", label="label"), data=labels,
+                     inherit_aes=False, color="#111111",
+                     size=style.base_pt * 0.95, va="bottom"),
+    ]
+    if y_limits is not None and top > y_limits[1]:
+        y_limits = [y_limits[0], top]
+    return layers, y_limits
 
 
 def figure_for(experiment, plot_id: str, spec: PlotSpec, style: PlotStyle):
@@ -390,21 +585,23 @@ _VECTOR_RC = {"svg.fonttype": "none", "pdf.fonttype": 42, "ps.fonttype": 42}
 
 
 def save_ggplot(g, path: str, style: PlotStyle, dpi: int = 300) -> str:
-    """Write *g* to *path* (format from the suffix) at the style's size."""
+    """Write *g* to *path* (format from the suffix).
+
+    The size comes from the figure's own theme (set by :func:`build_ggplot`),
+    which is facet-aware when the style uses a per-facet width."""
+    del style  # kept for call-site symmetry; the theme owns the size
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with matplotlib.rc_context(_VECTOR_RC):
-        g.save(path, width=style.width_mm / 25.4, height=style.height_mm / 25.4,
-               units="in", dpi=dpi, verbose=False)
+        g.save(path, dpi=dpi, verbose=False)
     return path
 
 
 def render_png_bytes(g, style: PlotStyle, dpi: int = 120) -> bytes:
     """Raster preview from the SAME figure object the vector save uses."""
+    del style  # the theme owns the size; see save_ggplot
     buf = io.BytesIO()
     with matplotlib.rc_context(_VECTOR_RC):
-        g.save(buf, format="png",
-               width=style.width_mm / 25.4, height=style.height_mm / 25.4,
-               units="in", dpi=dpi, verbose=False)
+        g.save(buf, format="png", dpi=dpi, verbose=False)
     return buf.getvalue()
 
 

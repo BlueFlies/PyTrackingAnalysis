@@ -817,10 +817,15 @@ summarized, exclusion-filtered data.
   plots are available: preference index, time in region 1, movement, and
   transitions — each one panel per phase, dots + mean ± SEM.
 - **Two-layer model.** A named **Plot Style** holds the look shared across
-  plots (figure size in mm, theme, font, point/mean styling, treatment
-  colors); a per-plot **Plot Spec** holds content (labels, facet and treatment
-  inclusion/order/renames, y-limits, reference line). Both persist in
-  `<project>/plot_specs.yaml`, written only by this app.
+  plots (figure size in mm, theme, font, geometry — jittered dots, boxplots,
+  or both — point/mean styling, line weight for axes/ticks/borders, facet
+  strip style: plain text or the ggplot-default bordered grey box with a
+  choosable fill, an optional panel background color, and treatment colors); a
+  per-plot **Plot Spec** holds content (labels, facet and treatment
+  inclusion/order/renames, y-limits, reference line, and optional per-facet
+  **p-value brackets** — Welch's t-test for two treatments, Tukey HSD beyond,
+  the same policy as Stats.txt). Both persist in `<project>/plot_specs.yaml`,
+  written only by this app.
 - **Save style as…** captures the current look under a name so subsequent
   plots come out identical; **Set as project default** makes it the style the
   app auto-loads for this project.

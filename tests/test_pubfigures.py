@@ -267,3 +267,160 @@ def test_editor_reorders_treatments(editor):
     editor._move_treatment(+1)
     assert editor.treat_table.item(1, 0).text() == first
     assert list(editor._current_spec().treatments)[1] == first
+
+
+# ---- ggplot look, backgrounds, p-values, boxplots --------------------------
+
+def test_new_style_fields_round_trip_and_fallbacks():
+    style = pf.PlotStyle(geom="violin", strip_style="fancy", line_pt=1.4,
+                         panel_bg="#fafafa", strip_bg="#e8eef7")
+    restored = pf.PlotStyle.from_dict(style.to_dict())
+    assert restored.geom == "dots"            # invalid values fall back
+    assert restored.strip_style == "plain"
+    assert restored.line_pt == 1.4
+    assert restored.panel_bg == "#fafafa" and restored.strip_bg == "#e8eef7"
+
+    spec = pf.PlotSpec(p_values=True)
+    assert pf.PlotSpec.from_dict(spec.to_dict()).p_values is True
+    assert pf.PlotSpec.from_dict({}).p_values is False
+
+
+def test_facet_pvalues_welch_per_phase(tmp_path):
+    # Deterministic separation: chr ~0, control ~1 -> tiny p in every phase.
+    s = _summary()
+    s["FinalPI"] = [0.0, 0.01, 0.02, 0.03, 1.0, 1.01, 1.02, 1.03]
+    df = pf.faceted_data(_Exp(s, tmp_path), "FinalPI")
+    pvals = pf.facet_pvalues(df)
+    assert list(pvals["Phase"]) == ["Acclimation", "Experiment", "Cooldown"]
+    assert (pvals["p"] < 1e-6).all()
+    assert set(zip(pvals["a"], pvals["b"])) == {("chr", "control")}
+
+
+def test_pvalue_brackets_render_and_extend_ylim(tmp_path):
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")     # y_limits [-1, 1]
+    spec.p_values = True
+    style = pf.PlotStyle()
+    g = pf.figure_for(exp, "faceted_pi", spec, style)
+    path = pf.save_ggplot(g, str(tmp_path / "p.svg"), style)
+    svg = open(path, encoding="utf-8").read()
+    # A formatted p-value label made it into the vector file as text.
+    pvals = pf.facet_pvalues(pf.faceted_data(exp, "FinalPI"))
+    assert any(f"{p:.2g}" in svg for p in pvals["p"])
+
+
+def test_boxplot_and_boxed_strip_render(tmp_path):
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_movement")
+    style = pf.PlotStyle(geom="box", strip_style="boxed",
+                         strip_bg="#e8eef7", panel_bg="#f5f5f5", line_pt=1.2)
+    g = pf.figure_for(exp, "faceted_movement", spec, style)
+    path = pf.save_ggplot(g, str(tmp_path / "box.svg"), style)
+    svg = open(path, encoding="utf-8").read()
+    assert "#e8eef7" in svg.lower()          # strip box fill present
+    assert "#f5f5f5" in svg.lower()          # panel background present
+
+    # box+dots renders too (dots overlaid, boxplot outliers suppressed).
+    style.geom = "box+dots"
+    g = pf.figure_for(exp, "faceted_movement", spec, style)
+    assert pf.render_png_bytes(g, style, dpi=72)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_editor_round_trips_new_controls(editor):
+    editor.geom_combo.setCurrentText("box")
+    editor.strip_combo.setCurrentText("boxed")
+    editor.line_pt.setValue(1.5)
+    editor.panel_bg_check.setChecked(True)
+    editor.pvalues_check.setChecked(True)
+    editor._read_controls()
+    style, spec = editor._current_style(), editor._current_spec()
+    assert style.geom == "box" and style.strip_style == "boxed"
+    assert style.line_pt == 1.5
+    assert style.panel_bg          # checked -> a color is written
+    assert spec.p_values is True
+    editor.panel_bg_check.setChecked(False)
+    editor._read_controls()
+    assert editor._current_style().panel_bg == ""
+
+
+def test_point_outline_round_trip_and_render(tmp_path, editor):
+    # Model round trip.
+    style = pf.PlotStyle(point_stroke=0.8)
+    assert pf.PlotStyle.from_dict(style.to_dict()).point_stroke == 0.8
+    assert pf.PlotStyle.from_dict({}).point_stroke == 0.0  # default: no outline
+
+    # Outlined points render (black edge + treatment fill via scale_fill).
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")
+    g = pf.figure_for(exp, "faceted_pi", spec,
+                      pf.PlotStyle(point_stroke=0.8, colors={"chr": "#112233"}))
+    path = pf.save_ggplot(g, str(tmp_path / "o.svg"),
+                          pf.PlotStyle(point_stroke=0.8))
+    svg = open(path, encoding="utf-8").read()
+    assert "#112233" in svg               # treatment color survives as fill
+
+    # Editor round trip.
+    editor.point_stroke.setValue(1.2)
+    editor._read_controls()
+    assert editor._current_style().point_stroke == 1.2
+
+
+def test_editor_restore_defaults_resets_spec_not_style(editor):
+    editor.title_edit.setText("Customized")
+    editor.point_size.setValue(3.3)
+    editor._read_controls()
+    style_name = editor._current_spec().style
+    assert editor._current_spec().title == "Customized"
+
+    editor._restore_defaults()
+    spec = editor._current_spec()
+    assert spec.title == ""                       # spec content reset
+    assert spec.y_limits == [-1.0, 1.0]
+    assert spec.style == editor._specs.default_style
+    # Shared style untouched by the plot reset.
+    assert editor._specs.styles[style_name].point_size == 3.3
+
+
+def test_facet_width_mode_keeps_panels_constant(tmp_path):
+    import io as _io
+
+    from PIL import Image
+
+    # Off (0): the figure is width_mm regardless of facet count.
+    style = pf.PlotStyle(width_mm=180, facet_width_mm=0)
+    assert pf.effective_width_mm(style, 3) == 180
+    # On: margin + per-facet width x shown facets.
+    style = pf.PlotStyle(facet_width_mm=50)
+    assert pf.effective_width_mm(style, 3) == pf._AXIS_MARGIN_MM + 150
+    assert pf.effective_width_mm(style, 2) == pf._AXIS_MARGIN_MM + 100
+
+    # Rendered pixels agree: dropping a facet shrinks the figure by exactly
+    # one facet width instead of stretching the remaining panels.
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")
+    dpi = 72
+    g3 = pf.figure_for(exp, "faceted_pi", spec, style)
+    w3 = Image.open(_io.BytesIO(pf.render_png_bytes(g3, style, dpi=dpi))).size[0]
+    spec.facets = ["Acclimation", "Experiment"]
+    g2 = pf.figure_for(exp, "faceted_pi", spec, style)
+    w2 = Image.open(_io.BytesIO(pf.render_png_bytes(g2, style, dpi=dpi))).size[0]
+    expected_delta = 50 / 25.4 * dpi
+    assert abs((w3 - w2) - expected_delta) <= 2
+
+
+def test_editor_facet_width_round_trip_and_wheelproof_controls(editor):
+    from pytrackinganalysis.apps import plot_editor as pe
+
+    editor.facet_width.setValue(55.0)
+    editor._read_controls()
+    assert editor._current_style().facet_width_mm == 55.0
+
+    # Every dropdown and spinner in the editor ignores the mouse wheel, so
+    # scrolling the options panel never edits a hovered control.
+    for combo in (editor.theme_combo, editor.mean_combo, editor.geom_combo,
+                  editor.strip_combo, editor.plot_combo, editor.style_combo):
+        assert isinstance(combo, pe._NoWheelCombo)
+    assert isinstance(editor.font_combo, pe._NoWheelFontCombo)
+    for spin in (editor.width_mm, editor.height_mm, editor.facet_width,
+                 editor.point_size, editor.jitter, editor.line_pt):
+        assert isinstance(spin, pe._NoWheelSpin)
