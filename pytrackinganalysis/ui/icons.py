@@ -23,6 +23,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "plots":      ("fa5s.chart-bar",           Category.PLOTS),
     "qc":         ("fa5s.search",              Category.QC),
     "scripts":    ("fa5s.scroll",              Category.SCRIPTS),
+    "ai":         ("fa5s.robot",               Category.AI),
     "tools":      ("fa5s.tools",               Category.TOOLS),
     "settings":   ("fa5s.cog",                 Category.NEUTRAL),
     "theme_dark": ("fa5s.moon",                Category.NEUTRAL),

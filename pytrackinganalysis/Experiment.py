@@ -1406,16 +1406,98 @@ class Experiment:
             handle.write(text + "\n")
 
     # ------------------------------------------------------------------
+    # AI Summary — an optional AI-written narrative of this analysis (see
+    # CONTEXT.md and ADR-0004). The saved file is the opt-in: the report
+    # embeds it iff it exists, and run_analysis deletes it, so stale prose
+    # can never sit beside fresh figures.
+    # ------------------------------------------------------------------
+
+    #: First-line marker of a saved AI Summary; the rest of that line is the
+    #: provenance (provider, model, timestamp) rendered above the summary.
+    _AI_SUMMARY_MARKER = "[AI Summary] "
+
+    def _ai_summary_path(self) -> str:
+        return os.path.join(self.analysis_path,
+                            f"{self.arena.experiment_name}_AI_Summary.txt")
+
+    def read_ai_summary(self):
+        """The saved AI Summary as ``(provenance, body)``, or ``None``.
+
+        ``provenance`` is the "provider model, timestamp" string written by
+        :meth:`write_ai_summary`, or ``None`` for a file without the marker
+        (e.g. hand-edited) — the body is still returned so the report never
+        silently drops what the file says.
+        """
+        try:
+            with open(self._ai_summary_path(), encoding="utf-8") as handle:
+                text = handle.read().strip()
+        except OSError:
+            return None
+        if not text:
+            return None
+        first, _, rest = text.partition("\n")
+        if first.startswith(self._AI_SUMMARY_MARKER):
+            return first[len(self._AI_SUMMARY_MARKER):].strip(), rest.strip()
+        return None, text
+
+    def write_ai_summary(self, text: str, provider: str, model: str) -> str:
+        """Persist *text* with a provenance first line; returns the path."""
+        from datetime import datetime as _dt
+
+        stamp = _dt.now().strftime("%Y-%m-%d %H:%M")
+        path = self._ai_summary_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"{self._AI_SUMMARY_MARKER}{provider} {model}, "
+                         f"{stamp}\n\n{text.strip()}\n")
+        return path
+
+    def delete_ai_summary(self) -> None:
+        """Remove the saved AI Summary, if any (ADR-0004: it is a derivative
+        of a single analysis run and must not outlive it)."""
+        try:
+            os.remove(self._ai_summary_path())
+        except FileNotFoundError:
+            pass
+
+    def generate_ai_summary(self, provider: str, model: str | None = None) -> str:
+        """Ask *provider* for an AI Summary of the current analysis outputs.
+
+        Builds the payload from the report's own ingredients (never the
+        rendered PDF), calls the provider, and persists the result — the next
+        :meth:`create_report` embeds it. Raises
+        :class:`~pytrackinganalysis.ai.AISummaryError` on any provider
+        problem; nothing else is touched in that case. Returns the summary
+        text.
+        """
+        from .ai import build_payload, get_summarizer
+
+        summarizer = get_summarizer(provider, model=model)
+        print(f"Requesting AI summary from {summarizer.display_name} "
+              f"({summarizer.model})…")
+        payload = build_payload(self)
+        text = summarizer.summarize(
+            payload, self.experiment_type.ai_summary_prompt())
+        path = self.write_ai_summary(
+            text, summarizer.display_name, summarizer.model)
+        print(f"Saved: {path}")
+        return text
+
+    # ------------------------------------------------------------------
     # Report model assembly (analysis-side; imports the document model only,
     # never a rendering backend, so the core stays engine-independent).
     # ------------------------------------------------------------------
 
-    def build_report_model(self, qc_cutoff: float = 0.9):
+    def build_report_model(self, qc_cutoff: float = 0.9,
+                           include_ai_summary: bool = True):
         """Build the backend-agnostic :class:`~...report.model.Report`.
 
         The single bridge between analysis data and the report: it emits the
         cover, section dividers, statistics text, summary tables and
-        report-native figures as model blocks.
+        report-native figures as model blocks. *include_ai_summary* exists for
+        the AI payload builder, which must serialize the report *without* any
+        saved AI Summary so a new summary never quotes its predecessor
+        (ADR-0004).
         """
         from datetime import datetime as _dt
         from pathlib import Path as _Path
@@ -1424,7 +1506,13 @@ class Experiment:
         from .report import model as _m
 
         exp_name = self.arena.experiment_name
-        report = _m.Report(exp_name)
+        ## The report is titled after the project (like the PDF's filename),
+        ## not the DTrack recording: the project directory is the thing the
+        ## scientist names and recognises. The recording name stays visible
+        ## as a cover metadata row.
+        project_name = os.path.basename(
+            os.path.normpath(self.project_directory)) or exp_name
+        report = _m.Report(project_name)
 
         # ---- Cover ----
         global_cfg = (self.config.get("global", {})
@@ -1433,6 +1521,7 @@ class Experiment:
         if not self.experiment_type.is_custom:
             metadata.append(("Experiment type", self.experiment_type.display_name))
         metadata += [
+            ("Recording", exp_name),
             ("Tracking type", self.parameters.get_tracking_type().name),
             ("Tracking rig", str(global_cfg.get("tracking_rig", "—"))),
         ]
@@ -1446,7 +1535,7 @@ class Experiment:
         status_lines = [line for line in (self._qc_status_line(qc_cutoff),
                                           self._movement_status_line())
                         if line is not None]
-        report.add(_m.Cover(exp_name, self.experiment_type.report_title(),
+        report.add(_m.Cover(project_name, self.experiment_type.report_title(),
                             metadata=metadata,
                             status=status_lines or None))
 
@@ -1459,6 +1548,22 @@ class Experiment:
             for line in notes.splitlines():
                 if line.strip():
                     report.add(_m.Paragraph(line.strip()))
+
+        # ---- AI Summary ----
+        # Embedded iff the saved file exists — the file IS the opt-in
+        # (ADR-0004). Rendered up front, executive-summary style, with an
+        # explicit provenance line so nobody mistakes it for human prose.
+        saved_summary = self.read_ai_summary() if include_ai_summary else None
+        if saved_summary:
+            provenance, body = saved_summary
+            report.add(_m.Heading("AI Summary", level=2))
+            label = (f"AI-generated summary — {provenance}." if provenance
+                     else "AI-generated summary.")
+            report.add(_m.Paragraph(f"{label} Review before relying on it."))
+            for para in body.split("\n\n"):
+                para = " ".join(para.split())
+                if para:
+                    report.add(_m.Paragraph(para))
 
         # ---- Analysis section ----
         # Whole-recording figures, then the per-phase (faceted) figures when
@@ -1744,16 +1849,18 @@ class Experiment:
         """Add each non-empty ``*.txt`` in *directory* as a Preformatted block.
 
         Excluded: the run-notes file (rendered as prose after the cover), the
-        stats text (rendered as the Statistical-comparisons table), and the
-        experiment summary (rendered as the structured Experiment Summary
-        section) — embedding those again would duplicate them in a worse form."""
+        AI Summary (rendered as its own section up front), the stats text
+        (rendered as the Statistical-comparisons table), and the experiment
+        summary (rendered as the structured Experiment Summary section) —
+        embedding those again would duplicate them in a worse form."""
         if not directory.exists():
             return
         notes_name = os.path.basename(self._run_notes_path())
         for path in sorted(directory.glob("*.txt")):
             if path.name.startswith(".") or path.name == notes_name:
                 continue
-            if path.name.endswith(("_Stats.txt", "_experiment_summary.txt")):
+            if path.name.endswith(("_Stats.txt", "_experiment_summary.txt",
+                                   "_AI_Summary.txt")):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
@@ -1787,6 +1894,12 @@ class Experiment:
         ## same directory. Without it a stale *_Summary_Facet.csv is embedded in
         ## the PDF as a current result with no provenance marker at all.
         self._write_run_manifest()
+
+        ## The AI Summary describes a single analysis run (ADR-0004). Unlike
+        ## the plots and CSVs below, this run cannot regenerate it for free —
+        ## so it is deleted, not refreshed; the user re-requests it from the
+        ## AI card when they want it back.
+        self.delete_ai_summary()
 
         print("--- Experiment Summary ---")
         self.experiment_summary(save=True)

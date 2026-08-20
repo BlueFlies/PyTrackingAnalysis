@@ -201,6 +201,45 @@ class ExperimentType:
         Empty means 'no specific expectation' (Custom)."""
         return []
 
+    def ai_summary_prompt(self) -> str:
+        """Instructions given to the AI Summary provider (see CONTEXT.md,
+        ADR-0004). The base prompt pins the contract — summarize the provided
+        analysis, never perform a new one — and concrete types extend it with
+        what their assay means (e.g. Valence explains the PI and its phases).
+        """
+        return (
+            "You are writing the summary section of a scientific report on an "
+            "insect-tracking experiment. You are given the report's own "
+            "content: its cover metadata, figures (as images), statistics, "
+            "and per-animal summary data files.\n"
+            "\n"
+            "Write a summary of this analysis, at most one page (about 450 "
+            "words), structured as exactly three parts in this order:\n"
+            "1. A brief paragraph beginning 'Data quality:' — the quality of "
+            "the experiment: tracker data quality, animal movement and "
+            "transition levels, animals excluded or flagged (with counts and "
+            "the criterion), and any status warnings. If everything was "
+            "clean, say so briefly.\n"
+            "2. A brief paragraph beginning 'Experimental design:' — the "
+            "design: the assay and rig, the treatments/groups and how many "
+            "animals each contained, and the phase (facet) structure with "
+            "its time windows.\n"
+            "3. One or two paragraphs beginning 'Results:' — the findings: "
+            "the headline result first, then supporting evidence (group "
+            "differences, statistical comparisons, time course), then any "
+            "caveats.\n"
+            "\n"
+            "Requirements:\n"
+            "- Summarize the analysis you are shown; do not perform your own. "
+            "Use only numbers that appear in the input, and never invent or "
+            "extrapolate values.\n"
+            "- Plain prose paragraphs only, separated by blank lines: no "
+            "markdown, no headings, no bullet lists, no tables (the report "
+            "renderer shows your text verbatim as paragraphs).\n"
+            "- Write in the past tense, measured scientific register; "
+            "describe what the data show without overclaiming."
+        )
+
     # ---- validation (ADR-0001: fail hard for typed) -------------------
 
     def validate(self, config: dict) -> list[str]:

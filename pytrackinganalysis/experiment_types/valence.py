@@ -149,6 +149,19 @@ class ValenceExperimentType(ExperimentType):
         flagged.attrs["experiment_flagged"] = bool(total and fraction > 0.5)
         return flagged
 
+    def ai_summary_prompt(self) -> str:
+        return super().ai_summary_prompt() + (
+            "\n"
+            "\nAssay context (Valence Experiment): a two-choice "
+            "light-preference assay. The Preference Index (PI) runs from -1 "
+            "to +1; positive PI means the animals prefer Light over NoLight. "
+            "The primary result is the PI during the Experiment phase "
+            "(the middle phase); Acclimation precedes it and Cooldown follows. "
+            "Flies excluded by the low-transition criterion are absent from "
+            "all results; low-movement flags are advisory only (flagged flies "
+            "stay in the results)."
+        )
+
     def report_sections(self, experiment) -> list:
         # Valence-first blocks: headline Experiment-phase PI, PI over time,
         # per-animal persistence. Built in report_figures so matplotlib stays
