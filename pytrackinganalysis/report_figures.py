@@ -35,6 +35,47 @@ _INK = "#0f172a"
 _MUTED = "#64748b"
 _DPI = 200
 
+# Diverging PI gradient for the per-tracker QC bars: −1 red … 0 amber … +1
+# green, built from the same palette as the threshold colors elsewhere.
+_PI_CMAP = matplotlib.colors.LinearSegmentedColormap.from_list(
+    "pi_red_green", ["#dc2626", "#eab308", "#16a34a"])
+_NO_PI_COLOR = "#94a3b8"  # tracker with no PI in the window
+
+
+def _pi_color(pi_value) -> str:
+    """Gradient color for a preference index (−1 red … +1 green); grey for
+    missing/NaN."""
+    if pi_value is None or pi_value != pi_value:
+        return _NO_PI_COLOR
+    x = (max(-1.0, min(1.0, float(pi_value))) + 1.0) / 2.0
+    return matplotlib.colors.to_hex(_PI_CMAP(x))
+
+
+def _pi_lookup(experiment, window):
+    """Tracker Name → FinalPI over *window* (excluded flies included), or
+    ``None`` when the experiment's summary carries no PI at all."""
+    arena = getattr(experiment, "arena", None)
+    if arena is None:
+        return None
+    try:
+        summary = arena.summarize(range_minutes=window, include_excluded=True)
+    except Exception:  # noqa: BLE001
+        return None
+    if summary is None or "FinalPI" not in getattr(summary, "columns", []) \
+            or "Name" not in summary.columns:
+        return None
+    pi = pd.to_numeric(summary["FinalPI"], errors="coerce")
+    return dict(zip(summary["Name"].astype(str), pi))
+
+
+def _add_pi_colorbar(fig, ax, label):
+    sm = matplotlib.cm.ScalarMappable(
+        norm=matplotlib.colors.Normalize(-1, 1), cmap=_PI_CMAP)
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label(label, fontsize=9, color=_INK)
+    cbar.ax.tick_params(labelsize=8, colors=_MUTED)
+    cbar.outline.set_visible(False)
+
 
 def _style_ax(ax):
     ax.set_facecolor("white")
@@ -432,6 +473,17 @@ def build_qc_figures(experiment) -> list[m.Figure]:
     if dq is None or len(dq) == 0 or "HighQuality" not in dq.columns:
         return blocks
 
+    # PI over the Primary (Experiment) phase colors the QC bars: it puts the
+    # behavioral outcome next to each tracker's recording quality.
+    windows, wlabels = _facet_windows_and_labels(experiment)
+    if windows:
+        primary_win, primary_label = _primary_phase(windows, wlabels)
+    else:
+        primary_win, primary_label = (0, 0), "whole recording"
+    pi_by_name = _pi_lookup(experiment, primary_win)
+    pi_caption = (f" Bar color = preference index during the {primary_label} "
+                  "phase (red −1 … green +1; grey = no PI data).")
+
     try:
         hq = pd.to_numeric(dq["HighQuality"], errors="coerce")
         order = hq.sort_values(na_position="first").index
@@ -439,9 +491,12 @@ def build_qc_figures(experiment) -> list[m.Figure]:
         label_col = next((c for c in ("Tracker", "Name") if c in dq.columns), None)
         labels = (dq.loc[order, label_col] if label_col is not None
                   else pd.Series(order, index=order)).astype(str)
-        colors = ["#16a34a" if (v == v and v >= 0.90)
-                  else "#d97706" if (v == v and v >= 0.80)
-                  else "#dc2626" for v in hq_sorted]
+        if pi_by_name is not None:
+            colors = [_pi_color(pi_by_name.get(name)) for name in labels]
+        else:
+            colors = ["#16a34a" if (v == v and v >= 0.90)
+                      else "#d97706" if (v == v and v >= 0.80)
+                      else "#dc2626" for v in hq_sorted]
         n = len(hq_sorted)
         # Taller rows and larger type than the analysis figures: this chart is
         # read tracker-by-tracker, so the names and scale must stay legible.
@@ -457,23 +512,30 @@ def build_qc_figures(experiment) -> list[m.Figure]:
         ax.set_xlim(0, 1)
         ax.set_xlabel("Fraction high-quality frames", fontsize=13, color=_INK)
         ax.set_title("Per-tracker data quality", fontsize=14, color=_INK)
+        if pi_by_name is not None:
+            _add_pi_colorbar(fig, ax, f"PI ({primary_label})")
         fig.tight_layout()
         blocks.append(_fig_to_block(
             fig, title="Data quality",
             caption="High-quality frame fraction per tracker. Dashed line = "
-                    "0.90 threshold; green ≥ 0.90, amber ≥ 0.80, red below."))
+                    "0.90 threshold."
+                    + (pi_caption if pi_by_name is not None else
+                       " Green ≥ 0.90, amber ≥ 0.80, red below.")))
     except Exception:  # noqa: BLE001
         plt.close("all")
-    blocks += _qc_metric_bars(experiment)
+    blocks += _qc_metric_bars(experiment, pi_by_name, primary_label)
     return blocks
 
 
 def _tracker_bar_figure(summary, metric, title, xlabel, caption,
-                        threshold=None):
+                        threshold=None, pi_by_name=None, pi_label=None):
     """A QC-style horizontal per-tracker bar chart for one summary metric,
-    matching the data-quality figure's look. With a *threshold*, bars below it
-    (or with no data) are red and the rest green, with a dashed criterion
-    line; without one, bars are neutral."""
+    matching the data-quality figure's look.
+
+    With *pi_by_name* (Name → Experiment-phase PI) the bars take the diverging
+    PI gradient (−1 red … +1 green, grey = no PI) with a colorbar. Otherwise a
+    *threshold* colors bars red below it and green above; without either, bars
+    are neutral. A threshold always draws its dashed criterion line."""
     if summary is None or len(summary) == 0 \
             or metric not in getattr(summary, "columns", []) \
             or "Name" not in summary.columns:
@@ -483,7 +545,9 @@ def _tracker_bar_figure(summary, metric, title, xlabel, caption,
         order = vals.sort_values(na_position="first").index
         vals_sorted = vals.loc[order]
         labels = summary.loc[order, "Name"].astype(str)
-        if threshold is not None:
+        if pi_by_name is not None:
+            colors = [_pi_color(pi_by_name.get(name)) for name in labels]
+        elif threshold is not None:
             colors = ["#dc2626" if (v != v or v < threshold) else "#16a34a"
                       for v in vals_sorted]
         else:
@@ -502,6 +566,8 @@ def _tracker_bar_figure(summary, metric, title, xlabel, caption,
         ax.tick_params(axis="x", labelsize=10)
         ax.set_xlabel(xlabel, fontsize=13, color=_INK)
         ax.set_title(title, fontsize=14, color=_INK)
+        if pi_by_name is not None:
+            _add_pi_colorbar(fig, ax, pi_label or "PI")
         fig.tight_layout()
         return _fig_to_block(fig, title=title, caption=caption)
     except Exception:  # noqa: BLE001
@@ -509,11 +575,12 @@ def _tracker_bar_figure(summary, metric, title, xlabel, caption,
         return None
 
 
-def _qc_metric_bars(experiment) -> list:
+def _qc_metric_bars(experiment, pi_by_name=None, pi_phase_label="") -> list:
     """Per-tracker QC bars: transitions/min during the Primary (middle) phase
     and movement during the first phase. Every tracker is shown — excluded
     flies included — because, like data quality, these describe the recording
-    rather than the analysis population."""
+    rather than the analysis population. *pi_by_name* (from the caller's
+    Primary-phase summary) colors the bars by preference index."""
     blocks: list = []
     arena = getattr(experiment, "arena", None)
     if arena is None:
@@ -525,6 +592,10 @@ def _qc_metric_bars(experiment) -> list:
     else:
         primary_win = first_win = (0, 0)
         primary_label = first_label = "whole recording"
+    pi_caption = (f" Bar color = preference index during the "
+                  f"{pi_phase_label or primary_label} phase (red −1 … green "
+                  "+1; grey = no PI data)." if pi_by_name is not None else "")
+    pi_label = f"PI ({pi_phase_label or primary_label})"
 
     # The Valence criteria as reference lines: the count criterion converted
     # to a rate over the primary phase, and the movement floor as-is.
@@ -555,11 +626,15 @@ def _qc_metric_bars(experiment) -> list:
         _summary_for(primary_win), "TransitionsPerMin",
         f"Per-tracker transitions — {primary_label} phase",
         "Transitions per minute", threshold=transition_rate,
+        pi_by_name=pi_by_name, pi_label=pi_label,
         caption=f"Region transitions per minute for every tracker during the "
                 f"{primary_label} phase, excluded flies included."
                 + (" Dashed line = the exclusion criterion (min_transitions ÷ "
-                   "phase duration); red = below it, green = above."
-                   if transition_rate else ""))
+                   "phase duration)"
+                   + ("." if pi_by_name is not None
+                      else "; red = below it, green = above.")
+                   if transition_rate else "")
+                + pi_caption)
     if block is not None:
         blocks.append(block)
 
@@ -567,11 +642,15 @@ def _qc_metric_bars(experiment) -> list:
         _summary_for(first_win), "TotalDistancePerMin",
         f"Per-tracker movement — {first_label} phase",
         "Movement (mm/min)", threshold=movement_floor,
+        pi_by_name=pi_by_name, pi_label=pi_label,
         caption=f"Average movement for every tracker during the {first_label} "
                 f"phase, excluded flies included."
                 + (" Dashed line = the low-movement flag threshold "
-                   "(min_movement); red = below it, green = above."
-                   if movement_floor else ""))
+                   "(min_movement)"
+                   + ("." if pi_by_name is not None
+                      else "; red = below it, green = above.")
+                   if movement_floor else "")
+                + pi_caption)
     if block is not None:
         blocks.append(block)
     return blocks

@@ -663,3 +663,29 @@ def test_report_pdf_written_to_project_root(tmp_path, monkeypatch):
     assert os.path.dirname(out) == str(tmp_path)
     assert os.path.basename(out) == f"{os.path.basename(tmp_path)}_report.pdf"
     assert os.path.exists(out)
+
+
+def test_qc_bars_use_pi_gradient():
+    # Endpoint colors of the PI gradient: −1 = palette red, +1 = palette
+    # green, NaN = grey; and the figures explain the coloring.
+    from pytrackinganalysis import experiment_types as et
+
+    assert report_figures._pi_color(-1.0) == "#dc2626"
+    assert report_figures._pi_color(1.0) == "#16a34a"
+    assert report_figures._pi_color(float("nan")) == "#94a3b8"
+    # Clamped outside the PI range.
+    assert report_figures._pi_color(2.0) == "#16a34a"
+
+    summary = _twochoice_summary()
+    summary["Name"] = [f"T_{i}_0" for i in range(len(summary))]
+    dq = pd.DataFrame({"Tracker": [f"T_{i}_0" for i in range(len(summary))],
+                       "HighQuality": [0.95] * len(summary)})
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, summary, dq=dq,
+                   facet_cutoffs=[10, 70])
+    exp.experiment_type = et.get_experiment_type("Valence")
+    exp.config = {"global": {}}
+    figs = report_figures.build_qc_figures(exp)
+    assert len(figs) == 3
+    for fig in figs:
+        assert "preference index" in fig.caption
+        assert "red −1 … green +1" in fig.caption
