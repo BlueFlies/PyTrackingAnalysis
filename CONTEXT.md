@@ -91,3 +91,30 @@ the *first* facet window is reported as potentially an issue — never removed
 experiment with more than half of its analysed flies flagged is itself noted
 as potentially an issue on the report cover.
 _Avoid_: exclusion (a flag never removes a fly), QC filter
+
+**Publication Figure**:
+A hand-curated, journal-ready vector figure (SVG with editable text, or PDF)
+rendered by plotnine from a Plot Spec + Plot Style and saved under
+`<project>/figures/` — distinct from the matplotlib figures embedded in the
+PDF report, and always regenerable from the spec.
+_Avoid_: report figure, plot export
+
+**Plot Style**:
+A named, reusable look shared by every Publication Figure that references it:
+figure size, theme, fonts, point/mean styling, and the treatment→color
+mapping. Stored in `plot_specs.yaml` under `styles:`; `default_style:` names
+the one the Plot Editor auto-loads.
+_Avoid_: theme (a plotnine theme is one field inside a style)
+
+**Plot Spec**:
+One Publication Figure's content decisions — axis labels, facet and treatment
+inclusion/order/display names, y-limits, reference line — plus the name of
+the Plot Style it uses. Stored in `plot_specs.yaml` under `plots:`, keyed by
+plot id (e.g. `faceted_pi`).
+_Avoid_: plot config, settings
+
+**Plot Editor**:
+The fourth PyQt6 app (`pytrack-plots`): opens a project, renders a live
+preview from the same Spec+Style that saving uses, and writes the vector
+Publication Figures. Presentation only — it never alters the experiment
+definition in `tracking_config.yaml`.

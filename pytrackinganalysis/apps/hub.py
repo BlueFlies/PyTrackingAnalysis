@@ -336,8 +336,11 @@ class HubWindow(QMainWindow):
         edit_cfg.clicked.connect(lambda: self._launch_subapp("config"))
         qc_view = ActionButton("QC viewer…", Category.QC, icon_name="qc")
         qc_view.clicked.connect(lambda: self._launch_subapp("qc"))
+        plot_editor = ActionButton("Plot editor…", Category.ANALYZE, icon_name="report")
+        plot_editor.clicked.connect(lambda: self._launch_subapp("plots"))
         launchers.addWidget(edit_cfg)
         launchers.addWidget(qc_view)
+        launchers.addWidget(plot_editor)
         card.add_body(launchers)
 
         self._cards["project"] = card

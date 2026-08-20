@@ -653,15 +653,16 @@ tracking_regions:
 
 ## 5. The desktop UI
 
-PyTrackingAnalysis ships three independent PyQt6 apps, each launched as its own
+PyTrackingAnalysis ships four independent PyQt6 apps, each launched as its own
 window.  They share a common pyflic-style theme (category-colored cards, top
-bar, PlotDock) so the visual language is consistent across all three.
+bar, PlotDock) so the visual language is consistent across all of them.
 
 | Command | Window | Purpose |
 |---------|--------|---------|
-| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC |
+| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC + Plot Editor |
 | `pytrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
 | `pytrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
+| `pytrack-plots`  | Plot Editor   | Publication figures: live-edit a plot's style and content, save vector output (SVG/PDF) for Illustrator |
 
 ### 5.1 Launching the apps
 
@@ -805,6 +806,31 @@ A script named **`batch`** has a special role in batch mode (§8).
     time series so bad-tracking regions jump out visually.
 - **Export data_quality.csv** writes the full table to disk for external
   review.
+
+### 5.5 Plot Editor (`pytrack-plots`)
+
+Publication figures for Valence experiments (see `docs/adr/0004`), rendered by
+**plotnine** — a separate path from the PDF-report figures that shares the same
+summarized, exclusion-filtered data.
+
+- **Open a project** (or launch from the Hub's project card). The four faceted
+  plots are available: preference index, time in region 1, movement, and
+  transitions — each one panel per phase, dots + mean ± SEM.
+- **Two-layer model.** A named **Plot Style** holds the look shared across
+  plots (figure size in mm, theme, font, point/mean styling, treatment
+  colors); a per-plot **Plot Spec** holds content (labels, facet and treatment
+  inclusion/order/renames, y-limits, reference line). Both persist in
+  `<project>/plot_specs.yaml`, written only by this app.
+- **Save style as…** captures the current look under a name so subsequent
+  plots come out identical; **Set as project default** makes it the style the
+  app auto-loads for this project.
+- **Save SVG… / Save PDF…** write vector files (default
+  `<project>/figures/<plot>.svg`). SVG text stays *editable text* in Adobe
+  Illustrator (`svg.fonttype='none'`); PDF embeds TrueType fonts. The live
+  preview is rendered from the same figure object that saving uses, so the
+  file always matches the screen.
+- **Headless re-render**: `pubfigures.render_all(experiment)` regenerates
+  every figure defined in `plot_specs.yaml` without the app.
 
 ---
 

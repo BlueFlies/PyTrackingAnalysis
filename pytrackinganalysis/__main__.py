@@ -13,7 +13,7 @@ import sys
 def main() -> int:
     if len(sys.argv) < 2:
         print(
-            "usage: python -m pytrackinganalysis {hub,config,qc} [args...]",
+            "usage: python -m pytrackinganalysis {hub,config,qc,plots} [args...]",
             file=sys.stderr,
         )
         return 2
@@ -28,8 +28,10 @@ def main() -> int:
         from .apps.config_editor import main as app_main
     elif app_name == "qc":
         from .apps.qc_viewer import main as app_main
+    elif app_name == "plots":
+        from .apps.plot_editor import main as app_main
     else:
-        print(f"unknown app: {app_name!r} (expected hub|config|qc)", file=sys.stderr)
+        print(f"unknown app: {app_name!r} (expected hub|config|qc|plots)", file=sys.stderr)
         return 2
 
     return int(app_main() or 0)

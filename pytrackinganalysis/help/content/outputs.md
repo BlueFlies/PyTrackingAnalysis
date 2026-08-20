@@ -12,6 +12,7 @@ All outputs are written relative to the project directory. Open them from the Hu
 - `*_Stats.txt` — pairwise comparisons across treatments (Welch t-test or Tukey HSD)
 - `*_plot_*.png` — saved figures named after each plot method
 - `<project>_report.pdf` — the PDF report, written to the **project root** (beside the yaml): figures → stats table → experiment summary → QC
+- `figures/` — publication figures saved by the Plot Editor (`pytrack-plots`): vector SVG (editable text in Illustrator) / PDF, regenerable from `plot_specs.yaml` in the project root
 
 ## `qc/` — data quality
 
