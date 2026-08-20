@@ -76,6 +76,12 @@ TOPICS: tuple[HelpTopic, ...] = (
         "scripts_overview.md",
     ),
     HelpTopic(
+        "ai_summary",
+        "AI summary",
+        "An optional AI-written one-page summary embedded in the report.",
+        "ai_summary.md",
+    ),
+    HelpTopic(
         "qc_overview",
         "QC Viewer",
         "Data-quality table and per-tracker plots.",

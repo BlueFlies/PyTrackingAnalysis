@@ -25,6 +25,7 @@ class Category(str, Enum):
     PLOTS = "plots"
     QC = "qc"
     SCRIPTS = "scripts"
+    AI = "ai"
     TOOLS = "tools"
     NEUTRAL = "neutral"
 
@@ -44,6 +45,7 @@ PALETTE: dict[Category, CategoryColors] = {
     Category.PLOTS:   CategoryColors("#ea580c", "#fb923c"),
     Category.QC:      CategoryColors("#dc2626", "#f87171"),
     Category.SCRIPTS: CategoryColors("#9333ea", "#a855f7"),
+    Category.AI:      CategoryColors("#0d9488", "#2dd4bf"),
     Category.TOOLS:   CategoryColors("#475569", "#94a3b8"),
     Category.NEUTRAL: CategoryColors("#64748b", "#94a3b8"),
 }

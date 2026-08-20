@@ -410,6 +410,17 @@ def test_stats_file_explains_metrics_and_phases(tmp_path):
     assert saved == text
 
 
+def test_report_is_titled_after_the_project_not_the_recording(tmp_path):
+    # The title matches the PDF's filename (the project directory the
+    # scientist named), not the DTrack recording name — which stays visible
+    # as a cover metadata row.
+    model = _model_exp(tmp_path).build_report_model()
+    assert model.title == tmp_path.name
+    cover = model.blocks[0]
+    assert cover.title == tmp_path.name
+    assert dict(cover.metadata)["Recording"] == "E"
+
+
 def test_cover_lists_phases_and_regions(tmp_path):
     exp = _model_exp(tmp_path, exp_type_name="Valence")
     exp.config["tracking_regions"] = {

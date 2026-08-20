@@ -204,6 +204,7 @@ class HubWindow(QMainWindow):
         self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
         self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
         self._sidebar.add_item("scripts", "Scripts", "scripts", category=Category.SCRIPTS)
+        self._sidebar.add_item("ai", "AI", "ai", category=Category.AI)
         self._sidebar.add_item("tools", "Tools", "tools", category=Category.TOOLS)
         self._sidebar.add_stretch()
         self._sidebar.itemSelected.connect(self._scroll_to_card)
@@ -223,6 +224,7 @@ class HubWindow(QMainWindow):
         self._build_analyze_card()
         self._build_plots_card()
         self._build_scripts_card()
+        self._build_ai_card()
         self._build_tools_card()
         self._cards_lay.addStretch(1)
 
@@ -525,6 +527,55 @@ class HubWindow(QMainWindow):
         self._cards["scripts"] = card
         self._cards_lay.addWidget(card)
 
+    # ---------------- AI card ----------------
+
+    def _build_ai_card(self) -> None:
+        """AI-assisted functions (one for now: the AI Summary, ADR-0004).
+
+        The action is offered only when a provider API key is present in the
+        environment / a ``.env`` file — presence is checked, validity is not;
+        a bad key surfaces as an error when a summary is requested."""
+        from ..ai import available_providers
+
+        card = Card(
+            "AI",
+            category=Category.AI,
+            subtitle="AI-assisted functions.",
+            icon_name="ai",
+        )
+        card.add_title_widget(
+            HelpButton("ai_summary", tooltip="AI summary")
+        )
+        self._ai_available = bool(available_providers())
+        self._btn_ai_summary = ActionButton(
+            "AI summary…", Category.AI, icon_name="ai", primary=True
+        )
+        self._btn_ai_summary.setToolTip(
+            "Have an AI provider write a one-page summary of the current "
+            "analysis and embed it in the report."
+        )
+        self._btn_ai_summary.clicked.connect(self._open_ai_summary_dialog)
+        self._btn_ai_summary.setEnabled(False)
+        card.add_body(self._btn_ai_summary)
+        if not self._ai_available:
+            note = QLabel(
+                "No API key found. Add ANTHROPIC_API_KEY or OPENAI_API_KEY "
+                "to a .env file (or the environment) and restart to enable "
+                "AI features."
+            )
+            note.setStyleSheet("color: palette(mid); font-style: italic;")
+            note.setWordWrap(True)
+            card.add_body(note)
+        self._cards["ai"] = card
+        self._cards_lay.addWidget(card)
+
+    def _open_ai_summary_dialog(self) -> None:
+        if self._exp is None:
+            return
+        from .ai_summary_dialog import AiSummaryDialog
+
+        AiSummaryDialog(self).exec()
+
     # ---------------- Tools card ----------------
 
     def _build_tools_card(self) -> None:
@@ -621,12 +672,13 @@ class HubWindow(QMainWindow):
             self._btn_create_report,
         ):
             btn.setVisible(not is_batch)
-        # Scripts card runs against a single loaded experiment; disable it
-        # wholesale in batch mode so only the load card's "Run batch script"
-        # button stays interactive.
-        scripts_card = self._cards.get("scripts")
-        if scripts_card is not None:
-            scripts_card.setEnabled(not is_batch)
+        # Scripts and AI cards run against a single loaded experiment; disable
+        # them wholesale in batch mode so only the load card's "Run batch
+        # script" button stays interactive.
+        for key in ("scripts", "ai"):
+            card = self._cards.get(key)
+            if card is not None:
+                card.setEnabled(not is_batch)
 
     def _set_project_dir(self, path: str | Path) -> None:
         p = Path(path).expanduser().resolve()
@@ -1337,6 +1389,11 @@ class HubWindow(QMainWindow):
                     or self._exp is not None
                 )
             )
+        # The AI summary additionally needs a provider key (checked once at
+        # card build; presence-gated per ADR-0004).
+        self._btn_ai_summary.setEnabled(
+            (not busy) and self._exp is not None and self._ai_available
+        )
         # Plot rendering and script runs are workloads too; leaving their cards
         # live during a task let a second one start behind the first.
         for key in ("plots", "scripts"):
