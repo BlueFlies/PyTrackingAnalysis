@@ -822,10 +822,11 @@ summarized, exclusion-filtered data.
   strip style: plain text or the ggplot-default bordered grey box with a
   choosable fill, an optional panel background color, and treatment colors); a
   per-plot **Plot Spec** holds content (labels, facet and treatment
-  inclusion/order/renames, y-limits, reference line, and optional per-facet
-  **p-value brackets** — Welch's t-test for two treatments, Tukey HSD beyond,
-  the same policy as Stats.txt). Both persist in `<project>/plot_specs.yaml`,
-  written only by this app.
+  inclusion/order/renames, y-limits, reference line, independent per-facet
+  y axes (`free_y`, the default for movement and transitions), and optional
+  per-facet **p-value brackets** — Welch's t-test for two treatments, Tukey
+  HSD beyond, the same policy as Stats.txt). Both persist in
+  `<project>/plot_specs.yaml`, written only by this app.
 - **Save style as…** captures the current look under a name so subsequent
   plots come out identical; **Set as project default** makes it the style the
   app auto-loads for this project.

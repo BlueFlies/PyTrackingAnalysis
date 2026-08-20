@@ -700,3 +700,28 @@ def test_qc_bars_use_pi_gradient():
     for fig in figs:
         assert "preference index" in fig.caption
         assert "red −1 … green +1" in fig.caption
+
+
+def test_report_transitions_and_movement_use_free_y(monkeypatch):
+    # The by-phase transitions and movement figures give each phase its own
+    # y axis; PI and percentage keep a shared, fixed scale.
+    from pytrackinganalysis import report_figures as rf
+
+    calls = []
+    real = rf.plt.subplots
+
+    def _spy(*args, **kwargs):
+        if "sharey" in kwargs:
+            calls.append(kwargs["sharey"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rf.plt, "subplots", _spy)
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
+                   facet_cutoffs=[10, 70])
+    figs = rf.build_faceted_figures(exp)
+    titles = [f.title for f in figs]
+    by_title = dict(zip(titles, calls))
+    assert by_title["Preference index by phase"] is True
+    assert by_title["Time in region 1 by phase"] is True
+    assert by_title["Transitions by phase"] is False
+    assert by_title["Movement by phase"] is False

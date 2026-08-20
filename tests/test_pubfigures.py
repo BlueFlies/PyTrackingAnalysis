@@ -424,3 +424,143 @@ def test_editor_facet_width_round_trip_and_wheelproof_controls(editor):
     for spin in (editor.width_mm, editor.height_mm, editor.facet_width,
                  editor.point_size, editor.jitter, editor.line_pt):
         assert isinstance(spin, pe._NoWheelSpin)
+
+
+def test_free_y_defaults_and_render(tmp_path):
+    # Unbounded metrics default to independent y axes; bounded ones stay fixed.
+    assert pf.default_spec("faceted_movement").free_y is True
+    assert pf.default_spec("faceted_transitions").free_y is True
+    assert pf.default_spec("faceted_pi").free_y is False
+    assert pf.default_spec("faceted_percentage").free_y is False
+    assert pf.PlotSpec.from_dict({}).free_y is False
+
+    # Free scales render, and y_limits is ignored while free_y is on: values
+    # far outside the limits still appear (their own panel scale expands).
+    s = _summary()
+    exp = _Exp(s, tmp_path)
+    spec = pf.default_spec("faceted_movement")
+    spec.y_limits = [0, 1]          # would crush the data if honoured
+    style = pf.PlotStyle()
+    g = pf.figure_for(exp, "faceted_movement", spec, style)
+    path = pf.save_ggplot(g, str(tmp_path / "free.svg"), style)
+    svg = open(path, encoding="utf-8").read()
+    assert "300" in svg             # a tick near the data max exists
+
+
+def test_mean_overlay_ci_variants(tmp_path):
+    df = pf.faceted_data(_Exp(_summary(), tmp_path), "FinalPI")
+    sem = pf.mean_overlay(df, "point+sem")
+    ci = pf.mean_overlay(df, "point+95ci")
+    # Same means; the CI interval is exactly 1.96x the SEM interval.
+    assert (sem["mean"] == ci["mean"]).all()
+    np.testing.assert_allclose(ci["hi"] - ci["mean"],
+                               1.96 * (sem["hi"] - sem["mean"]))
+    # New styles are valid and render.
+    for mean_style in ("point+95ci", "bar+95ci"):
+        style = pf.PlotStyle(mean_style=mean_style)
+        assert pf.PlotStyle.from_dict(style.to_dict()).mean_style == mean_style
+        g = pf.figure_for(_Exp(_summary(), tmp_path), "faceted_pi",
+                          pf.default_spec("faceted_pi"), style)
+        assert pf.render_png_bytes(g, style, dpi=72)[:4] == b"\x89PNG"
+
+
+def test_facet_height_grows_figure_for_labels(tmp_path):
+    import io as _io
+
+    from PIL import Image
+
+    style = pf.PlotStyle(facet_height_mm=50)
+    bare = pf.default_spec("faceted_pi")
+    labelled = pf.default_spec("faceted_pi")
+    labelled.x_label = "Treatment"
+    labelled.title = "Figure 1"
+    # The derived figure height grows with the added text...
+    assert pf.effective_height_mm(style, labelled) > \
+        pf.effective_height_mm(style, bare)
+    # ...and off (0) keeps the fixed height regardless of labels.
+    fixed = pf.PlotStyle(facet_height_mm=0, height_mm=70)
+    assert pf.effective_height_mm(fixed, labelled) == 70
+
+    exp = _Exp(_summary(), tmp_path)
+    dpi = 72
+    h_bare = Image.open(_io.BytesIO(pf.render_png_bytes(
+        pf.build_ggplot(pf.faceted_data(exp, "FinalPI"), bare, style),
+        style, dpi=dpi))).size[1]
+    h_lab = Image.open(_io.BytesIO(pf.render_png_bytes(
+        pf.build_ggplot(pf.faceted_data(exp, "FinalPI"), labelled, style),
+        style, dpi=dpi))).size[1]
+    expected = (pf.effective_height_mm(style, labelled)
+                - pf.effective_height_mm(style, bare)) / 25.4 * dpi
+    assert abs((h_lab - h_bare) - expected) <= 2
+
+
+def test_editor_panel_fits_and_combos_refuse_to_elide(editor, qapp):
+    editor.resize(1380, 860)
+    editor.show()
+    qapp.processEvents()
+    # Every control in the options panel stays inside the fixed-width scroll
+    # viewport (nothing extends past the window).
+    from PyQt6.QtWidgets import QScrollArea
+    scroll = [s for s in editor.findChildren(QScrollArea)
+              if s.width() == 440][0]
+    viewport_w = scroll.viewport().width()
+    panel = scroll.widget()
+    assert panel.width() <= viewport_w
+    # Combos can't be squeezed below their content: minimum == size hint.
+    hint = editor.strip_combo.sizeHint().width()
+    assert editor.strip_combo.minimumSizeHint().width() >= hint
+    assert editor.strip_combo.width() >= hint
+    editor.hide()
+
+
+def test_opaque_points_black_text_and_pvalue_size_defaults(tmp_path):
+    style = pf.PlotStyle()
+    assert style.point_alpha == 1.0          # points are opaque by default
+    assert style.text_color == "#000000"     # text defaults to black
+    assert style.p_value_pt == 7.0
+    restored = pf.PlotStyle.from_dict({"point_alpha": 0.6})
+    assert restored.point_alpha == 0.6       # stored styles keep their choice
+
+    # A distinctive text color lands on the SVG text, and a dedicated p-value
+    # size renders.
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")
+    spec.p_values = True
+    style = pf.PlotStyle(text_color="#123123", p_value_pt=5.0)
+    g = pf.figure_for(exp, "faceted_pi", spec, style)
+    path = pf.save_ggplot(g, str(tmp_path / "t.svg"), style)
+    assert "#123123" in open(path, encoding="utf-8").read()
+
+
+def test_transparent_backgrounds_render(tmp_path):
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")
+    style = pf.PlotStyle(strip_style="boxed", strip_bg="none",
+                         panel_bg="none")
+    g = pf.figure_for(exp, "faceted_pi", spec, style)
+    assert pf.render_png_bytes(g, style, dpi=72)[:4] == b"\x89PNG"
+    # Partial alpha (#rrggbbaa) is also a valid fill.
+    style = pf.PlotStyle(panel_bg="#2563eb22")
+    g = pf.figure_for(exp, "faceted_pi", spec, style)
+    assert pf.render_png_bytes(g, style, dpi=72)[:4] == b"\x89PNG"
+
+
+def test_color_button_supports_transparency(qapp):
+    from pytrackinganalysis.apps.plot_editor import ColorButton
+
+    btn = ColorButton("#2563eb")
+    btn.set_color("none")
+    assert btn.color() == "none" and btn.text() == "none"
+    btn.set_color("#2563eb80")               # matplotlib #rrggbbaa
+    q = btn._qcolor()
+    assert (q.red(), q.green(), q.blue(), q.alpha()) == (0x25, 0x63, 0xeb, 0x80)
+    assert btn.text() == ""
+
+
+def test_editor_round_trips_text_color_and_pvalue_size(editor):
+    editor.text_color.set_color("#222222")
+    editor.p_value_pt.setValue(6.0)
+    editor._read_controls()
+    style = editor._current_style()
+    assert style.text_color == "#222222"
+    assert style.p_value_pt == 6.0

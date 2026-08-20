@@ -30,7 +30,7 @@ DEFAULT_PALETTE = ["#2563eb", "#dc2626", "#16a34a", "#d97706",
                    "#7c3aed", "#0891b2", "#64748b", "#be185d"]
 
 _THEMES = ("classic", "bw", "minimal")
-_MEAN_STYLES = ("point+sem", "bar+sem")
+_MEAN_STYLES = ("point+sem", "bar+sem", "point+95ci", "bar+95ci")
 _GEOMS = ("dots", "box", "box+dots")
 _STRIP_STYLES = ("plain", "boxed")
 
@@ -49,12 +49,12 @@ PLOT_TYPES: dict[str, dict] = {
     },
     "faceted_movement": {
         "metric": "TotalDistancePerMin", "y_label": "Movement (mm/min)",
-        "y_limits": None, "ref_line": None,
+        "y_limits": None, "ref_line": None, "free_y": True,
         "display": "Movement (faceted)",
     },
     "faceted_transitions": {
         "metric": "TransitionsPerMin", "y_label": "Transitions per minute",
-        "y_limits": None, "ref_line": None,
+        "y_limits": None, "ref_line": None, "free_y": True,
         "display": "Transitions (faceted)",
     },
 }
@@ -75,13 +75,22 @@ class PlotStyle:
     #: ``axis margin + facet_width_mm × shown facets`` so each panel keeps the
     #: same width when facets are added or removed.
     facet_width_mm: float = 0.0
+    #: Panel height (mm). 0 = off (the figure is ``height_mm`` tall). >0 = the
+    #: figure height is derived as panel height + margins that grow with the
+    #: title / x label, so adding a label never squashes the panels.
+    facet_height_mm: float = 0.0
     theme: str = "classic"            # classic | bw | minimal
     font_family: str = "Arial"
     base_pt: float = 8.0
+    #: Color for all text — titles, axis labels, tick labels, strip text.
+    text_color: str = "#000000"
+    #: Font size (pt) for the p-value bracket labels — independent of
+    #: ``base_pt`` so brackets stay discreet at large base sizes.
+    p_value_pt: float = 7.0
     point_size: float = 1.6
-    point_alpha: float = 0.6
+    point_alpha: float = 1.0
     jitter_width: float = 0.18
-    mean_style: str = "point+sem"     # point+sem | bar+sem
+    mean_style: str = "point+sem"     # point+sem | bar+sem | point+95ci | bar+95ci
     mean_color: str = "#111111"
     #: Black outline around each point (pt). 0 = no outline (points are drawn
     #: solid in the treatment color); >0 = black edge of this weight with the
@@ -150,6 +159,10 @@ class PlotSpec:
     #: Draw per-facet pairwise p-value brackets (Welch for two shown
     #: treatments, Tukey HSD beyond — the same policy as Stats.txt).
     p_values: bool = False
+    #: Independent y axis per facet (ggplot's scales='free_y') — the default
+    #: for unbounded metrics (movement, transitions). When on, ``y_limits``
+    #: is ignored: one shared limit would re-couple the panels.
+    free_y: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -177,6 +190,7 @@ def default_spec(plot_id: str, region1: str = "region 1") -> PlotSpec:
         y_label=str(info["y_label"]).format(region1=region1),
         y_limits=list(y_limits) if y_limits is not None else None,
         ref_line=info["ref_line"],
+        free_y=bool(info.get("free_y", False)),
     )
 
 
@@ -341,7 +355,28 @@ def effective_width_mm(style: PlotStyle, n_facets: int | None) -> float:
     return float(style.width_mm)
 
 
-def _theme_for(style: PlotStyle, n_facets: int | None = None):
+_PT_TO_MM = 25.4 / 72.0
+
+
+def effective_height_mm(style: PlotStyle, spec: "PlotSpec | None" = None) -> float:
+    """The figure height to render at: ``height_mm``, unless a per-facet
+    (panel) height is set — then panel height plus margins that account for
+    the strip, tick labels, and any title / x label the spec adds, so panels
+    keep their size instead of being squashed by new text."""
+    if not (style.facet_height_mm and style.facet_height_mm > 0):
+        return float(style.height_mm)
+    line_mm = float(style.base_pt) * _PT_TO_MM
+    margin = 10.0 + 2.5 * line_mm            # strip + x ticks + padding
+    if spec is not None:
+        if (spec.x_label or "").strip():
+            margin += 1.8 * line_mm
+        if (spec.title or "").strip():
+            margin += 1.8 * (line_mm + 2 * _PT_TO_MM)
+    return float(style.facet_height_mm) + margin
+
+
+def _theme_for(style: PlotStyle, n_facets: int | None = None,
+               height_mm: float | None = None):
     import plotnine as p9
 
     base = {"classic": p9.theme_classic,
@@ -349,13 +384,16 @@ def _theme_for(style: PlotStyle, n_facets: int | None = None):
             "minimal": p9.theme_minimal}.get(style.theme, p9.theme_classic)
     families = resolve_font_family(style.font_family)
     lw = float(style.line_pt)
+    ink = style.text_color or "#000000"
     overrides = dict(
-        text=p9.element_text(family=families),
+        text=p9.element_text(family=families, color=ink),
         figure_size=(effective_width_mm(style, n_facets) / 25.4,
-                     style.height_mm / 25.4),
+                     (height_mm if height_mm is not None
+                      else style.height_mm) / 25.4),
         legend_position="none",
-        strip_text=p9.element_text(size=style.base_pt + 1),
-        plot_title=p9.element_text(size=style.base_pt + 2),
+        strip_text=p9.element_text(size=style.base_pt + 1, color=ink),
+        plot_title=p9.element_text(size=style.base_pt + 2, color=ink),
+        axis_text=p9.element_text(color=ink),
         axis_line=p9.element_line(size=lw),
         axis_ticks=p9.element_line(size=lw),
     )
@@ -401,7 +439,8 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
         categories=labels, ordered=True)
 
     g = (p9.ggplot(data, p9.aes("Treatment", "Value", color="Treatment"))
-         + p9.facet_wrap("~Phase", nrow=1)
+         + p9.facet_wrap("~Phase", nrow=1,
+                         scales="free_y" if spec.free_y else "fixed")
          + p9.scale_color_manual(values=colors)
          + p9.labs(title=spec.title or "",
                    x=spec.x_label or "",
@@ -433,14 +472,10 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
                                    size=style.point_size,
                                    alpha=style.point_alpha, random_state=0)
     if not boxed:
-        # Mean ± SEM overlay belongs to the dot plot; a boxplot already
-        # carries its own centre and spread.
-        stats = (data.groupby(["Phase", "Treatment"], observed=True)["Value"]
-                 .agg(mean="mean", sd="std", n="count").reset_index())
-        stats["sem"] = (stats["sd"] / np.sqrt(stats["n"].clip(lower=1))).fillna(0.0)
-        stats["lo"] = stats["mean"] - stats["sem"]
-        stats["hi"] = stats["mean"] + stats["sem"]
-        if style.mean_style == "bar+sem":
+        # Mean overlay (± SEM, or ± 1.96×SEM for the 95% CI variants) belongs
+        # to the dot plot; a boxplot already carries its own centre and spread.
+        stats = mean_overlay(data, style.mean_style)
+        if style.mean_style.startswith("bar"):
             g = (g
                  + p9.geom_errorbar(p9.aes(x="Treatment", ymin="lo", ymax="hi"),
                                     data=stats, inherit_aes=False, width=0.18,
@@ -456,7 +491,11 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
                 size=0.5, fatten=2.5)
 
     # ---- p-value brackets -------------------------------------------------
-    y_limits = list(spec.y_limits) if spec.y_limits is not None else None
+    ## With free_y a shared coord limit would re-couple the panels, so
+    ## y_limits only applies to fixed scales; brackets train each panel's own
+    ## scale instead of extending a limit.
+    y_limits = (list(spec.y_limits)
+                if spec.y_limits is not None and not spec.free_y else None)
     if spec.p_values:
         layers, y_limits = _pvalue_layers(data, style, y_limits)
         for layer in layers:
@@ -464,7 +503,22 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
 
     if y_limits is not None:
         g = g + p9.coord_cartesian(ylim=tuple(y_limits))
-    return g + _theme_for(style, n_facets=len(shown))
+    return g + _theme_for(style, n_facets=len(shown),
+                          height_mm=effective_height_mm(style, spec))
+
+
+def mean_overlay(data: pd.DataFrame, mean_style: str) -> pd.DataFrame:
+    """Per-group mean with its interval: ``lo``/``hi`` are mean ± SEM, or
+    mean ± 1.96×SEM for the 95% CI variants."""
+    import numpy as np
+
+    stats = (data.groupby(["Phase", "Treatment"], observed=True)["Value"]
+             .agg(mean="mean", sd="std", n="count").reset_index())
+    stats["sem"] = (stats["sd"] / np.sqrt(stats["n"].clip(lower=1))).fillna(0.0)
+    k = 1.96 if str(mean_style).endswith("95ci") else 1.0
+    stats["lo"] = stats["mean"] - k * stats["sem"]
+    stats["hi"] = stats["mean"] + k * stats["sem"]
+    return stats
 
 
 def facet_pvalues(data: pd.DataFrame) -> pd.DataFrame:
@@ -567,7 +621,7 @@ def _pvalue_layers(data: pd.DataFrame, style: PlotStyle, y_limits):
                         size=max(style.line_pt * 0.6, 0.3)),
         p9.geom_text(p9.aes(x="x", y="y", label="label"), data=labels,
                      inherit_aes=False, color="#111111",
-                     size=style.base_pt * 0.95, va="bottom"),
+                     size=style.p_value_pt, va="bottom"),
     ]
     if y_limits is not None and top > y_limits[1]:
         y_limits = [y_limits[0], top]

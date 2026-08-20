@@ -392,15 +392,17 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
                 threshold_rate = threshold / (float(end) - float(start))
 
     def _facet_figure(metric, ylabel, title, caption, ylim=None, ref=None,
-                      threshold_at=None):
-        """One figure for *metric*: a shared-y panel per facet phase, each with
-        per-treatment dots and a mean point with SEM bars."""
+                      threshold_at=None, share_y=True):
+        """One figure for *metric*: a panel per facet phase, each with
+        per-treatment dots and a mean point with SEM bars. ``share_y=False``
+        gives each phase its own y axis — right for unbounded metrics whose
+        range shifts across phases (movement, transitions)."""
         if metric not in fsummary.columns:
             return
         try:
             fig, axes = plt.subplots(
                 1, len(phases), figsize=(max(3.0, 1.1 * len(treatments)) * len(phases), 4.2),
-                sharey=True, squeeze=False)
+                sharey=share_y, squeeze=False)
             for pi, (window, plabel) in enumerate(zip(phases, phase_labels)):
                 sub = fsummary[fsummary["FacetRange"] == window]
                 _treatment_dot_panel(
@@ -433,15 +435,17 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         "TransitionsPerMin", "Transitions/min", "Transitions by phase",
         "Region transitions per minute in each phase, by treatment — a rate, "
         "so phases of different durations compare directly. Red point = group "
-        "mean ± SEM."
+        "mean ± SEM. Each phase has its own y axis."
         + (" Dotted line = the exclusion criterion (min_transitions ÷ phase "
            "duration) in the phase it is measured over."
            if threshold_rate else ""),
-        threshold_at=threshold_rate)
+        threshold_at=threshold_rate, share_y=False)
     _facet_figure(
         "TotalDistancePerMin", "Movement (mm/min)", "Movement by phase",
         "Average movement (distance travelled per minute) in each phase, by "
-        "treatment. Red point = group mean ± SEM.")
+        "treatment. Red point = group mean ± SEM. Each phase has its own "
+        "y axis.",
+        share_y=False)
     _facet_figure(
         "AvgAdjX_mm", "Adjusted X (mm)", "Position by phase",
         "Mean polarity-adjusted X position in each phase, by treatment. Red "

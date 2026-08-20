@@ -48,7 +48,11 @@ from ..ui import settings as ui_settings
 
 
 class ColorButton(QPushButton):
-    """A small swatch button; clicking opens a color dialog."""
+    """A small swatch button; clicking opens a color dialog.
+
+    The dialog exposes the alpha channel: full transparency stores the color
+    ``"none"`` (matplotlib's transparent), partial alpha stores an
+    ``#rrggbbaa`` hex — both render correctly in the figures."""
 
     changed = pyqtSignal()
 
@@ -62,17 +66,46 @@ class ColorButton(QPushButton):
     def color(self) -> str:
         return self._color
 
+    def _qcolor(self) -> QColor:
+        value = self._color
+        if value in ("", "none"):
+            return QColor(0, 0, 0, 0)
+        if len(value) == 9:  # matplotlib #rrggbbaa
+            return QColor(int(value[1:3], 16), int(value[3:5], 16),
+                          int(value[5:7], 16), int(value[7:9], 16))
+        return QColor(value)
+
     def set_color(self, color: str) -> None:
         self._color = str(color)
+        if self._color in ("", "none"):
+            self.setText("none")
+            self.setStyleSheet(
+                "QPushButton { background: palette(base); color: palette(mid);"
+                " border: 1px dashed palette(mid); border-radius: 3px;"
+                " font-size: 8pt; }")
+            return
+        self.setText("")
+        c = self._qcolor()
         self.setStyleSheet(
-            f"QPushButton {{ background: {self._color}; border: 1px solid "
-            f"palette(mid); border-radius: 3px; }}")
+            f"QPushButton {{ background: rgba({c.red()},{c.green()},"
+            f"{c.blue()},{c.alpha()}); border: 1px solid palette(mid); "
+            f"border-radius: 3px; }}")
 
     def _pick(self) -> None:
-        chosen = QColorDialog.getColor(QColor(self._color), self, "Pick color")
-        if chosen.isValid():
+        chosen = QColorDialog.getColor(
+            self._qcolor(), self, "Pick color (alpha 0 = transparent)",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel)
+        if not chosen.isValid():
+            return
+        alpha = chosen.alpha()
+        if alpha == 0:
+            self.set_color("none")
+        elif alpha < 255:
+            self.set_color(f"#{chosen.red():02x}{chosen.green():02x}"
+                           f"{chosen.blue():02x}{alpha:02x}")
+        else:
             self.set_color(chosen.name())
-            self.changed.emit()
+        self.changed.emit()
 
 
 # Wheel-transparent controls: ignoring the wheel makes Qt bubble the event up
@@ -87,6 +120,13 @@ class _NoWheelCombo(QComboBox):
     def wheelEvent(self, event):  # noqa: N802 (Qt override)
         event.ignore()
 
+    def minimumSizeHint(self):  # noqa: N802 (Qt override)
+        ## AdjustToContents only raises the *preferred* size; a squeezed layout
+        ## could still shrink the combo below its items and elide the text
+        ## ("boxed" -> "box.."). Refusing to go below the content width fixes
+        ## the closed box and its popup alike.
+        return self.sizeHint()
+
 
 class _NoWheelFontCombo(QFontComboBox):
     def wheelEvent(self, event):  # noqa: N802 (Qt override)
@@ -98,6 +138,10 @@ def _spin(lo, hi, step, decimals=1) -> QDoubleSpinBox:
     box.setRange(lo, hi)
     box.setSingleStep(step)
     box.setDecimals(decimals)
+    ## A uniform fixed width. Wide ranges (±10000) otherwise give spinboxes a
+    ## minimum size hint sized for "-10000.00", which pushed form rows past
+    ## the panel's fixed width and off the window.
+    box.setFixedWidth(80)
     return box
 
 
@@ -209,6 +253,8 @@ class PlotEditorWindow(QMainWindow):
         # ---- Style ------------------------------------------------------
         style_box = QGroupBox("Style (shared across plots)")
         form = QFormLayout(style_box)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.width_mm = _spin(30, 400, 5)
         self.height_mm = _spin(20, 300, 5)
         size_row = QHBoxLayout()
@@ -224,17 +270,34 @@ class PlotEditorWindow(QMainWindow):
             "0 = off: the figure is the fixed width above and panels share "
             "it.\n> 0: the figure width becomes margin + this × shown facets, "
             "so each panel keeps the same width when facets are removed.")
-        form.addRow("Facet width (mm, 0 = auto):", self.facet_width)
+        form.addRow("Facet width (mm):", self.facet_width)
+        self.facet_height = _spin(0.0, 200.0, 5.0)
+        self.facet_height.setToolTip(
+            "0 = off: the figure is the fixed height above.\n> 0: the figure "
+            "height becomes this panel height + margins that grow with the "
+            "title / x label, so adding a label never squashes the panels.")
+        form.addRow("Facet height (mm):", self.facet_height)
 
         self.theme_combo = _combo(["classic", "bw", "minimal"])
         form.addRow("Theme:", self.theme_combo)
         self.font_combo = _NoWheelFontCombo()
         # QFontComboBox sizes itself to the longest installed font name and
-        # blew the panel width; the popup still shows full names.
-        self.font_combo.setMaximumWidth(200)
+        # blew the panel width — its *minimum* hint ignores a max-width cap
+        # inside QFormLayout, so the width must be fixed. The popup still
+        # shows full names.
+        self.font_combo.setFixedWidth(200)
         form.addRow("Font:", self.font_combo)
         self.base_pt = _spin(4, 24, 0.5)
         form.addRow("Base size (pt):", self.base_pt)
+        self.text_color = ColorButton("#000000")
+        self.text_color.setToolTip(
+            "Color for all text: titles, axis labels, tick labels, strips")
+        form.addRow("Text color:", self.text_color)
+        self.p_value_pt = _spin(4, 14, 0.5)
+        self.p_value_pt.setToolTip(
+            "Font size for p-value bracket labels — independent of the base "
+            "size so brackets stay discreet")
+        form.addRow("P-value size (pt):", self.p_value_pt)
         self.point_size = _spin(0.2, 8, 0.2)
         form.addRow("Point size:", self.point_size)
         self.point_alpha = _spin(0.05, 1.0, 0.05, decimals=2)
@@ -244,7 +307,8 @@ class PlotEditorWindow(QMainWindow):
         self.point_stroke = _spin(0.0, 3.0, 0.1)
         self.point_stroke.setToolTip("Black outline around each point; 0 = none")
         form.addRow("Point outline (pt):", self.point_stroke)
-        self.mean_combo = _combo(["point+sem", "bar+sem"])
+        self.mean_combo = _combo(["point+sem", "bar+sem",
+                                  "point+95ci", "bar+95ci"])
         form.addRow("Mean style:", self.mean_combo)
         self.mean_color = ColorButton("#111111")
         form.addRow("Mean color:", self.mean_color)
@@ -277,6 +341,8 @@ class PlotEditorWindow(QMainWindow):
         # ---- Spec -------------------------------------------------------
         spec_box = QGroupBox("This plot")
         sform = QFormLayout(spec_box)
+        sform.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.title_edit = QLineEdit()
         sform.addRow("Title:", self.title_edit)
         self.x_label = QLineEdit()
@@ -295,6 +361,15 @@ class PlotEditorWindow(QMainWindow):
         ylim_holder = QWidget()
         ylim_holder.setLayout(ylim_row)
         sform.addRow("Y axis:", ylim_holder)
+        self.free_y_check = QCheckBox("independent per facet")
+        self.free_y_check.setToolTip(
+            "Each facet scales its own y axis (ggplot scales='free_y') — "
+            "right for unbounded metrics like movement or transitions.\n"
+            "Y limits are ignored while this is on.")
+        self.free_y_check.toggled.connect(
+            lambda on: [w.setEnabled(not on) for w in
+                        (self.ylim_check, self.ylim_lo, self.ylim_hi)])
+        sform.addRow("Y scaling:", self.free_y_check)
 
         ref_row = QHBoxLayout()
         self.ref_check = QCheckBox("at")
@@ -344,9 +419,10 @@ class PlotEditorWindow(QMainWindow):
 
         # Every control change flows through one funnel.
         for widget in (self.width_mm, self.height_mm, self.facet_width,
-                       self.base_pt, self.point_size, self.point_alpha,
-                       self.jitter, self.point_stroke, self.line_pt,
-                       self.ylim_lo, self.ylim_hi, self.ref_value):
+                       self.facet_height, self.base_pt, self.p_value_pt,
+                       self.point_size, self.point_alpha, self.jitter,
+                       self.point_stroke, self.line_pt, self.ylim_lo,
+                       self.ylim_hi, self.ref_value):
             widget.valueChanged.connect(self._on_changed)
         for combo in (self.theme_combo, self.mean_combo, self.geom_combo,
                       self.strip_combo):
@@ -355,9 +431,10 @@ class PlotEditorWindow(QMainWindow):
         for edit in (self.title_edit, self.x_label, self.y_label):
             edit.textChanged.connect(self._on_changed)
         for check in (self.ylim_check, self.ref_check, self.pvalues_check,
-                      self.panel_bg_check):
+                      self.panel_bg_check, self.free_y_check):
             check.toggled.connect(self._on_changed)
-        for swatch in (self.mean_color, self.strip_bg, self.panel_bg):
+        for swatch in (self.mean_color, self.strip_bg, self.panel_bg,
+                       self.text_color):
             swatch.changed.connect(self._on_changed)
         self.facet_table.itemChanged.connect(self._on_changed)
         self.treat_table.itemChanged.connect(self._on_changed)
@@ -468,9 +545,12 @@ class PlotEditorWindow(QMainWindow):
             self.width_mm.setValue(style.width_mm)
             self.height_mm.setValue(style.height_mm)
             self.facet_width.setValue(style.facet_width_mm)
+            self.facet_height.setValue(style.facet_height_mm)
             self.theme_combo.setCurrentText(style.theme)
             self.font_combo.setCurrentText(style.font_family)
             self.base_pt.setValue(style.base_pt)
+            self.text_color.set_color(style.text_color)
+            self.p_value_pt.setValue(style.p_value_pt)
             self.point_size.setValue(style.point_size)
             self.point_alpha.setValue(style.point_alpha)
             self.jitter.setValue(style.jitter_width)
@@ -496,6 +576,7 @@ class PlotEditorWindow(QMainWindow):
             if spec.ref_line is not None:
                 self.ref_value.setValue(spec.ref_line)
             self.pvalues_check.setChecked(bool(spec.p_values))
+            self.free_y_check.setChecked(bool(spec.free_y))
 
             self._load_facet_table(spec)
             self._load_treatment_table(spec, style)
@@ -546,9 +627,12 @@ class PlotEditorWindow(QMainWindow):
         style.width_mm = self.width_mm.value()
         style.height_mm = self.height_mm.value()
         style.facet_width_mm = self.facet_width.value()
+        style.facet_height_mm = self.facet_height.value()
         style.theme = self.theme_combo.currentText()
         style.font_family = self.font_combo.currentText()
         style.base_pt = self.base_pt.value()
+        style.text_color = self.text_color.color()
+        style.p_value_pt = self.p_value_pt.value()
         style.point_size = self.point_size.value()
         style.point_alpha = self.point_alpha.value()
         style.jitter_width = self.jitter.value()
@@ -569,6 +653,7 @@ class PlotEditorWindow(QMainWindow):
         spec.ref_line = (self.ref_value.value()
                          if self.ref_check.isChecked() else None)
         spec.p_values = self.pvalues_check.isChecked()
+        spec.free_y = self.free_y_check.isChecked()
 
         facets, facet_labels = [], {}
         for row in range(self.facet_table.rowCount()):
