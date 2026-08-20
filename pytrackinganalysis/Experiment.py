@@ -223,6 +223,21 @@ class Experiment:
                   f"{self.excluded_flies.attrs.get('min_transitions')} transitions "
                   f"during the {self.excluded_flies.attrs.get('phase_label')} phase.")
 
+        ## Low-Movement Flag: reported, never removed. Computed after the
+        ## exclusion so the >50% experiment-level rule describes the analysis
+        ## population the results are actually built from.
+        self.flagged_flies = self.experiment_type.compute_movement_flags(self)
+        if self.flagged_flies is not None and len(self.flagged_flies):
+            attrs = self.flagged_flies.attrs
+            note = (f"Flagged {len(self.flagged_flies)}/{attrs.get('n_total')} "
+                    f"fly(ies) as potentially an issue: movement below "
+                    f"{attrs.get('min_movement'):g} mm/min during the "
+                    f"{attrs.get('phase_label')} phase (kept in all results).")
+            if attrs.get('experiment_flagged'):
+                note += (" More than half of the flies are flagged — the "
+                         "experiment itself is potentially an issue.")
+            print(note)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -808,6 +823,7 @@ class Experiment:
         cutoffs = self._resolve_cutoffs(cutoffs)
 
         summary = self.arena.summarize()
+        summary = self._with_flag_column(summary)
         path = os.path.join(self.analysis_path, f"{self.arena.experiment_name}_Summary.csv")
         summary.to_csv(path, index=False, na_rep='NA')
         print(f"Saved: {path}")
@@ -825,6 +841,7 @@ class Experiment:
         summary_facet = None
         if cutoffs is not None:
             summary_facet = self.arena.summarize_facet(cutoffs=cutoffs)
+            summary_facet = self._with_flag_column(summary_facet)
             path_facet = os.path.join(self.analysis_path,
                                       f"{self.arena.experiment_name}_Summary_Facet.csv")
             summary_facet.to_csv(path_facet, index=False, na_rep='NA')
@@ -835,6 +852,20 @@ class Experiment:
             print("Skipping faceted summary (facet_cutoffs not set in config or as argument).")
 
         return summary, summary_facet
+
+    def _with_flag_column(self, summary):
+        """Append the ``LowMovementFlag`` column (per-fly, by Name) to a summary
+        bound for a CSV. Flagged flies stay in the data — the column is how a
+        downstream reader sees the flag. No-op when the type has no flag."""
+        flagged = getattr(self, 'flagged_flies', None)
+        if flagged is None or summary is None or 'Name' not in summary.columns:
+            return summary
+        if not flagged.attrs.get('min_movement'):
+            return summary  # flagging off: no column rather than all-False
+        names = set(flagged['Name'].astype(str))
+        out = summary.copy()
+        out['LowMovementFlag'] = out['Name'].astype(str).isin(names)
+        return out
 
     def stats(self, cutoffs=None, save: bool = True) -> str:
         """
@@ -929,6 +960,17 @@ class Experiment:
                       f"(min_transitions = {threshold}; see _Excluded.csv).")
             else:
                 print("Excluded        : none (min_transitions = 0, exclusion off).")
+
+        flagged = getattr(self, 'flagged_flies', None)
+        if flagged is not None and flagged.attrs.get('min_movement'):
+            attrs = flagged.attrs
+            line = (f"Flagged         : {len(flagged)}/{attrs.get('n_total')} "
+                    f"fly(ies) with movement below {attrs.get('min_movement'):g} "
+                    f"mm/min during the {attrs.get('phase_label', 'first')} phase "
+                    f"(potential issue; kept in all results).")
+            if attrs.get('experiment_flagged'):
+                line += " >50% flagged: the experiment itself is potentially an issue."
+            print(line)
 
         if cutoffs is not None:
             from . import windowing
@@ -1300,14 +1342,18 @@ class Experiment:
         designed to drive future Markdown/LaTeX backends without any change to
         the analysis core. Run after :meth:`run_analysis` and :meth:`run_qc`.
 
-        Unlike the previous version, the report draws its plots natively as
-        consolidated multi-panel figures rather than re-embedding the
-        interactive ``save_plots`` PNGs, and reads the freshly written
-        ``*_Stats.txt`` and ``*_Summary*.csv`` artifacts for its text and
-        tables. ``cutoffs`` is accepted for back-compat and unused. *notes*,
-        when given, is persisted via :meth:`write_run_notes` (blank clears) and
-        rendered near the top of the report; ``None`` keeps whatever notes are
-        already saved. Returns the path to the written report.
+        The report draws its plots natively as consolidated multi-panel
+        figures, renders the pairwise comparisons as a semantic table, and
+        builds the experiment summary as structured blocks (the ``*_Stats.txt``
+        and ``*_experiment_summary.txt`` files stay on disk but are not
+        embedded as raw text). It is written to the **project root** beside
+        ``tracking_config.yaml`` as ``<project>_report.pdf`` — the project's
+        front page — while the machine-readable artifacts stay in
+        ``analysis/``. ``cutoffs`` is accepted for back-compat and unused.
+        *notes*, when given, is persisted via :meth:`write_run_notes` (blank
+        clears) and rendered near the top of the report; ``None`` keeps
+        whatever notes are already saved. Returns the path to the written
+        report.
         """
         from .report import render as _render
 
@@ -1316,8 +1362,12 @@ class Experiment:
             self.write_run_notes(notes)
         report = self.build_report_model(qc_cutoff=qc_cutoff)
         ext = {"reportlab": "pdf"}.get(backend, "pdf")
-        out_path = os.path.join(
-            self.analysis_path, f"{self.arena.experiment_name}_report.{ext}")
+        ## The report is the project's front page, so it lives in the project
+        ## root beside tracking_config.yaml — named for the project, not the
+        ## recording — while the machine-readable artifacts stay in analysis/.
+        project_name = os.path.basename(os.path.normpath(self.project_directory))
+        out_path = os.path.join(self.project_directory,
+                                f"{project_name}_report.{ext}")
         _render(report, out_path, backend=backend)
         print(f"Saved: {out_path}")
         return out_path
@@ -1393,9 +1443,12 @@ class Experiment:
         ]
         # Title/intro come from the Experiment Type (ADR-0001): a Valence report
         # says "Valence Experiment Report" and carries the assay's intro.
+        status_lines = [line for line in (self._qc_status_line(qc_cutoff),
+                                          self._movement_status_line())
+                        if line is not None]
         report.add(_m.Cover(exp_name, self.experiment_type.report_title(),
                             metadata=metadata,
-                            status=self._qc_status_line(qc_cutoff)))
+                            status=status_lines or None))
 
         # ---- Run notes ----
         # User-provided context typed in when the run was launched (or written
@@ -1422,11 +1475,25 @@ class Experiment:
         # a Custom Experiment.
         for block in self.experiment_type.report_sections(self):
             report.add(block)
-        for fig in report_figures.build_analysis_figures(self):
+        ## The whole-recording ("summed over all phases") figures are redundant
+        ## the moment per-phase figures exist — every metric they show appears
+        ## faceted right below — so they are included only when there is no
+        ## faceting to replace them (e.g. a config without facet_cutoffs).
+        faceted_figs = report_figures.build_faceted_figures(self)
+        if not faceted_figs:
+            for fig in report_figures.build_analysis_figures(self):
+                report.add(fig)
+        for fig in faceted_figs:
             report.add(fig)
-        for fig in report_figures.build_faceted_figures(self):
-            report.add(fig)
+        ## The pairwise comparisons as a readable table; the raw Stats.txt is
+        ## excluded from the text embeds below (it stays on disk).
+        for block in report_figures.build_stats_table(self):
+            report.add(block)
         self._add_text_blocks(report, _Path(self.analysis_path), _m)
+
+        # ---- Experiment summary section ----
+        for block in self._experiment_summary_blocks(_m):
+            report.add(block)
 
         # ---- Quality-control section ----
         report.add(_m.SectionDivider("Quality Control"))
@@ -1487,16 +1554,206 @@ class Experiment:
         except Exception:  # noqa: BLE001
             return None
 
+    def _movement_status_line(self):
+        """Cover one-liner for the Low-Movement Flag, or None when the type has
+        no such flag (or it is off). Severity: all clear -> OK; some flies
+        flagged -> WARN; more than half flagged -> ERROR (the experiment itself
+        is potentially an issue)."""
+        from .report import model as _m
+
+        flagged = getattr(self, 'flagged_flies', None)
+        if flagged is None:
+            return None
+        attrs = flagged.attrs
+        threshold = attrs.get('min_movement')
+        if not threshold:
+            return None
+        n, total = len(flagged), attrs.get('n_total', 0)
+        phase = attrs.get('phase_label', 'first')
+        where = f"< {threshold:g} mm/min during {phase}"
+        if attrs.get('experiment_flagged'):
+            return _m.StatusLine(
+                f"Potential issue: {n}/{total} flies moved {where} (>50% flagged)",
+                _m.Level.ERROR)
+        if n:
+            return _m.StatusLine(
+                f"Low movement: {n}/{total} flies moved {where} (kept in results)",
+                _m.Level.WARN)
+        return _m.StatusLine(
+            f"Movement: all {total} flies ≥ {threshold:g} mm/min during {phase}",
+            _m.Level.OK)
+
+    def _experiment_summary_blocks(self, _m) -> list:
+        """The experiment-summary section as structured blocks — headings and
+        label/value tables — replacing the old embed of the monospaced
+        ``*_experiment_summary.txt`` (whose box-drawing rules render as black
+        boxes in the PDF's fonts). The text file itself is still written for
+        the terminal and disk."""
+        blocks: list = [_m.SectionDivider("Experiment Summary")]
+        global_cfg = (self.config.get('global') or {}) \
+            if isinstance(self.config, dict) else {}
+        p = self.parameters
+
+        def _kv(title, pairs):
+            rows = [[str(k), str(v)] for k, v in pairs
+                    if v is not None and str(v) != ""]
+            if rows:
+                blocks.append(_m.Table(columns=["Setting", "Value"], rows=rows,
+                                       title=title))
+
+        # ---- Configuration -------------------------------------------------
+        cutoffs = self.facet_cutoffs
+        if cutoffs is not None:
+            from . import windowing
+            windows = list(windowing.facet_windows(cutoffs))
+            labels = self.experiment_type.phase_labels_for(windows, global_cfg)
+            phases = ";  ".join(
+                f"{label} ({self.experiment_type._minute_label(w)} min)"
+                for w, label in zip(windows, labels))
+        else:
+            phases = "Not set (whole recording)"
+        config_pairs = []
+        if not self.experiment_type.is_custom:
+            config_pairs.append(("Experiment type",
+                                 self.experiment_type.display_name))
+        config_pairs += [
+            ("Tracking type", self.parameters.get_tracking_type().name),
+            ("Tracking rig", global_cfg.get('tracking_rig', 'Unknown')),
+            ("Phases", phases),
+        ]
+        min_transitions = self.experiment_type.resolve_min_transitions(global_cfg)
+        if min_transitions is not None:
+            config_pairs.append(
+                ("Exclusion (min_transitions)",
+                 f"{min_transitions} transitions in the primary phase"
+                 if min_transitions else "off (0)"))
+        min_movement = self.experiment_type.resolve_min_movement(global_cfg)
+        if min_movement is not None:
+            config_pairs.append(
+                ("Movement flag (min_movement)",
+                 f"{min_movement:g} mm/min in the first phase"
+                 if min_movement else "off (0)"))
+        _kv("Configuration", config_pairs)
+
+        # ---- Parameters ----------------------------------------------------
+        _kv("Parameters", [
+            ("FPS", p.fps),
+            ("mm per pixel", p.mm_per_pixel),
+            ("Speed window", f"{p.speed_window_seconds} s"),
+            ("Micro-move speed", f"{p.micro_move_speed_mm_sec[0]} – "
+                                 f"{p.micro_move_speed_mm_sec[1]} mm/s"),
+            ("Walking speed", f"≥ {p.walking_speed_mm_sec} mm/s"),
+            ("Sleep threshold", f"{p.sleep_threshold_min} min"),
+            ("Interaction distances",
+             ", ".join(str(d) for d in (p.interaction_distance_mm or [])) + " mm"
+             if p.interaction_distance_mm else None),
+        ])
+
+        # ---- Experimental design -------------------------------------------
+        design_pairs = []
+        for name, lv in (global_cfg.get("experimental_design_factors") or {}).items():
+            design_pairs.append((f"Factor: {name}",
+                                 ", ".join(str(l) for l in lv)))
+        counting = (self.config.get("counting_regions") or {}) \
+            if isinstance(self.config, dict) else {}
+        for cname, spec in counting.items():
+            alias = spec.get("alias", "") if isinstance(spec, dict) else ""
+            design_pairs.append((f"Counting region: {cname}", alias))
+        counts: dict[str, int] = {}
+        regions = (self.config.get("tracking_regions") or {}) \
+            if isinstance(self.config, dict) else {}
+        for spec in regions.values():
+            treat = str((spec or {}).get("experimental_factors", "")).strip()
+            if treat:
+                counts[treat] = counts.get(treat, 0) + 1
+        if counts:
+            design_pairs.append(
+                ("Treatment assignment",
+                 ",  ".join(f"{k} ×{n}" for k, n in sorted(counts.items()))))
+        _kv("Experimental design", design_pairs)
+
+        # ---- Data overview --------------------------------------------------
+        try:
+            supports_dq = self.arena.supports_data_quality()
+            dq = self.arena.get_data_quality() if supports_dq else None
+        except Exception:  # noqa: BLE001
+            supports_dq, dq = False, None
+        trackers = getattr(self.arena, 'trackers', None) or {}
+        overview = [("Total trackers", len(trackers))]
+        if dq is not None:
+            hq = pd.to_numeric(dq['HighQuality'], errors='coerce')
+            overview += [
+                ("Passing ≥90% quality", f"{int((hq >= 0.9).sum())} / {len(dq)}"),
+                ("Recording range",
+                 f"{dq['StartMinutes'].min():.1f} – {dq['EndMinutes'].max():.1f} min"),
+            ]
+        if trackers:
+            overview.append(("Total data points",
+                             f"{sum(len(t.rawdata) for t in trackers.values()):,}"))
+        excluded = getattr(self, 'excluded_flies', None)
+        if excluded is not None:
+            overview.append(("Excluded flies", len(excluded)))
+        flagged = getattr(self, 'flagged_flies', None)
+        if flagged is not None and flagged.attrs.get('min_movement'):
+            overview.append(("Low-movement flagged", len(flagged)))
+        _kv("Data overview", overview)
+
+        # ---- Per-tracker table ----------------------------------------------
+        def _treatment_of(key):
+            tracker = trackers.get(key)
+            if tracker is not None and tracker.tracking_region_design is not None:
+                return str(tracker.tracking_region_design['Treatment'].iat[0])
+            return ''
+
+        if dq is not None:
+            rows, levels = [], []
+            for _, row in dq.iterrows():
+                hq_val = pd.to_numeric(pd.Series([row['HighQuality']]),
+                                       errors='coerce').iloc[0]
+                ok = hq_val == hq_val and hq_val >= 0.9
+                rows.append([
+                    str(row['Tracker']), _treatment_of(row['Tracker']),
+                    "—" if hq_val != hq_val else f"{hq_val:.1%}",
+                    f"{row['NotFound']:.1%}", f"{row['Indiscernible']:.1%}",
+                    f"{row['StartMinutes']:.1f}", f"{row['EndMinutes']:.1f}",
+                ])
+                levels.append(None if ok else _m.Level.ERROR)
+            blocks.append(_m.Table(
+                columns=["Tracker", "Treatment", "High quality", "Not found",
+                         "Indiscernible", "Start (min)", "End (min)"],
+                rows=rows, row_levels=levels, title="Per-tracker summary",
+                caption="Red rows fall below 90% high-quality frames."))
+        else:
+            rows = []
+            for key, tracker in trackers.items():
+                minutes = tracker.rawdata['Minutes'] \
+                    if 'Minutes' in tracker.rawdata.columns else None
+                start = minutes.min() if minutes is not None and len(minutes) else float('nan')
+                end = minutes.max() if minutes is not None and len(minutes) else float('nan')
+                rows.append([str(key), _treatment_of(key),
+                             f"{len(tracker.rawdata):,}",
+                             f"{start:.1f}", f"{end:.1f}"])
+            if rows:
+                blocks.append(_m.Table(
+                    columns=["Region", "Treatment", "Rows", "Start (min)",
+                             "End (min)"],
+                    rows=rows, title="Per-tracker summary"))
+        return blocks
+
     def _add_text_blocks(self, report, directory, _m) -> None:
         """Add each non-empty ``*.txt`` in *directory* as a Preformatted block.
 
-        The run-notes file is excluded: it is rendered as prose right after the
-        cover, so dumping it here again would duplicate it as an appendix."""
+        Excluded: the run-notes file (rendered as prose after the cover), the
+        stats text (rendered as the Statistical-comparisons table), and the
+        experiment summary (rendered as the structured Experiment Summary
+        section) — embedding those again would duplicate them in a worse form."""
         if not directory.exists():
             return
         notes_name = os.path.basename(self._run_notes_path())
         for path in sorted(directory.glob("*.txt")):
             if path.name.startswith(".") or path.name == notes_name:
+                continue
+            if path.name.endswith(("_Stats.txt", "_experiment_summary.txt")):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")

@@ -179,7 +179,7 @@ def _treatment_dot_panel(ax, sub, metric, treatments, ylim=None, ref_line=None,
         ax.axhline(ref_line, color="#94a3b8", linewidth=0.8, linestyle="--")
     if threshold is not None:
         ax.axhline(threshold, color=_MEAN_COLOR, linewidth=0.9, linestyle=":")
-        ax.annotate(f"min {threshold:g}", xy=(0.02, threshold), fontsize=6.5,
+        ax.annotate(f"min {threshold:.3g}", xy=(0.02, threshold), fontsize=6.5,
                     color=_MEAN_COLOR, va="bottom", ha="left",
                     xycoords=ax.get_yaxis_transform())
     ax.set_xticks(range(len(treatments)))
@@ -333,8 +333,11 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         phase_labels = [_phase_label(w) for w in phases]
 
     # The Low-Transition Exclusion threshold, drawn on the Transitions figure's
-    # Primary-Phase panel so the criterion's cut is visually auditable.
-    threshold, primary_idx = None, None
+    # Primary-Phase panel so the criterion's cut is visually auditable. The
+    # figure plots a rate (transitions/min), so the count criterion is
+    # converted via the primary phase's duration; an unbounded primary window
+    # has no defined duration, so no line is drawn.
+    threshold_rate, primary_idx = None, None
     if exp_type is not None:
         try:
             threshold = exp_type.resolve_min_transitions(
@@ -343,6 +346,9 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
             threshold = None
         if threshold:
             primary_idx = 1 if len(phases) >= 2 else 0
+            start, end = phases[primary_idx]
+            if end != float("inf") and float(end) > float(start):
+                threshold_rate = threshold / (float(end) - float(start))
 
     def _facet_figure(metric, ylabel, title, caption, ylim=None, ref=None,
                       threshold_at=None):
@@ -383,12 +389,14 @@ def build_faceted_figures(experiment) -> list[m.Figure]:
         "indifference.",
         ylim=(-0.02, 1.02), ref=0.5)
     _facet_figure(
-        "Transitions", "Transitions", "Transitions by phase",
-        "Region transitions per animal in each phase, by treatment. Red point "
-        "= group mean ± SEM."
-        + (" Dotted line marks the exclusion criterion (min_transitions) in "
-           "the phase it is measured over." if threshold else ""),
-        threshold_at=threshold)
+        "TransitionsPerMin", "Transitions/min", "Transitions by phase",
+        "Region transitions per minute in each phase, by treatment — a rate, "
+        "so phases of different durations compare directly. Red point = group "
+        "mean ± SEM."
+        + (" Dotted line = the exclusion criterion (min_transitions ÷ phase "
+           "duration) in the phase it is measured over."
+           if threshold_rate else ""),
+        threshold_at=threshold_rate)
     _facet_figure(
         "TotalDistancePerMin", "Movement (mm/min)", "Movement by phase",
         "Average movement (distance travelled per minute) in each phase, by "
@@ -456,7 +464,198 @@ def build_qc_figures(experiment) -> list[m.Figure]:
                     "0.90 threshold; green ≥ 0.90, amber ≥ 0.80, red below."))
     except Exception:  # noqa: BLE001
         plt.close("all")
+    blocks += _qc_metric_bars(experiment)
     return blocks
+
+
+def _tracker_bar_figure(summary, metric, title, xlabel, caption,
+                        threshold=None):
+    """A QC-style horizontal per-tracker bar chart for one summary metric,
+    matching the data-quality figure's look. With a *threshold*, bars below it
+    (or with no data) are red and the rest green, with a dashed criterion
+    line; without one, bars are neutral."""
+    if summary is None or len(summary) == 0 \
+            or metric not in getattr(summary, "columns", []) \
+            or "Name" not in summary.columns:
+        return None
+    try:
+        vals = pd.to_numeric(summary[metric], errors="coerce")
+        order = vals.sort_values(na_position="first").index
+        vals_sorted = vals.loc[order]
+        labels = summary.loc[order, "Name"].astype(str)
+        if threshold is not None:
+            colors = ["#dc2626" if (v != v or v < threshold) else "#16a34a"
+                      for v in vals_sorted]
+        else:
+            colors = ["#2563eb"] * len(vals_sorted)
+        n = len(vals_sorted)
+        fig, ax = plt.subplots(figsize=(9, max(3.2, 0.32 * n + 1.2)))
+        _style_ax(ax)
+        ax.grid(True, axis="x", color=_GRID, linewidth=0.7)
+        ax.barh(range(n), vals_sorted.fillna(0).values, color=colors,
+                edgecolor="white", linewidth=0.4)
+        if threshold is not None:
+            ax.axvline(threshold, color="#94a3b8", linewidth=0.9,
+                       linestyle="--")
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(labels.values, fontsize=10)
+        ax.tick_params(axis="x", labelsize=10)
+        ax.set_xlabel(xlabel, fontsize=13, color=_INK)
+        ax.set_title(title, fontsize=14, color=_INK)
+        fig.tight_layout()
+        return _fig_to_block(fig, title=title, caption=caption)
+    except Exception:  # noqa: BLE001
+        plt.close("all")
+        return None
+
+
+def _qc_metric_bars(experiment) -> list:
+    """Per-tracker QC bars: transitions/min during the Primary (middle) phase
+    and movement during the first phase. Every tracker is shown — excluded
+    flies included — because, like data quality, these describe the recording
+    rather than the analysis population."""
+    blocks: list = []
+    arena = getattr(experiment, "arena", None)
+    if arena is None:
+        return blocks
+    windows, labels = _facet_windows_and_labels(experiment)
+    if windows:
+        primary_win, primary_label = _primary_phase(windows, labels)
+        first_win, first_label = windows[0], labels[0]
+    else:
+        primary_win = first_win = (0, 0)
+        primary_label = first_label = "whole recording"
+
+    # The Valence criteria as reference lines: the count criterion converted
+    # to a rate over the primary phase, and the movement floor as-is.
+    exp_type = getattr(experiment, "experiment_type", None)
+    global_cfg = _global_cfg(experiment)
+    transition_rate = None
+    movement_floor = None
+    if exp_type is not None:
+        try:
+            mt = exp_type.resolve_min_transitions(global_cfg)
+        except Exception:  # noqa: BLE001
+            mt = None
+        start, end = primary_win
+        if mt and end != float("inf") and float(end) > float(start):
+            transition_rate = mt / (float(end) - float(start))
+        try:
+            movement_floor = exp_type.resolve_min_movement(global_cfg) or None
+        except Exception:  # noqa: BLE001
+            movement_floor = None
+
+    def _summary_for(window):
+        try:
+            return arena.summarize(range_minutes=window, include_excluded=True)
+        except Exception:  # noqa: BLE001
+            return None
+
+    block = _tracker_bar_figure(
+        _summary_for(primary_win), "TransitionsPerMin",
+        f"Per-tracker transitions — {primary_label} phase",
+        "Transitions per minute", threshold=transition_rate,
+        caption=f"Region transitions per minute for every tracker during the "
+                f"{primary_label} phase, excluded flies included."
+                + (" Dashed line = the exclusion criterion (min_transitions ÷ "
+                   "phase duration); red = below it, green = above."
+                   if transition_rate else ""))
+    if block is not None:
+        blocks.append(block)
+
+    block = _tracker_bar_figure(
+        _summary_for(first_win), "TotalDistancePerMin",
+        f"Per-tracker movement — {first_label} phase",
+        "Movement (mm/min)", threshold=movement_floor,
+        caption=f"Average movement for every tracker during the {first_label} "
+                f"phase, excluded flies included."
+                + (" Dashed line = the low-movement flag threshold "
+                   "(min_movement); red = below it, green = above."
+                   if movement_floor else ""))
+    if block is not None:
+        blocks.append(block)
+    return blocks
+
+
+def build_stats_table(experiment) -> list:
+    """Every pairwise treatment comparison the stats policy runs, as one
+    semantic table: metric × phase × pair with the p-value — the readable form
+    of the Stats.txt text (which stays on disk for the full details).
+
+    Mirrors ``Experiment.stats``: Welch's t-test for two treatment levels,
+    Tukey HSD for three or more, per facet phase (or the whole recording when
+    no facets are configured).
+    """
+    try:
+        metrics = experiment._stats_metrics()
+    except Exception:  # noqa: BLE001
+        metrics = []
+    if not metrics:
+        return []
+    windows, labels = _facet_windows_and_labels(experiment)
+    if not windows:
+        windows, labels = [(0, 0)], ["Whole recording"]
+
+    rows, levels = [], []
+    for metric in metrics:
+        remove_partners = "Interacting" in metric
+        for window, label in zip(windows, labels):
+            try:
+                summary = experiment.arena.summarize(
+                    range_minutes=window, remove_partners=remove_partners)
+            except Exception:  # noqa: BLE001
+                continue
+            if summary is None or metric not in getattr(summary, "columns", []):
+                continue
+            groups: dict[str, np.ndarray] = {}
+            for treat in _treatments(summary):
+                mask = summary["Treatment"].astype(str).str.strip() == treat
+                vals = _numeric(summary[mask], metric).dropna().values
+                if len(vals) >= 2:
+                    groups[treat] = vals
+            if len(groups) < 2:
+                continue
+            try:
+                if len(groups) == 2:
+                    from scipy import stats as sstats
+                    (name_a, vals_a), (name_b, vals_b) = groups.items()
+                    _stat, p = sstats.ttest_ind(vals_a, vals_b, equal_var=False)
+                    pairs = [(name_a, name_b,
+                              float(np.mean(vals_b) - np.mean(vals_a)),
+                              float(p), bool(p < 0.05))]
+                else:
+                    import itertools
+
+                    from statsmodels.stats.multicomp import pairwise_tukeyhsd
+                    endog = np.concatenate(list(groups.values()))
+                    group_labels = np.concatenate(
+                        [[t] * len(v) for t, v in groups.items()])
+                    res = pairwise_tukeyhsd(endog=endog, groups=group_labels,
+                                            alpha=0.05)
+                    pairs = [(str(ga), str(gb), float(diff), float(p), bool(rej))
+                             for (ga, gb), diff, p, rej in zip(
+                                 itertools.combinations(res.groupsunique, 2),
+                                 res.meandiffs, res.pvalues, res.reject)]
+            except Exception:  # noqa: BLE001
+                continue
+            for ga, gb, diff, p, significant in pairs:
+                rows.append([metric, label,
+                             f"{ga} (n={len(groups.get(ga, []))})",
+                             f"{gb} (n={len(groups.get(gb, []))})",
+                             f"{diff:+.3f}", f"{p:.4g}",
+                             "yes" if significant else "no"])
+                levels.append(m.Level.OK if significant else None)
+    if not rows:
+        return []
+    return [m.Table(
+        columns=["Metric", "Phase", "Group A", "Group B", "Mean diff (B − A)",
+                 "p-value", "Significant"],
+        rows=rows, row_levels=levels,
+        title="Statistical comparisons",
+        caption="Welch's t-test for two treatment levels, Tukey HSD for three "
+                "or more; α = 0.05. P-values are per test — no multiplicity "
+                "correction across phases or metrics. Full test output is in "
+                "the _Stats.txt file.")]
 
 
 # --------------------------------------------------------------------------
@@ -507,9 +706,65 @@ def build_valence_sections(experiment) -> list:
     """
     blocks: list = []
     blocks += _valence_exclusions(experiment)
+    blocks += _valence_movement_flags(experiment)
     blocks += _valence_headline(experiment)
     blocks += _valence_pi_over_time(experiment)
     blocks += _valence_persistence(experiment)
+    return blocks
+
+
+def _valence_movement_flags(experiment) -> list:
+    """Accounting for the Low-Movement Flag: flies below the movement
+    threshold during the first phase are listed as potentially an issue —
+    they stay in every result. When more than half of the analysed flies are
+    flagged, the section leads with the experiment-level warning."""
+    flagged = getattr(experiment, "flagged_flies", None)
+    if flagged is None:
+        return []
+    attrs = flagged.attrs
+    threshold = attrs.get("min_movement")
+    phase = attrs.get("phase_label", "first")
+    if not threshold:
+        return [m.Paragraph(
+            "Low-movement flagging is off (min_movement = 0): no fly was "
+            "checked against a movement floor.")]
+    total = attrs.get("n_total", 0)
+    if len(flagged) == 0:
+        return [m.Paragraph(
+            f"No flies were flagged for low movement: all {total} moved at "
+            f"least {threshold:g} mm/min on average during the {phase} phase "
+            f"(min_movement = {threshold:g}).")]
+
+    blocks: list = []
+    if attrs.get("experiment_flagged"):
+        blocks.append(m.Paragraph(
+            f"POTENTIAL ISSUE — {len(flagged)} of {total} flies "
+            f"({attrs.get('fraction', 0):.0%}) moved less than {threshold:g} "
+            f"mm/min on average during the {phase} phase. More than half of "
+            "the analysed flies are flagged, so the experiment as a whole "
+            "should be treated as potentially an issue."))
+    else:
+        blocks.append(m.Paragraph(
+            f"{len(flagged)} of {total} flies were flagged as potentially an "
+            f"issue: average movement below {threshold:g} mm/min during the "
+            f"{phase} phase (min_movement = {threshold:g}). Flagged flies "
+            "remain in all figures, statistics, and data files, marked by the "
+            "LowMovementFlag column in the summary CSVs."))
+    rows = []
+    for _, row in flagged.iterrows():
+        v = pd.to_numeric(pd.Series([row.get("TotalDistancePerMin")]),
+                          errors="coerce").iloc[0]
+        rows.append([str(row.get("Name", "")),
+                     str(row.get("TrackingRegion", "")),
+                     str(row.get("Treatment", "")),
+                     "no data" if pd.isna(v) else f"{v:.1f}"])
+    blocks.append(m.Table(
+        columns=["Fly", "Region", "Treatment", f"Movement ({phase}, mm/min)"],
+        rows=rows, row_levels=[m.Level.WARN] * len(rows),
+        title="Flagged flies (low movement)",
+        caption="Flies below the movement floor in the first phase; 'no data' "
+                "means the fly had no occupancy data there. Flagged flies are "
+                "kept in every result."))
     return blocks
 
 

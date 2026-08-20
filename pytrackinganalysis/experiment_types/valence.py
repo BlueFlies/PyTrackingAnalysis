@@ -19,6 +19,11 @@ _NOLIGHT_ALIAS = "NoLight, Right1, Right2, Right3, Left4, Left5, Left6"
 _MAX_XFLIP_COUNT = 18
 
 
+def _clean_number(value):
+    """Whole numbers as ints (140.0 -> 140) so the yaml stays tidy."""
+    return int(value) if float(value) == int(value) else float(value)
+
+
 class ValenceExperimentType(ExperimentType):
     name = "Valence"
     display_name = "Valence Experiment"
@@ -37,6 +42,12 @@ class ValenceExperimentType(ExperimentType):
     # transitions during the Primary Phase are excluded from every result.
     # yaml `min_transitions` overrides; 0 turns the exclusion off.
     default_min_transitions = 5
+    # Low-Movement Flag: flies averaging less than this movement (mm/min)
+    # during the first facet window are reported as potentially an issue —
+    # never removed. When more than half of the analysed flies are flagged the
+    # whole experiment is noted as potentially an issue.
+    # yaml `min_movement` overrides; 0 turns the flagging off.
+    default_min_movement = 140.0
 
     def report_intro(self) -> str:
         return ("A two-choice light-preference (valence) assay. Positive PI means "
@@ -89,6 +100,55 @@ class ValenceExperimentType(ExperimentType):
         excluded.attrs["phase_label"] = label
         return excluded
 
+    def compute_movement_flags(self, experiment):
+        """The Low-Movement Flag: flies whose average movement
+        (``TotalDistancePerMin``) during the *first* facet window is below
+        ``min_movement`` (default 140 mm/min), including flies with no data
+        there. Flagged flies stay in every result — this is a report, not a
+        removal — and when more than half of the analysed flies are flagged
+        the experiment as a whole is noted as potentially an issue.
+
+        Computed over the analysis population (after the Low-Transition
+        Exclusion), so the >50% rule describes the flies the results are
+        actually built from. Returns a DataFrame (possibly empty) with the
+        threshold, window, flagged fraction, and experiment-level verdict in
+        ``.attrs``.
+        """
+        import pandas as pd
+
+        from .. import windowing
+
+        global_cfg = (getattr(experiment, "config", None) or {}).get("global") or {}
+        threshold = self.resolve_min_movement(global_cfg)
+
+        cutoffs = getattr(experiment, "facet_cutoffs", None)
+        if cutoffs:
+            windows = list(windowing.facet_windows(cutoffs))
+            first = windows[0]
+            label = self.phase_labels_for(windows, global_cfg)[0]
+        else:
+            first, label = (0, 0), "whole recording"
+
+        columns = ["Name", "TrackingRegion", "Treatment", "TotalDistancePerMin"]
+        flagged = pd.DataFrame(columns=columns)
+        total = 0
+        if threshold and threshold > 0:
+            summary = experiment.arena.summarize(range_minutes=first)
+            movement = pd.to_numeric(summary.get("TotalDistancePerMin"),
+                                     errors="coerce")
+            mask = movement.isna() | (movement < threshold)
+            total = len(summary)
+            kept_cols = [c for c in columns if c in summary.columns]
+            flagged = summary.loc[mask, kept_cols].reset_index(drop=True)
+        fraction = (len(flagged) / total) if total else 0.0
+        flagged.attrs["min_movement"] = threshold
+        flagged.attrs["window"] = tuple(first)
+        flagged.attrs["phase_label"] = label
+        flagged.attrs["n_total"] = total
+        flagged.attrs["fraction"] = fraction
+        flagged.attrs["experiment_flagged"] = bool(total and fraction > 0.5)
+        return flagged
+
     def report_sections(self, experiment) -> list:
         # Valence-first blocks: headline Experiment-phase PI, PI over time,
         # per-animal persistence. Built in report_figures so matplotlib stays
@@ -103,6 +163,7 @@ class ValenceExperimentType(ExperimentType):
         problems += self._validate_owned_fields(global_cfg)
         problems += self._validate_rig(global_cfg)
         problems += self._validate_min_transitions(global_cfg)
+        problems += self._validate_min_movement(global_cfg)
         problems += self._validate_required_counting_regions(config)
         if not config.get("tracking_regions"):
             problems.append(
@@ -125,6 +186,19 @@ class ValenceExperimentType(ExperimentType):
                     f"number ≥ 0 (0 turns the exclusion off); got {raw!r}."]
         return []
 
+    def _validate_min_movement(self, global_cfg: dict) -> list[str]:
+        raw = global_cfg.get("min_movement")
+        if raw is None:
+            return []
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = -1.0
+        if value < 0:
+            return [f"{self.display_name}: min_movement must be a number ≥ 0 "
+                    f"in mm/min (0 turns the flagging off); got {raw!r}."]
+        return []
+
     def scaffold_config(self) -> dict:
         # Rig is intentionally left blank: the user must choose Max or Colosseum,
         # so a freshly scaffolded project fails validation until they do.
@@ -133,6 +207,7 @@ class ValenceExperimentType(ExperimentType):
                 "experiment_type": self.name,
                 "tracking_rig": "",
                 "min_transitions": self.default_min_transitions,
+                "min_movement": _clean_number(self.default_min_movement),
             },
             "counting_regions": {
                 "Light": {"alias": _LIGHT_ALIAS},
@@ -142,7 +217,8 @@ class ValenceExperimentType(ExperimentType):
         }
 
     def build_config(self, *, rig=None, facet_cutoffs=None, facet_labels=None,
-                     factors=None, min_transitions=None, **_) -> dict:
+                     factors=None, min_transitions=None, min_movement=None,
+                     **_) -> dict:
         """Full Valence config for the create wizard.
 
         Lays out the rig's plate with the correct X multipliers (Arena Max flips
@@ -161,10 +237,13 @@ class ValenceExperimentType(ExperimentType):
             g["facet_labels"] = labels
         if factors:
             g["experimental_design_factors"] = dict(factors)
-        # The Low-Transition Exclusion is written explicitly so the knob is
-        # visible where users already edit facets (ADR-0003).
+        # The Low-Transition Exclusion and Low-Movement Flag are written
+        # explicitly so the knobs are visible where users already edit facets
+        # (ADR-0003).
         g["min_transitions"] = int(min_transitions) if min_transitions is not None \
             else self.default_min_transitions
+        g["min_movement"] = _clean_number(min_movement) if min_movement is not None \
+            else _clean_number(self.default_min_movement)
 
         names = self.regions_for_rig(rig) or []
         flip = _MAX_XFLIP_COUNT if config_validation.normalize_rig(rig) == "arena_max" else 0

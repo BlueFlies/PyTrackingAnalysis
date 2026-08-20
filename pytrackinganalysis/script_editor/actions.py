@@ -566,7 +566,7 @@ def _build_actions() -> dict[str, Action]:
         "create_report": Action(
             key="create_report",
             title="Create PDF Report",
-            description="Write {exp}_report.pdf with QC tables, tracker grids, and plots.",
+            description="Write <project>_report.pdf (in the project root) with figures, stats, and QC.",
             category=Category.ANALYZE,
             icon_name="report",
             params=(),

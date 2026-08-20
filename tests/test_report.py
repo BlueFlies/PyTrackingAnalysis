@@ -113,6 +113,7 @@ def _twochoice_summary():
         "FinalPI": np.linspace(-0.5, 0.5, n),
         "FinalPercentage": np.linspace(0.3, 0.8, n),
         "Transitions": np.linspace(2, 16, n),
+        "TransitionsPerMin": np.linspace(0.2, 1.6, n),
     })
 
 
@@ -227,7 +228,7 @@ def _model_exp(tmp_path, exp_type_name=None, facet_cutoffs=(10, 70)):
             self.analysis_path = str(analysis) + os.sep
             self.qc_path = str(qc) + os.sep
             self.config = {"global": {"tracking_rig": "colosseum"}}
-            self.facet_cutoffs = list(facet_cutoffs)
+            self.facet_cutoffs = list(facet_cutoffs) if facet_cutoffs else None
             self.experiment_type = et.get_experiment_type(exp_type_name)
             self.parameters = Parameters.Parameters(
                 tracking_type=Parameters.TrackingType.TWOCHOICETRACKER)
@@ -235,22 +236,38 @@ def _model_exp(tmp_path, exp_type_name=None, facet_cutoffs=(10, 70)):
     return _Exp()
 
 
-def test_report_model_has_figures_and_stats_but_no_data_tables(tmp_path):
-    # Data belongs in the CSVs, not the PDF: the assembled model must carry
-    # figures and the stats text, but no Table blocks even though a CSV sits in
-    # the analysis directory.
+def test_report_model_renders_stats_as_table_not_text(tmp_path):
+    # The raw Stats.txt and experiment_summary.txt are NOT embedded as
+    # monospaced text: the comparisons appear as the semantic
+    # "Statistical comparisons" table and the summary as its own structured
+    # section. Raw CSV data is still never dumped into the PDF.
     analysis = tmp_path / "analysis"
     analysis.mkdir()
     (tmp_path / "qc").mkdir()
     _twochoice_summary().to_csv(analysis / "E_Summary.csv", index=False)
     (analysis / "E_Stats.txt").write_text("control vs chr: T=3.1, p=0.005\n",
                                            encoding="utf-8")
+    (analysis / "E_experiment_summary.txt").write_text("── boxy ──\n",
+                                                       encoding="utf-8")
 
     model = _model_exp(tmp_path, facet_cutoffs=[10]).build_report_model(qc_cutoff=0.9)
     kinds = [type(b).__name__ for b in model.blocks]
-    assert "Table" not in kinds
-    assert kinds.count("Figure") >= 2       # overall + faceted figures
-    assert "Preformatted" in kinds          # the stats text survives
+    assert "Preformatted" not in kinds      # neither txt is embedded raw
+    assert kinds.count("Figure") >= 2
+
+    tables = [b for b in model.blocks if isinstance(b, m.Table)]
+    stats = [t for t in tables if t.title == "Statistical comparisons"]
+    assert stats, "expected the pairwise-comparison table"
+    assert stats[0].columns[:2] == ["Metric", "Phase"]
+    assert "p-value" in stats[0].columns
+    # One row per metric x phase x pair: 3 two-choice metrics x 2 phases.
+    assert len(stats[0].rows) == 6
+
+    dividers = [b.title for b in model.blocks
+                if type(b).__name__ == "SectionDivider"]
+    assert "Experiment Summary" in dividers
+    assert any(t.title == "Configuration" for t in tables)
+    assert any(t.title == "Parameters" for t in tables)
 
 
 # --------------------------------------------------------------------------
@@ -468,3 +485,181 @@ def test_faceted_figures_include_transitions_and_movement():
                                        "NoLight": {"alias": "N"}}}
     figs = report_figures.build_faceted_figures(exp)
     assert "Time in Light by phase" in [f.title for f in figs]
+
+
+# ---- Low-Movement Flag accounting -------------------------------------------
+
+def _flagged_df(rows, threshold=140.0, n_total=4, experiment_flagged=False):
+    df = pd.DataFrame(rows, columns=["Name", "TrackingRegion", "Treatment",
+                                     "TotalDistancePerMin"])
+    df.attrs.update({"min_movement": threshold, "window": (0, 10),
+                     "phase_label": "Acclimation", "n_total": n_total,
+                     "fraction": (len(df) / n_total) if n_total else 0.0,
+                     "experiment_flagged": experiment_flagged})
+    return df
+
+
+def test_movement_flag_section_lists_flagged_flies():
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    exp.flagged_flies = _flagged_df([
+        ["T_1_0", "T_1", "control", 96.5],
+        ["T_2_0", "T_2", "chr", float("nan")],
+    ])
+    blocks = report_figures._valence_movement_flags(exp)
+    assert len(blocks) == 2
+    assert isinstance(blocks[0], m.Paragraph)
+    assert "flagged" in blocks[0].text and "remain" in blocks[0].text
+    table = blocks[1]
+    assert isinstance(table, m.Table)
+    assert [r[0] for r in table.rows] == ["T_1_0", "T_2_0"]
+    assert table.rows[0][3] == "96.5" and table.rows[1][3] == "no data"
+    assert table.row_levels == [m.Level.WARN, m.Level.WARN]
+
+
+def test_movement_flag_section_experiment_level_warning():
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    exp.flagged_flies = _flagged_df(
+        [["a", "T_0", "x", 100.0], ["b", "T_1", "x", 90.0],
+         ["c", "T_2", "x", 80.0]],
+        experiment_flagged=True)
+    blocks = report_figures._valence_movement_flags(exp)
+    assert "POTENTIAL ISSUE" in blocks[0].text and "75%" in blocks[0].text
+
+
+def test_movement_flag_section_zero_off_and_absent():
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    exp.flagged_flies = _flagged_df([])
+    blocks = report_figures._valence_movement_flags(exp)
+    assert len(blocks) == 1 and "No flies were flagged" in blocks[0].text
+
+    off = _flagged_df([], threshold=0.0)
+    exp.flagged_flies = off
+    blocks = report_figures._valence_movement_flags(exp)
+    assert len(blocks) == 1 and "flagging is off" in blocks[0].text
+
+    exp2 = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
+    assert report_figures._valence_movement_flags(exp2) == []
+
+
+def test_cover_carries_movement_status_line(tmp_path):
+    exp = _model_exp(tmp_path, exp_type_name="Valence")
+    exp.flagged_flies = _flagged_df(
+        [["a", "T_0", "x", 100.0], ["b", "T_1", "x", 90.0],
+         ["c", "T_2", "x", 80.0]],
+        experiment_flagged=True)
+    model = exp.build_report_model()
+    cover = model.blocks[0]
+    lines = cover.status_lines()
+    movement = [l for l in lines if "Potential issue" in l.text]
+    assert movement and movement[0].level == m.Level.ERROR
+
+    # All clear -> an OK line, so the reader knows the check ran.
+    exp.flagged_flies = _flagged_df([])
+    cover = exp.build_report_model().blocks[0]
+    ok = [l for l in cover.status_lines() if "Movement" in l.text]
+    assert ok and ok[0].level == m.Level.OK
+
+
+def test_save_summary_adds_low_movement_flag_column(tmp_path):
+    exp = _model_exp(tmp_path, exp_type_name="Valence")
+    exp.flagged_flies = _flagged_df([["1", "T_1", "control", 100.0]])
+    # _twochoice_summary has no Name column; give the fake arena one.
+    summary = _twochoice_summary()
+    summary["Name"] = [str(i) for i in range(len(summary))]
+    exp.arena._summary = summary
+    flat, facet = exp.save_summary()
+    assert list(flat["LowMovementFlag"]) == [False, True] + [False] * 6
+    # The per-fly flag repeats on each of the fly's facet rows.
+    assert facet.groupby("Name")["LowMovementFlag"].nunique().max() == 1
+    assert facet[facet["Name"] == "1"]["LowMovementFlag"].all()
+
+    saved = pd.read_csv(tmp_path / "analysis" / "E_Summary.csv")
+    assert "LowMovementFlag" in saved.columns
+
+    # Flagging off -> no column (rather than a misleading all-False).
+    exp.flagged_flies = _flagged_df([], threshold=0.0)
+    flat, _ = exp.save_summary()
+    assert "LowMovementFlag" not in flat.columns
+
+
+# ---- whole-recording page vs faceted figures --------------------------------
+
+def test_flat_figures_dropped_when_faceted_figures_exist(tmp_path):
+    # With facet_cutoffs configured the per-phase figures replace the
+    # whole-recording ("summed over all phases") Choice / Locomotion page.
+    exp = _model_exp(tmp_path, facet_cutoffs=(10, 70))
+    titles = [b.title for b in exp.build_report_model().blocks
+              if isinstance(b, m.Figure)]
+    assert "Choice" not in titles and "Locomotion & activity" not in titles
+    assert any("by phase" in (t or "") for t in titles)
+
+    # Without faceting the flat figures are the only content — keep them.
+    exp = _model_exp(tmp_path, facet_cutoffs=None)
+    titles = [b.title for b in exp.build_report_model().blocks
+              if isinstance(b, m.Figure)]
+    assert "Choice" in titles
+    assert not any("by phase" in (t or "") for t in titles)
+
+
+def test_transitions_by_phase_plots_rate_with_rate_threshold(monkeypatch):
+    # The transitions facet figure plots TransitionsPerMin, and the exclusion
+    # criterion line is converted to a rate (min_transitions / phase minutes).
+    from pytrackinganalysis import experiment_types as et
+    from pytrackinganalysis import report_figures as rf
+
+    lines = []
+    real = rf.plt.Axes.axhline
+
+    def _spy(self, y=0, *a, **k):
+        if k.get("linestyle") == ":":
+            lines.append(y)
+        return real(self, y, *a, **k)
+
+    monkeypatch.setattr(rf.plt.Axes, "axhline", _spy)
+
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary(),
+                   facet_cutoffs=[10, 70])
+    exp.experiment_type = et.get_experiment_type("Valence")
+    figs = rf.build_faceted_figures(exp)
+    trans = [f for f in figs if f.title == "Transitions by phase"]
+    assert trans and "per minute" in trans[0].caption
+    # min_transitions=5 over the 60-minute Experiment phase -> 5/60 per min.
+    assert lines and abs(lines[0] - 5 / 60) < 1e-9
+
+
+# ---- per-tracker QC bars & report location ----------------------------------
+
+def test_qc_metric_bars_built_per_tracker():
+    from pytrackinganalysis import experiment_types as et
+
+    summary = _twochoice_summary()
+    summary["Name"] = [f"T_{i}_0" for i in range(len(summary))]
+    dq = pd.DataFrame({"Tracker": [f"T_{i}" for i in range(5)],
+                       "HighQuality": [0.95] * 5})
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, summary, dq=dq,
+                   facet_cutoffs=[10, 70])
+    exp.experiment_type = et.get_experiment_type("Valence")
+    exp.config = {"global": {}}
+    figs = report_figures.build_qc_figures(exp)
+    titles = [f.title for f in figs]
+    assert "Data quality" in titles
+    assert "Per-tracker transitions — Experiment phase" in titles
+    assert "Per-tracker movement — Acclimation phase" in titles
+    trans = [f for f in figs if "transitions" in f.title][0]
+    assert "min_transitions" in trans.caption  # criterion line explained
+
+
+def test_qc_metric_bars_skip_without_name_column():
+    dq = pd.DataFrame({"Tracker": ["T_0"], "HighQuality": [0.95]})
+    exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER,
+                   _twochoice_summary(), dq=dq, facet_cutoffs=[10, 70])
+    figs = report_figures.build_qc_figures(exp)
+    assert [f.title for f in figs] == ["Data quality"]
+
+
+def test_report_pdf_written_to_project_root(tmp_path, monkeypatch):
+    exp = _model_exp(tmp_path, facet_cutoffs=[10, 70])
+    out = exp.create_report()
+    assert os.path.dirname(out) == str(tmp_path)
+    assert os.path.basename(out) == f"{os.path.basename(tmp_path)}_report.pdf"
+    assert os.path.exists(out)

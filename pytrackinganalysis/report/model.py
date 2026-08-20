@@ -53,12 +53,24 @@ class StatusLine:
 
 @dataclass
 class Cover:
-    """Title page. ``metadata`` renders as a label/value block."""
+    """Title page. ``metadata`` renders as a label/value block.
+
+    ``status`` accepts a single :class:`StatusLine` or a list of them (e.g.
+    the QC pass/fail line plus a type-specific flag line); backends should
+    render via :meth:`status_lines`.
+    """
 
     title: str
     subtitle: str = ""
     metadata: list[tuple[str, str]] = field(default_factory=list)
-    status: StatusLine | None = None
+    status: StatusLine | list[StatusLine] | None = None
+
+    def status_lines(self) -> list[StatusLine]:
+        if self.status is None:
+            return []
+        if isinstance(self.status, StatusLine):
+            return [self.status]
+        return list(self.status)
 
 
 @dataclass

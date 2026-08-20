@@ -65,9 +65,29 @@ during the Primary Phase is at least `min_transitions` (yaml `global:` key;
 Valence default 5; 0 = off; no data in the window counts as excluded).
 _Avoid_: QC filter (data quality is a separate, always-reported concern)
 
+**AI Summary**:
+An optional, AI-written narrative (up to one page) of an experiment's analysis,
+generated from the report's own content — figures, stats, and summary tables —
+by a user-chosen provider (Anthropic or OpenAI). Opt-in per report, and offered
+only when a provider API key is configured in `.env`. A failed generation never
+blocks the report; the user gets an error message instead. The AI *summarizes*
+the pipeline's analysis; it does not perform its own. An AI Summary is a
+derivative of a single analysis run: re-running the analysis deletes it, and
+the report embeds it only while the saved file exists.
+_Avoid_: AI analysis, AI interpretation
+
 **Excluded Fly**:
 A fly removed by the Low-Transition Exclusion — absent from figures, summary
 measures, statistics, and the summary CSVs, but listed with its transition
 count in the report's removal table and `<exp>_Excluded.csv`, and still shown
 in data-quality output.
 _Avoid_: dropped fly, filtered fly
+
+**Low-Movement Flag**:
+Valence-only QC flag: a fly averaging less than `min_movement` mm/min (yaml
+`global:` key; Valence default 140; 0 = off; no data counts as flagged) during
+the *first* facet window is reported as potentially an issue — never removed
+(`LowMovementFlag` column in the summary CSVs, table in the report). An
+experiment with more than half of its analysed flies flagged is itself noted
+as potentially an issue on the report cover.
+_Avoid_: exclusion (a flag never removes a fly), QC filter

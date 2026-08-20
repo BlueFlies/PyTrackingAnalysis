@@ -361,6 +361,15 @@ Rules for a typed experiment:
   as excluded too. Set `min_transitions: 0` to turn the exclusion off. Excluded
   flies are listed in the report and in `*_Excluded.csv` (written even when
   empty), and still appear in data-quality output. See `docs/adr/0003`.
+- **Low-movement flag** (Valence only, `min_movement`, default 140 mm/min,
+  editable in the Config Editor): a fly averaging less than this movement
+  during the **first** facet window (Acclimation at default cutoffs) is flagged
+  as potentially an issue — reported, **never removed**. Flagged flies stay in
+  every figure, statistic, and CSV, marked by a `LowMovementFlag` column in the
+  saved summary CSVs and listed in the report. When more than half of the
+  analysed flies are flagged, the whole experiment is noted as potentially an
+  issue on the report cover and in `*_Stats.txt`. `min_movement: 0` turns the
+  flagging off.
 - A typed config is validated **at load** and **fails hard** on any violation
   (wrong rig, missing Light/NoLight, a disallowed override), rather than
   crashing mid-analysis.
@@ -924,12 +933,12 @@ All outputs are written relative to the project directory.
 | File | Contents |
 |------|----------|
 | `*_experiment_summary.txt` | Rig settings, parameters, a formatted description of the experimental design (factors, region assignments, non-unit multipliers, counting regions, cutoffs), data quality overview, per-tracker table |
-| `*_Summary.csv` | Per-tracker summary statistics (one row per tracker) |
+| `*_Summary.csv` | Per-tracker summary statistics (one row per tracker). For Valence, a `LowMovementFlag` column marks flies flagged by the low-movement check (they remain in the data) |
 | `*_Summary_Facet.csv` | Same, split into the time phases defined by `facet_cutoffs` |
 | `*_Excluded.csv` | (Valence) Flies removed by the low-transition exclusion — name, region, treatment, and transition count in the primary phase. Written even when no fly was excluded, so absence never needs interpreting |
 | `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample **Welch's** t-test (unequal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more. Each line carries both groups' N, mean and SD, and any trackers dropped for having no numeric value in the window are counted explicitly. Faceted runs append a note stating how many uncorrected tests were run and the Bonferroni-adjusted threshold. Pass `equal_var=True` to `run_pairwise_comparisons` for the classic Student's test. |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
-| `*_report.pdf` | Multi-page PDF: experiment summary → QC table → tracker grid plots → all plots |
+| `<project>_report.pdf` | **Written to the project root** (beside `tracking_config.yaml`), named after the project directory. Multi-page PDF: cover with status lines → analysis figures (per-phase when faceted) → statistical-comparisons table → structured experiment summary → QC figures (data quality plus per-tracker transitions/min and movement bars) |
 
 ### `qc/` — data quality
 

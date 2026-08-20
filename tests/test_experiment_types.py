@@ -470,3 +470,79 @@ def test_arena_drops_excluded_rows_on_the_way_out():
     # The audit path still sees everyone; the cache itself stays unfiltered.
     assert list(arena.summarize(include_excluded=True)["Name"]) == ["a", "b"]
     assert list(arena.computed_summaries[(0, 0)]["Name"]) == ["a", "b"]
+
+
+# ---- Low-Movement Flag ------------------------------------------------------
+
+def test_min_movement_default_override_and_off():
+    t = et.get_experiment_type("Valence")
+    assert t.resolve_min_movement({}) == 140.0
+    assert t.resolve_min_movement({"min_movement": 120}) == 120.0
+    assert t.resolve_min_movement({"min_movement": 0}) == 0.0
+    assert et.get_experiment_type(None).resolve_min_movement(
+        {"min_movement": 100}) is None
+
+
+def test_valence_validates_min_movement():
+    t = et.get_experiment_type("Valence")
+    assert t.validate(_valence_config(min_movement=140)) == []
+    assert t.validate(_valence_config(min_movement=120.5)) == []  # floats OK
+    assert t.validate(_valence_config(min_movement=0)) == []
+    for bad in (-1, "slow"):
+        problems = t.validate(_valence_config(min_movement=bad))
+        assert any("min_movement" in p for p in problems), bad
+
+
+def test_valence_configs_write_min_movement():
+    t = et.get_experiment_type("Valence")
+    assert t.scaffold_config()["global"]["min_movement"] == 140
+    assert t.build_config(rig="arena_max")["global"]["min_movement"] == 140
+    assert t.build_config(rig="arena_max",
+                          min_movement=120.5)["global"]["min_movement"] == 120.5
+
+
+def _movement_summary(values):
+    import pandas as pd
+    n = len(values)
+    return pd.DataFrame({
+        "Name": [f"fly{i}" for i in range(n)],
+        "TrackingRegion": [f"T_{i}" for i in range(n)],
+        "Treatment": ["x"] * n,
+        "TotalDistancePerMin": values,
+    })
+
+
+def test_valence_movement_flags_below_threshold_and_na():
+    t = et.get_experiment_type("Valence")
+    # 100 flagged; exactly 140 NOT flagged ("less than"); NA flagged; 200 kept.
+    exp = _exclusion_exp(_movement_summary([100.0, 140.0, float("nan"), 200.0]))
+    flagged = t.compute_movement_flags(exp)
+    assert list(flagged["Name"]) == ["fly0", "fly2"]
+    attrs = flagged.attrs
+    assert attrs["min_movement"] == 140.0
+    assert attrs["window"] == (0, 10)          # the FIRST facet window
+    assert attrs["phase_label"] == "Acclimation"
+    assert attrs["n_total"] == 4
+    # Exactly 50% flagged is NOT an experiment-level issue (strictly >50%).
+    assert attrs["fraction"] == 0.5 and attrs["experiment_flagged"] is False
+    # Computed on the analysis population (no include_excluded).
+    assert exp.arena.calls == [((0, 10), False)]
+
+
+def test_valence_movement_flags_experiment_level():
+    t = et.get_experiment_type("Valence")
+    exp = _exclusion_exp(_movement_summary([100.0, 139.9, float("nan"), 200.0]))
+    flagged = t.compute_movement_flags(exp)
+    assert len(flagged) == 3
+    assert flagged.attrs["experiment_flagged"] is True
+
+
+def test_valence_movement_flags_off_and_custom_none():
+    t = et.get_experiment_type("Valence")
+    exp = _exclusion_exp(_movement_summary([100.0]), {"min_movement": 0})
+    flagged = t.compute_movement_flags(exp)
+    assert len(flagged) == 0
+    assert flagged.attrs["min_movement"] == 0.0
+    assert flagged.attrs["experiment_flagged"] is False
+    assert exp.arena.calls == []
+    assert et.get_experiment_type(None).compute_movement_flags(exp) is None

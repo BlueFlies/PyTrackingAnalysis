@@ -242,11 +242,11 @@ class GlobalTab(QWidget):
         label_row.addWidget(self.facet_labels)
         outer.addLayout(label_row)
 
-        # Low-transition exclusion (ADR-0003): only shown for a type that has
-        # the criterion (Valence). Kept next to the facets because it is
-        # measured over one of them (the Primary Phase).
+        # Quality criteria (ADR-0003): only shown for a type that has them
+        # (Valence). Kept next to the facets because both are measured over
+        # facet windows (the Primary Phase / the first phase).
         outer.addSpacing(12)
-        self._exclusion_section = _section_label("Low-transition exclusion")
+        self._exclusion_section = _section_label("Quality criteria")
         outer.addWidget(self._exclusion_section)
         excl_row = QHBoxLayout()
         self._min_transitions_caption = QLabel(
@@ -258,6 +258,17 @@ class GlobalTab(QWidget):
         excl_row.addWidget(self.min_transitions)
         excl_row.addStretch()
         outer.addLayout(excl_row)
+
+        flag_row = QHBoxLayout()
+        self._min_movement_caption = QLabel(
+            "min_movement (mm/min; slower flies in the first phase are flagged, not removed; 0 = off):")
+        self.min_movement = QLineEdit()
+        self.min_movement.setPlaceholderText("e.g. 140")
+        self.min_movement.setMaximumWidth(80)
+        flag_row.addWidget(self._min_movement_caption)
+        flag_row.addWidget(self.min_movement)
+        flag_row.addStretch()
+        outer.addLayout(flag_row)
 
         outer.addSpacing(12)
         outer.addWidget(_section_label("Parameter overrides (leave blank to use rig defaults)"))
@@ -366,16 +377,23 @@ class GlobalTab(QWidget):
         self.facet_cutoffs.setEnabled(not facets_owned and self.use_facets.isChecked())
         self.facet_labels.setEnabled(self.use_facets.isChecked())
 
-        # Low-transition exclusion: visible only for a type that has the
+        # Quality criteria: each row visible only for a type that has the
         # criterion, pre-filled with the type default when empty.
         has_exclusion = t.default_min_transitions is not None
-        for w in (self._exclusion_section, self._min_transitions_caption,
-                  self.min_transitions):
+        has_flag = t.default_min_movement is not None
+        self._exclusion_section.setVisible(has_exclusion or has_flag)
+        for w in (self._min_transitions_caption, self.min_transitions):
             w.setVisible(has_exclusion)
+        for w in (self._min_movement_caption, self.min_movement):
+            w.setVisible(has_flag)
         if has_exclusion and not self.min_transitions.text().strip():
             self.min_transitions.setText(str(t.default_min_transitions))
         elif not has_exclusion:
             self.min_transitions.clear()
+        if has_flag and not self.min_movement.text().strip():
+            self.min_movement.setText(f"{t.default_min_movement:g}")
+        elif not has_flag:
+            self.min_movement.clear()
 
         # Calibration overrides: disabled when the type forbids them.
         if not custom and not t.allow_calibration_override:
@@ -512,12 +530,17 @@ class GlobalTab(QWidget):
                 self.use_facets.setChecked(False)
                 self.facet_cutoffs.clear()
 
-        # Low-transition exclusion: the yaml's value, else the type default.
+        # Quality criteria: the yaml's values, else the type defaults.
         if t.default_min_transitions is not None:
             self.min_transitions.setText(
                 str(g.get("min_transitions", t.default_min_transitions)))
         else:
             self.min_transitions.clear()
+        if t.default_min_movement is not None:
+            self.min_movement.setText(
+                f"{float(g.get('min_movement', t.default_min_movement)):g}")
+        else:
+            self.min_movement.clear()
 
         # Phase names: the yaml's, else the type's defaults when they name every
         # window of the effective cutoffs; else cleared (never carried over from
@@ -564,6 +587,7 @@ class GlobalTab(QWidget):
         "facet_cutoffs",
         "facet_labels",
         "min_transitions",
+        "min_movement",
         "fps",
         "mm_per_pixel",
         "speed_window_seconds",
@@ -647,7 +671,8 @@ class GlobalTab(QWidget):
             except ValueError:
                 errors.append(f"Interaction distances: '{idist}' is not a comma-separated list of numbers")
 
-        if self.current_experiment_type().default_min_transitions is not None:
+        t = self.current_experiment_type()
+        if t.default_min_transitions is not None:
             text = self.min_transitions.text().strip()
             if text:
                 try:
@@ -658,6 +683,16 @@ class GlobalTab(QWidget):
                     errors.append(
                         f"min_transitions: '{text}' must be a whole number ≥ 0 "
                         f"(0 turns the exclusion off)")
+        if t.default_min_movement is not None:
+            text = self.min_movement.text().strip()
+            if text:
+                try:
+                    if float(text) < 0:
+                        raise ValueError
+                except ValueError:
+                    errors.append(
+                        f"min_movement: '{text}' must be a number ≥ 0 in mm/min "
+                        f"(0 turns the flagging off)")
 
         if self.tracking_rig.currentData() == "movie":
             for label, widget in (("FPS", self.fps), ("mm per pixel", self.mm_per_pixel)):
@@ -738,14 +773,22 @@ class GlobalTab(QWidget):
             for key in t.owned_keys():
                 g.pop(key, None)
 
-        ## Low-transition exclusion: written only for a type that has the
-        ## criterion. An empty field falls back to the type default at load,
-        ## so nothing is written for it.
+        ## Quality criteria: written only for a type that has them. An empty
+        ## field falls back to the type default at load, so nothing is written
+        ## for it.
         if t.default_min_transitions is not None:
             text = self.min_transitions.text().strip()
             if text:
                 try:
                     g["min_transitions"] = int(float(text))
+                except ValueError:
+                    pass  # validation_errors() blocks the save first
+        if t.default_min_movement is not None:
+            text = self.min_movement.text().strip()
+            if text:
+                try:
+                    value = float(text)
+                    g["min_movement"] = int(value) if value == int(value) else value
                 except ValueError:
                     pass  # validation_errors() blocks the save first
 

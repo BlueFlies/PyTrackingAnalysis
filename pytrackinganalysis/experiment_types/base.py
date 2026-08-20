@@ -52,6 +52,11 @@ class ExperimentType:
     #: at least ``min_transitions`` (yaml-overridable; 0 = off). ``None`` means
     #: the type has no exclusion criterion at all (Custom and most types).
     default_min_transitions: int | None = None
+    #: Default for the Low-Movement Flag (see CONTEXT.md): a fly whose average
+    #: movement (mm/min) during the *first* facet window is below
+    #: ``min_movement`` is reported as potentially an issue — never removed.
+    #: yaml-overridable; 0 = off; ``None`` = the type has no such flag.
+    default_min_movement: float | None = None
 
     # ---- identity -----------------------------------------------------
 
@@ -102,6 +107,23 @@ class ExperimentType:
         """Flies the type excludes from every result (ADR-0003), as a DataFrame
         of Name/TrackingRegion/Treatment/Transitions rows, or ``None`` when the
         type has no exclusion criterion. Base/Custom: none."""
+        return None
+
+    def resolve_min_movement(self, global_cfg: dict) -> float | None:
+        """The effective Low-Movement Flag threshold in mm/min, or ``None``
+        when the type has no such flag. The yaml's ``min_movement`` wins over
+        the type default; 0 disables the flagging."""
+        if self.default_min_movement is None:
+            return None
+        raw = (global_cfg or {}).get("min_movement")
+        if raw is None:
+            return float(self.default_min_movement)
+        return float(raw)
+
+    def compute_movement_flags(self, experiment):
+        """Flies the type flags as potentially an issue (never removed), as a
+        DataFrame of Name/TrackingRegion/Treatment/TotalDistancePerMin rows, or
+        ``None`` when the type has no such flag. Base/Custom: none."""
         return None
 
     def regions_for_rig(self, rig) -> list[str] | None:

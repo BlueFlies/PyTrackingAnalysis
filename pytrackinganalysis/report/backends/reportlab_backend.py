@@ -210,11 +210,13 @@ def _cover_flowables(block: m.Cover, styles) -> list:
         holder.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
         flow.append(holder)
 
-    if block.status is not None:
+    status_lines = block.status_lines()
+    if status_lines:
         flow.append(Spacer(1, 0.6 * inch))
-        style = ParagraphStyle("status_col", parent=styles["cover_status"],
-                               textColor=_LEVEL_TEXT.get(block.status.level, _SUBTLE))
-        flow.append(Paragraph(_xml_escape(block.status.text), style))
+        for i, line in enumerate(status_lines):
+            style = ParagraphStyle(f"status_col_{i}", parent=styles["cover_status"],
+                                   textColor=_LEVEL_TEXT.get(line.level, _SUBTLE))
+            flow.append(Paragraph(_xml_escape(line.text), style))
 
     # No trailing PageBreak: the following SectionDivider carries a leading one,
     # so ending the cover here too would leave an empty page between them.
