@@ -24,8 +24,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGroupBox,
     QGridLayout,
@@ -58,6 +59,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from ._hub_tiles import ClickAwayFilter, StatusTile, TilePanel
 from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
     ActionButton,
@@ -177,6 +179,8 @@ class HubWindow(QMainWindow):
             "zoom/pan/save toolbars. When unchecked, they render as static "
             "PNGs (faster)."
         )
+        self._interactive_checkbox.toggled.connect(
+            lambda _on: self._refresh_tiles())
         self._top_bar.add_right(self._interactive_checkbox)
         self._top_bar.add_right(make_topbar_help_button(self, topic_id="getting_started"))
         self._btn_theme = QToolButton()
@@ -190,19 +194,15 @@ class HubWindow(QMainWindow):
         self._top_bar.add_right(self._btn_theme)
         outer.addWidget(self._top_bar)
 
-        # ── Splitter ────────────────────────────────────────────────────
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-
-        # Left: sidebar + scrollable card column
-        left_host = QWidget()
-        left_lay = QHBoxLayout(left_host)
-        left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.setSpacing(0)
+        # ── Body: sidebar | (tile strip + full-width output) — ADR-0007 ──
+        body_host = QWidget()
+        body_lay = QHBoxLayout(body_host)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(0)
 
         self._sidebar = SidebarNav()
         self._sidebar.add_item("project", "Project", "project", category=Category.NEUTRAL)
-        # Rail buttons (not scroll anchors): the two creation flows — the
+        # Rail buttons (not panel anchors): the two creation flows — the
         # Project (the parent of replicates) first, then the experiment.
         create_proj_btn = self._sidebar.add_action(
             "Create project", "project", category=Category.LOAD,
@@ -213,25 +213,63 @@ class HubWindow(QMainWindow):
             "Create experiment", "new", category=Category.LOAD,
             tooltip="Create a new experiment directory from an Experiment Type")
         create_exp_btn.clicked.connect(lambda: self._create_experiment())
-        self._sidebar.add_item("load", "Load", "load", category=Category.LOAD)
+        self._sidebar.add_item("load", "Experiment", "load", category=Category.LOAD)
         self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
         self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
         self._sidebar.add_item("scripts", "Scripts", "scripts", category=Category.SCRIPTS)
         self._sidebar.add_item("ai", "AI", "ai", category=Category.AI)
         self._sidebar.add_item("tools", "Tools", "tools", category=Category.TOOLS)
         self._sidebar.add_stretch()
-        self._sidebar.itemSelected.connect(self._scroll_to_card)
-        left_lay.addWidget(self._sidebar)
+        ## Sidebar items open the matching tile panel (same mental model as
+        ## clicking the tile — two entry points, one behavior).
+        self._sidebar.itemSelected.connect(self._open_panel_for_sidebar)
+        body_lay.addWidget(self._sidebar)
 
-        # Scrollable cards column
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(scroll.Shape.NoFrame)
+        main_col = QWidget()
+        main_lay = QVBoxLayout(main_col)
+        main_lay.setContentsMargins(0, 0, 0, 0)
+        main_lay.setSpacing(0)
+
+        # The tile strip: compact live-status chips; every control lives in
+        # the tile's anchored panel.
+        self._strip = QFrame()
+        self._strip.setObjectName("TileStrip")
+        self._strip.setStyleSheet(
+            "QFrame#TileStrip { background: palette(alternate-base); "
+            "border-bottom: 1px solid palette(mid); }")
+        strip_lay = QHBoxLayout(self._strip)
+        strip_lay.setContentsMargins(10, 8, 10, 8)
+        strip_lay.setSpacing(8)
+        self._tiles: dict[str, StatusTile] = {}
+        for key, title, icon_name, cat in (
+            ("project", "Project", "project", Category.NEUTRAL),
+            ("experiment", "Experiment", "load", Category.LOAD),
+            ("analyze", "Analyze", "basic", Category.ANALYZE),
+            ("plots", "Plots", "plots", Category.PLOTS),
+            ("scripts", "Scripts", "scripts", Category.SCRIPTS),
+            ("ai", "AI", "ai", Category.AI),
+        ):
+            tile = StatusTile(key, title, icon_name, cat)
+            tile.clicked.connect(self._toggle_panel)
+            self._tiles[key] = tile
+            strip_lay.addWidget(tile)
+        strip_lay.addStretch(1)
+        main_lay.addWidget(self._strip)
+
+        # The output area — the whole point of the redesign: full width,
+        # full height below the strip.
+        self._log = OutputLog()
+        self._err_log = OutputLog()
+        self._plot_dock = PlotDock(self._log, self._err_log)
+        main_lay.addWidget(self._plot_dock, 1)
+
+        body_lay.addWidget(main_col, 1)
+        outer.addWidget(body_host, 1)
+
+        # Build the existing cards (unchanged) into a hidden staging host,
+        # then move each into its tile's anchored panel.
         cards_host = QWidget()
         self._cards_lay = QVBoxLayout(cards_host)
-        self._cards_lay.setContentsMargins(12, 12, 12, 12)
-        self._cards_lay.setSpacing(12)
-
         self._build_project_card()
         self._build_load_card()
         self._build_project_view_card()
@@ -240,27 +278,34 @@ class HubWindow(QMainWindow):
         self._build_scripts_card()
         self._build_ai_card()
         self._build_tools_card()
-        self._cards_lay.addStretch(1)
 
-        scroll.setWidget(cards_host)
-        left_lay.addWidget(scroll, 1)
-        # 180px sidebar + ~420px cards column so the form rows + button
-        # clusters never get clipped behind the splitter handle.
-        left_host.setMinimumWidth(600)
-        splitter.addWidget(left_host)
-
-        # Right: plot dock
-        self._log = OutputLog()
-        self._err_log = OutputLog()
-        self._plot_dock = PlotDock(self._log, self._err_log)
-        self._plot_dock.setMinimumWidth(420)
-        splitter.addWidget(self._plot_dock)
-
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([620, 730])
-
-        outer.addWidget(splitter, 1)
+        self._panels: dict[str, TilePanel] = {}
+        panel_map = {
+            "project": (640, ["project", "projectview"]),
+            "experiment": (460, ["load"]),
+            "analyze": (460, ["analyze"]),
+            "plots": (500, ["plots"]),
+            "scripts": (460, ["scripts"]),
+            "ai": (440, ["ai"]),
+            "tools": (440, ["tools"]),
+        }
+        for key, (width, card_keys) in panel_map.items():
+            panel = TilePanel(key, width, parent=central)
+            for card_key in card_keys:
+                card = self._cards.get(card_key)
+                if card is not None:
+                    panel.add_card(card)
+            panel.finish()
+            self._panels[key] = panel
+        self._open_panel_key: str | None = None
+        ## App-level filter: a click outside the open panel (and outside the
+        ## strip) closes it; the click itself is NOT swallowed. A dedicated
+        ## QObject (never the window itself) — see ClickAwayFilter.
+        self._click_filter = ClickAwayFilter(self)
+        QApplication.instance().installEventFilter(self._click_filter)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self,
+                  self._close_panel,
+                  context=Qt.ShortcutContext.WindowShortcut)
 
         # Progress bar (hidden until a task runs)
         self._progress = QProgressBar()
@@ -270,9 +315,11 @@ class HubWindow(QMainWindow):
         outer.addWidget(self._progress)
 
         self._log.append_line(
-            "Welcome to PyTrackingAnalysis. Pick a project directory under "
-            "Project → Load, then click 'Load experiment'."
+            "Welcome to PyTrackingAnalysis. Click the Project tile to open "
+            "or create a Project, or the Experiment tile to load a single "
+            "experiment."
         )
+        self._refresh_tiles()
 
     # ---------------- Project card ----------------
 
@@ -426,6 +473,7 @@ class HubWindow(QMainWindow):
             "the project's tracking_config.yaml."
         )
         self._facet_checkbox.toggled.connect(self._on_facet_toggled)
+        self._facet_checkbox.toggled.connect(lambda _on: self._refresh_tiles())
         card.add_body(self._facet_checkbox)
 
         # Tracks (button, base_label) for any button whose text gets the
@@ -1100,16 +1148,186 @@ class HubWindow(QMainWindow):
     # Behaviour — project dir / config
     # ==================================================================
 
-    def _scroll_to_card(self, key: str) -> None:
-        card = self._cards.get(key)
-        if card is None:
+    # ---------------- Tile strip & panels (ADR-0007) ----------------
+
+    _SIDEBAR_TO_PANEL = {"load": "experiment"}
+
+    def _open_panel_for_sidebar(self, key: str) -> None:
+        self._open_panel(self._SIDEBAR_TO_PANEL.get(key, key))
+
+    def _toggle_panel(self, key: str) -> None:
+        if self._open_panel_key == key:
+            self._close_panel()
+        else:
+            self._open_panel(key)
+
+    def _open_panel(self, key: str) -> None:
+        panel = self._panels.get(key)
+        if panel is None:
             return
-        scroll = card.parent()
-        # Walk up to the QScrollArea
-        while scroll is not None and not hasattr(scroll, "ensureWidgetVisible"):
-            scroll = scroll.parent()
-        if scroll is not None:
-            scroll.ensureWidgetVisible(card, 0, 20)
+        self._close_panel()
+        central = self.centralWidget()
+        strip_bottom = self._strip.mapTo(central, self._strip.rect().bottomLeft()).y()
+        tile = self._tiles.get(key)
+        if tile is not None:
+            x = tile.mapTo(central, tile.rect().bottomLeft()).x()
+            tile.set_active(True)
+        else:
+            ## Sidebar-only panels (Tools) anchor to the strip's right edge.
+            x = central.width() - 8 - 440
+        panel.open_at(x, strip_bottom + 4, central.height() - 8)
+        self._open_panel_key = key
+
+    def _close_panel(self) -> None:
+        if self._open_panel_key is None:
+            return
+        panel = self._panels.get(self._open_panel_key)
+        if panel is not None:
+            panel.hide()
+        tile = self._tiles.get(self._open_panel_key)
+        if tile is not None:
+            tile.set_active(False)
+        self._open_panel_key = None
+
+    def _handle_click_away(self, event) -> None:
+        ## Click-away closes the open panel. The click itself still lands.
+        if getattr(self, "_open_panel_key", None) is None:
+            return
+        panel = self._panels.get(self._open_panel_key)
+        if panel is None or not panel.isVisible():
+            return
+        widget = QApplication.widgetAt(event.globalPosition().toPoint())
+        probe = widget
+        while probe is not None:
+            if probe is panel or probe is self._strip:
+                return
+            probe = probe.parentWidget()
+        self._close_panel()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        ## Keep an open panel anchored when the window resizes.
+        if getattr(self, "_open_panel_key", None) is not None:
+            key = self._open_panel_key
+            self._open_panel_key = None
+            self._open_panel(key)
+
+    def _refresh_tiles(self) -> None:
+        """Live tile summaries — cheap sources only (no data loads).
+
+        Runs inside Qt slots (task-finished, checkbox toggles), where an
+        uncaught exception is escalated to qFatal by PyQt6 — so the whole
+        refresh is best-effort: a summary that cannot be computed leaves the
+        tile as it was, never kills the app.
+        """
+        try:
+            self._refresh_tiles_inner()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _refresh_tiles_inner(self) -> None:
+        from .. import project as prj
+
+        tiles = getattr(self, "_tiles", None)
+        if not tiles:
+            return
+
+        # Project tile: the effective project (enclosing one when a
+        # replicate is loaded).
+        root = self._effective_project_dir()
+        tile = tiles["project"]
+        if root is not None:
+            try:
+                project = prj.Project(str(root))
+                analyzed = sum(
+                    1 for n in project.experiment_names
+                    if project.experiment_status(n)["analyzed"])
+                tile.set_summary([
+                    project.name,
+                    f"{len(project.experiment_names)} replicates · "
+                    f"{analyzed} analyzed"])
+                tile.set_dimmed(False)
+            except Exception as err:  # noqa: BLE001
+                tile.set_summary(["project error", str(err)])
+                tile.set_dimmed(False)
+        elif self._project_dir is not None:
+            tile.set_summary([Path(self._project_dir).name,
+                              "standalone experiment"])
+            tile.set_dimmed(True)
+        else:
+            tile.set_summary(["no project", "open or create one"])
+            tile.set_dimmed(True)
+
+        # Experiment tile: the loaded experiment's headline numbers, from
+        # attributes computed at load time (never a fresh summarize here).
+        tile = tiles["experiment"]
+        if self._exp is not None:
+            name = str(getattr(getattr(self._exp, "arena", None),
+                               "experiment_name", "loaded"))
+            flagged = getattr(self._exp, "flagged_flies", None)
+            excluded = getattr(self._exp, "excluded_flies", None)
+            bits = []
+            if flagged is not None and flagged.attrs.get("n_total"):
+                bits.append(f"{flagged.attrs['n_total']} flies")
+            if excluded is not None:
+                bits.append(f"{len(excluded)} excl")
+            if flagged is not None:
+                bits.append(f"{len(flagged)} flagged")
+            tile.set_summary([name, " · ".join(bits) or "loaded"])
+            tile.set_dimmed(False)
+        elif root is not None:
+            tile.set_summary(["not loaded", "double-click a replicate"])
+            tile.set_dimmed(True)
+        elif self._project_dir is not None:
+            tile.set_summary([Path(self._project_dir).name,
+                              "click Load experiment"])
+            tile.set_dimmed(True)
+        else:
+            tile.set_summary(["no experiment", "load one to analyze"])
+            tile.set_dimmed(True)
+
+        # Analyze tile.
+        tile = tiles["analyze"]
+        if self._exp is None:
+            tile.set_summary(["load an experiment first"])
+            tile.set_dimmed(True)
+        else:
+            facet = "faceted" if self._facet_checkbox.isChecked() else "flat"
+            tile.set_summary(["ready", facet])
+            tile.set_dimmed(False)
+
+        # Plots tile.
+        tile = tiles["plots"]
+        mode = ("interactive" if self._interactive_checkbox.isChecked()
+                else "static PNGs")
+        if self._exp is None:
+            tile.set_summary([mode, "load an experiment first"])
+            tile.set_dimmed(True)
+        else:
+            tile.set_summary([mode, f"{len(self._plot_buttons)} plot types"])
+            tile.set_dimmed(False)
+
+        # Scripts tile.
+        tile = tiles["scripts"]
+        n = len(self._scripts)
+        selected = self._scripts_combo.currentText().strip()
+        if n:
+            tile.set_summary([f"{n} script(s)", selected or "—"])
+            tile.set_dimmed(False)
+        else:
+            tile.set_summary(["no scripts", "author in Script Editor"])
+            tile.set_dimmed(True)
+
+        # AI tile.
+        tile = tiles["ai"]
+        if self._ai_available:
+            from ..ai import available_providers
+            names = ", ".join(p.provider_name for p in available_providers())
+            tile.set_summary(["ready", names])
+            tile.set_dimmed(False)
+        else:
+            tile.set_summary(["no API key", "add one to .env"])
+            tile.set_dimmed(True)
 
     def _pick_project_dir(self) -> None:
         start = str(self._project_dir) if self._project_dir else os.getcwd()
@@ -1166,6 +1384,7 @@ class HubWindow(QMainWindow):
         self._log.append_line(f"Project: {p}")
         self._on_config_changed()
         self._refresh_project_view()
+        self._refresh_tiles()
 
     def _reload_project(self) -> None:
         if self._project_dir:
@@ -1408,6 +1627,7 @@ class HubWindow(QMainWindow):
         # Sync labels after both rebuild + checkbox state changes.
         self._refresh_dynamic_labels()
 
+        self._refresh_tiles()
     def _rebuild_plot_buttons(self) -> None:
         # Clear existing plot buttons.
         for btn in self._plot_buttons:
@@ -1633,6 +1853,9 @@ class HubWindow(QMainWindow):
         on_fail: Callable[[str], None],
         surface_artifacts: bool = True,
     ) -> None:
+        ## Launching a task closes any open panel so the streaming output is
+        ## immediately visible (ADR-0007).
+        self._close_panel()
         if self._worker is not None and self._worker.isRunning():
             self._warn("Another task is already running.")
             return
@@ -1749,6 +1972,7 @@ class HubWindow(QMainWindow):
         ## status table refreshes here — the one GUI-thread point every task
         ## passes through.
         self._refresh_project_view()
+        self._refresh_tiles()
 
     def _set_busy(self, busy: bool) -> None:
         for btn in (
@@ -2147,6 +2371,11 @@ class HubWindow(QMainWindow):
     # ==================================================================
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
+        ## The click-away filter was installed app-wide; drop it explicitly
+        ## (its parenting also removes it when the window is destroyed).
+        app = QApplication.instance()
+        if app is not None and getattr(self, "_click_filter", None) is not None:
+            app.removeEventFilter(self._click_filter)
         """Never let a running task's QThread be destroyed with the window.
 
         Qt aborts the process in that case; an analysis is exactly the kind of
