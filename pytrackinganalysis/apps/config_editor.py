@@ -77,6 +77,12 @@ class ConfigEditorWindow(QMainWindow):
             if candidate.exists():
                 self._load_path(candidate)
                 return
+            # An explicit target that doesn't exist yet stays the target: the
+            # cwd/package fallback below would silently open an unrelated
+            # config — and then save the user's edits over that file.
+            self._current_path = candidate
+            self._set_title(candidate)
+            return
 
         for cwd_candidate in (
             Path.cwd() / "tracking_config.yaml",

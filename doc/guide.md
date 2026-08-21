@@ -328,7 +328,9 @@ There are three equally valid ways to create one:
 2. **Copy an existing config** — copy a working `tracking_config.yaml` into
    the new experiment directory and edit it.  The Hub's **Batch tools → Copy
    YAML** can push one file into every sub-directory of a parent; inside a
-   Project, **Add experiment…** scaffolds a design-conformant config for you.
+   Project, **Experiment configs…** scaffolds a design-conformant config for
+   every experiment directory that lacks one (and **Add experiment…** does it
+   for a directory that does not exist yet).
 3. **Write it by hand** — any text editor works; the file is plain YAML.
 
 Rules that make a file *valid*:
@@ -750,7 +752,11 @@ Type) — above the card entries:
 - **Project** — pick the directory (an experiment directory *or* a Project;
   the text box shows just the folder name to stay readable; hover it for the
   full path), choose a YAML config, launch the Config Editor or QC Viewer in
-  their own windows, and **Reload** to re-scan the folder.  When the loaded
+  their own windows, and **Reload** to re-scan the folder.  A **Project**
+  directory has no `tracking_config.yaml` of its own — its configs live one
+  level down, one per experiment directory — so the **Config** selector is
+  empty and the two launchers are disabled while one is selected; use
+  **Experiment configs…** in the Project view instead.  When the loaded
   experiment is a replicate inside a Project, an **Up to project** button
   returns to the enclosing Project view.
 - **Load** — **Load experiment** loads and caches the Experiment so
@@ -758,13 +764,15 @@ Type) — above the card entries:
   edits a `project.yaml` for the selected directory.
 - **Project view** (shown only when the selected directory is a Project) —
   the main working surface for replicates: a table with per-replicate status
-  (**Experiment, Flies, Excluded, Flagged, Report**; double-click a row to
-  open that replicate), plus the project-level actions — **Run all
+  (**Experiment, Config, Flies, Excluded, Flagged, Report**; double-click a
+  row to open that replicate), plus **Experiment configs…** and
+  **Add experiment…** (below), the project-level actions — **Run all
   experiments**, **Build combined analysis**, **Project report**,
-  **Plot editor…**, **AI narrative…**, **Add experiment…** (scaffolds a new
-  replicate config from the project design) — and a **Script** picker with
+  **Plot editor…**, **AI narrative…** — and a **Script** picker with
   **Run script** / **Edit scripts…** (§8.3; the built-in **Standard
-  pipeline** is always available).
+  pipeline** is always available).  Subdirectories that hold no
+  `tracking_config.yaml` are listed too, in italics with **Config: missing**
+  — they are not replicates until they have one.
 - **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** for
   the loaded experiment.  All tasks run on a background thread; stdout/stderr
   streams to the **Output** tab in real time.
@@ -1115,6 +1123,11 @@ project-level publication figures, and builds a Project Report.
 - **Existing replicates / old batch parent** — run **Create project** on the
   parent: the dialog infers the design from the first replicate and writes
   `project.yaml`; nothing inside the replicate directories changes.
+- **Existing folders without configs** — the subdirectories are listed in the
+  replicate table as **Config: missing**.  **Experiment configs…** gives each
+  one a `tracking_config.yaml` from the project design (**Create all
+  missing** does the lot), then opens any of them in the Config Editor to
+  assign that recording's regions.  Existing configs are never overwritten.
 
 Opening a Project **hard-validates** every replicate's resolved config
 against the design and refuses to load on a mismatch, naming the offending

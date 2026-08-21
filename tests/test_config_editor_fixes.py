@@ -413,3 +413,16 @@ def test_a_renamed_region_does_not_inherit_the_old_one_s_extra_keys(editor, conf
     regions = yaml.safe_load(config_path.read_text())["tracking_regions"]
     assert "T_0" not in regions
     assert "notes" not in regions["T_9"]
+
+
+def test_a_missing_target_does_not_open_an_unrelated_config(qapp, tmp_path, dialogs):
+    """Opening the editor on a directory with no config used to fall through
+    to the cwd / package ``tracking_config.yaml`` — the next Save then wrote
+    the user's edits over that unrelated file."""
+    from pytrackinganalysis.apps.config_editor import ConfigEditorWindow
+
+    empty = tmp_path / "NoConfigYet"
+    empty.mkdir()
+    win = ConfigEditorWindow(str(empty))
+    assert win._current_path == empty / "tracking_config.yaml"
+    win.close()

@@ -20,8 +20,16 @@ import pandas as pd
 import yaml
 
 from . import experiment_types, windowing
+from .io_utils import atomic_write_text
 
 PROJECT_FILENAME = "project.yaml"
+#: The per-Experiment config. A Project never has one of its own: the shared
+#: design lives in ``project.yaml`` and each replicate carries this file.
+CONFIG_FILENAME = "tracking_config.yaml"
+
+#: Subdirectories of a Project root that are its own outputs, never
+#: candidate replicates.
+_PROJECT_OUTPUT_DIRS = {"analysis", "figures", "qc"}
 
 
 def is_project_dir(path) -> bool:
@@ -29,7 +37,7 @@ def is_project_dir(path) -> bool:
 
 
 def is_experiment_dir(path) -> bool:
-    return os.path.isfile(os.path.join(str(path), "tracking_config.yaml"))
+    return os.path.isfile(os.path.join(str(path), CONFIG_FILENAME))
 
 
 def create_project_file(project_dir, name: str | None = None,
@@ -109,7 +117,7 @@ class Project:
             sub = os.path.join(self.project_directory, entry)
             if os.path.isdir(sub) and is_experiment_dir(sub):
                 self.experiment_names.append(entry)
-                with open(os.path.join(sub, "tracking_config.yaml"),
+                with open(os.path.join(sub, CONFIG_FILENAME),
                           encoding="utf-8") as handle:
                     self.configs[entry] = yaml.safe_load(handle) or {}
         if not self.experiment_names and not self.design:
@@ -117,7 +125,7 @@ class Project:
             ## was just created; replicates get scaffolded from the design.
             raise ValueError(
                 f"Project '{self.name}' has no experiments: no subdirectory "
-                f"of {self.project_directory} contains a tracking_config.yaml")
+                f"of {self.project_directory} contains a {CONFIG_FILENAME}")
 
         #: Project Scripts and centrally-held Experiment Scripts (ADR-0006).
         ## Lenient here: a malformed block must not block loading the Project
@@ -342,6 +350,47 @@ class Project:
                 n: dict(existing.get(n) or {"alias": ""})
                 for n in counting_names}
         return cfg
+
+    def unconfigured_dirs(self) -> list[str]:
+        """Immediate subdirectories that are not Experiments yet — folders
+        with no ``tracking_config.yaml``.
+
+        Discovery is by config file, so a directory dropped into the Project
+        (or wrapped by creating the project.yaml around it) is invisible to
+        :attr:`experiment_names` until it has one. These are the candidates
+        :meth:`scaffold_replicate` gives a config to.
+        """
+        pending: list[str] = []
+        for entry in sorted(os.listdir(self.project_directory)):
+            sub = os.path.join(self.project_directory, entry)
+            if not os.path.isdir(sub) or is_experiment_dir(sub):
+                continue
+            if entry.lower() in _PROJECT_OUTPUT_DIRS \
+                    or entry.startswith((".", "_")):
+                continue
+            pending.append(entry)
+        return pending
+
+    def scaffold_replicate(self, name: str) -> str:
+        """Give replicate *name* a design-conformant ``tracking_config.yaml``
+        and return its path.
+
+        Creates the directory and its ``data/`` folder when missing, so this
+        serves both "add a new replicate" and "adopt a folder that was already
+        sitting in the Project". Never overwrites an existing config — a
+        replicate's region assignments are hand-made.
+        """
+        directory = self.experiment_dir(name)
+        config_path = os.path.join(directory, CONFIG_FILENAME)
+        if os.path.isfile(config_path):
+            raise FileExistsError(f"'{name}' already has a {CONFIG_FILENAME}")
+        os.makedirs(os.path.join(directory, "data"), exist_ok=True)
+        config = self.scaffold_replicate_config()
+        atomic_write_text(
+            config_path,
+            lambda handle: yaml.safe_dump(config, handle, sort_keys=False,
+                                          allow_unicode=True))
+        return config_path
 
     # ------------------------------------------------------------------
     # Replicate access / status

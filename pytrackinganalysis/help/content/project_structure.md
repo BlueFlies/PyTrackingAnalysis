@@ -43,3 +43,9 @@ Each subfolder needs its own config (and, for Hub batch mode, a script named `ba
 ## Projects (replicates)
 
 A directory with a `project.yaml` is a **Project**: its subdirectories holding a `tracking_config.yaml` are replicate experiments of one design (validated to share factors and levels exactly). The Hub shows a Project view with per-replicate status, **Run all experiments**, **Build combined analysis** (pooled CSVs + pooled & mixed-model stats into `analysis/`), and **Project report** (`<project>_report.pdf` with pooled publication figures, the stats tables, a per-replicate summary, and an optional AI narrative).
+
+### Two levels, two files
+
+`project.yaml` holds the shared **design**; each experiment directory holds its own `tracking_config.yaml` (rig, region treatments, aliases). A Project directory therefore has **no** tracking config of its own — the Hub's `Config:` selector is empty while one is open, and its **Edit config…** button is off.
+
+To give the experiment directories their configs, use **Experiment configs…** in the Project card. It lists every subdirectory with its config status, creates the missing ones from the project design (so they validate by construction — you still assign region treatments), and opens an existing one in the Config Editor. Folders without a config are listed in the Experiments table as `missing`; double-clicking one offers to create it. **Add experiment…** does the same for a replicate directory that does not exist yet.

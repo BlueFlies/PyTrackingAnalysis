@@ -225,7 +225,7 @@ def test_hub_project_view_populates_and_drills_in(qapp, tmp_path):
     assert win._exp_table.rowCount() == 2
     assert "Proj" in win._projectview_summary.text()
     assert win._exp_table.item(0, 0).text() == "Rep1"
-    assert win._exp_table.item(0, 1).text() == "12"      # flies
+    assert win._exp_table.item(0, 2).text() == "12"      # flies
 
     # project.yaml / plot_specs.yaml never offered as tracking configs
     combos = [win._config_combo.itemText(i)
@@ -357,15 +357,15 @@ def test_project_table_refreshes_when_a_task_finishes(qapp, tmp_path):
     _make_project(tmp_path, names=("Rep1", "Rep2"), with_analysis=False)
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
-    assert win._exp_table.item(0, 1).text() == "not analyzed"
+    assert win._exp_table.item(0, 2).text() == "not analyzed"
 
     # Simulate what a finished Run Analysis leaves behind for Rep1…
     analysis = tmp_path / "Rep1" / "analysis"
     _summary_frame().to_csv(analysis / "Rec_Summary.csv", index=False)
     # …and the task-finished signal landing on the GUI thread.
     win._on_task_finished(object())
-    assert win._exp_table.item(0, 1).text() == "12"      # flies now counted
-    assert win._exp_table.item(1, 1).text() == "not analyzed"
+    assert win._exp_table.item(0, 2).text() == "12"      # flies now counted
+    assert win._exp_table.item(1, 2).text() == "not analyzed"
     win.close()
 
 
@@ -591,3 +591,144 @@ def test_dialog_design_round_trip_and_inference(qapp, tmp_path):
     assert p2.experiment_names == ["Old1"]
     dlg.close()
     dlg2.close()
+
+
+# ---- per-experiment configs inside a Project -------------------------------
+
+def _project_with_bare_dirs(tmp_path, names=("FirstOne", "SecondOne")):
+    """The common starting point: a Project created around folders that have
+    no tracking_config.yaml yet."""
+    import copy
+    prj.create_project_file(str(tmp_path), "Bare",
+                            design=copy.deepcopy(_DESIGN))
+    for name in names:
+        (tmp_path / name / "data").mkdir(parents=True)
+    (tmp_path / "analysis").mkdir()          # a project output, not a replicate
+    return prj.Project(str(tmp_path))
+
+
+def test_unconfigured_dirs_lists_folders_without_a_config(tmp_path):
+    p = _project_with_bare_dirs(tmp_path)
+    assert p.experiment_names == []          # discovery is by config file
+    assert p.unconfigured_dirs() == ["FirstOne", "SecondOne"]
+
+    # Project outputs and dot/underscore folders are never candidates.
+    (tmp_path / "figures").mkdir()
+    (tmp_path / ".cache").mkdir()
+    assert prj.Project(str(tmp_path)).unconfigured_dirs() == \
+        ["FirstOne", "SecondOne"]
+
+
+def test_scaffold_replicate_adopts_an_existing_folder(tmp_path):
+    p = _project_with_bare_dirs(tmp_path)
+    path = p.scaffold_replicate("FirstOne")
+    assert path == str(tmp_path / "FirstOne" / "tracking_config.yaml")
+    cfg = yaml.safe_load((tmp_path / "FirstOne" /
+                          "tracking_config.yaml").read_text())
+    assert cfg["global"]["experiment_type"] == "Valence"
+    assert cfg["global"]["experimental_design_factors"] == \
+        {"genotype": ["chr", "control"]}
+
+    # The folder is now a replicate, and it validates against the design.
+    p2 = prj.Project(str(tmp_path))
+    assert p2.experiment_names == ["FirstOne"]
+    assert p2.unconfigured_dirs() == ["SecondOne"]
+
+    # A second scaffold never overwrites hand-made region assignments.
+    with pytest.raises(FileExistsError):
+        p2.scaffold_replicate("FirstOne")
+
+    # A name that doesn't exist yet gets the directory and its data/ folder.
+    p2.scaffold_replicate("Third")
+    assert (tmp_path / "Third" / "data").is_dir()
+
+
+def test_hub_project_dir_has_no_config_of_its_own(qapp, tmp_path):
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _project_with_bare_dirs(tmp_path)
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    # The Config selector used to fall back to "tracking_config.yaml" here,
+    # pointing Edit config / Validate YAML at a file a Project never has.
+    assert win._config_combo.count() == 0
+    assert not win._config_combo.isEnabled()
+    assert win._config_path() is None
+    assert not win._btn_edit_cfg.isEnabled()
+    assert "each experiment directory" in win._config_note.text()
+    assert not win._config_note.isHidden()
+
+    # The config-less folders are listed (discovery would hide them) and the
+    # summary says how to fix them.
+    names = [win._exp_table.item(r, 0).text()
+             for r in range(win._exp_table.rowCount())]
+    assert names == ["FirstOne", "SecondOne"]
+    assert win._exp_table.item(0, 1).text() == "missing"
+    assert "without a config" in win._projectview_summary.text()
+    win.close()
+
+
+def test_experiment_configs_dialog_creates_and_edits(qapp, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    _project_with_bare_dirs(tmp_path)
+    monkeypatch.setattr(QMessageBox, "question",
+                        staticmethod(lambda *a, **k:
+                                     QMessageBox.StandardButton.Yes))
+    launched: list = []
+
+    class _Proc:
+        pid = 4321
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(hub_mod.subprocess, "Popen",
+                        lambda args, **k: launched.append(args) or _Proc())
+
+    win = hub_mod.HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+    dlg = hub_mod.ExperimentConfigsDialog(win, win._current_project())
+    assert [dlg._table.item(r, 1).text() for r in range(dlg._table.rowCount())] \
+        == ["missing", "missing"]
+
+    dlg._create_all_missing()
+    for name in ("FirstOne", "SecondOne"):
+        assert (tmp_path / name / "tracking_config.yaml").is_file()
+    # Reloaded in place: both rows now carry a config, and the Project sees
+    # them as replicates (they validate against the design).
+    assert [dlg._table.item(r, 1).text() for r in range(dlg._table.rowCount())] \
+        == ["yes", "yes"]
+    assert prj.Project(str(tmp_path)).experiment_names == \
+        ["FirstOne", "SecondOne"]
+
+    # Editing opens the Config Editor on that experiment directory — not the
+    # project root, which has no config.
+    dlg._table.selectRow(0)
+    dlg._edit_selected()
+    assert launched and launched[0][-1] == str(tmp_path / "FirstOne")
+    dlg.close()
+    win.close()
+
+
+def test_hub_add_experiment_anchors_on_the_project(qapp, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QInputDialog
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    monkeypatch.setattr(QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: ("Rep2", True)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    # With a replicate open, the new replicate belongs to the Project — it
+    # used to be created inside the currently selected directory.
+    win._set_project_dir(str(tmp_path / "Rep1"))
+    win._project_add_experiment()
+    assert (tmp_path / "Rep2" / "tracking_config.yaml").is_file()
+    assert not (tmp_path / "Rep1" / "Rep2").exists()
+    win.close()

@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QPlainTextEdit,
     QPushButton,
@@ -354,12 +355,16 @@ class HubWindow(QMainWindow):
         card.add_body(self._project_summary)
 
         launchers = QHBoxLayout()
-        edit_cfg = ActionButton("Edit config…", Category.TOOLS, icon_name="config")
-        edit_cfg.clicked.connect(lambda: self._launch_subapp("config"))
-        qc_view = ActionButton("QC viewer…", Category.QC, icon_name="qc")
-        qc_view.clicked.connect(lambda: self._launch_subapp("qc"))
-        launchers.addWidget(edit_cfg)
-        launchers.addWidget(qc_view)
+        # Both act on the selected config / its directory, so both are turned
+        # off for a Project directory, which has neither.
+        self._btn_edit_cfg = ActionButton("Edit config…", Category.TOOLS,
+                                          icon_name="config")
+        self._btn_edit_cfg.clicked.connect(lambda: self._launch_subapp("config"))
+        self._btn_qc_view = ActionButton("QC viewer…", Category.QC,
+                                         icon_name="qc")
+        self._btn_qc_view.clicked.connect(lambda: self._launch_subapp("qc"))
+        launchers.addWidget(self._btn_edit_cfg)
+        launchers.addWidget(self._btn_qc_view)
         card.add_body(launchers)
 
         self._cards["project"] = card
@@ -603,9 +608,15 @@ class HubWindow(QMainWindow):
         self._projectview_summary.setWordWrap(True)
         card.add_body(self._projectview_summary)
 
-        self._exp_table = QTableWidget(0, 5)
+        self._exp_table = QTableWidget(0, 6)
         self._exp_table.setHorizontalHeaderLabels(
-            ["Experiment", "Flies", "Excluded", "Flagged", "Report"])
+            ["Experiment", "Config", "Flies", "Excluded", "Flagged", "Report"])
+        # Config sits next to the name: for a folder that has none, it is the
+        # only cell with anything in it. Contents-sized so all six columns fit
+        # the card column without horizontal scrolling.
+        header = self._exp_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._exp_table.verticalHeader().setVisible(False)
         self._exp_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
@@ -618,6 +629,25 @@ class HubWindow(QMainWindow):
                       "experiment.")
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
         card.add_body(hint)
+
+        # Managing the replicate set itself, next to the table it changes.
+        set_row = QHBoxLayout()
+        btn_configs = ActionButton("Experiment configs…", Category.TOOLS,
+                                   icon_name="config")
+        btn_configs.setToolTip(
+            "Create or edit each experiment's tracking_config.yaml. The "
+            "Project's shared design lives in project.yaml; the per-experiment "
+            "configs live one level down, one per experiment directory.")
+        btn_configs.clicked.connect(self._project_experiment_configs)
+        btn_add = ActionButton("Add experiment…", Category.LOAD,
+                               icon_name="project")
+        btn_add.setToolTip(
+            "Create a replicate subdirectory whose config is scaffolded from "
+            "the project design — the shared design holds by construction.")
+        btn_add.clicked.connect(self._project_add_experiment)
+        set_row.addWidget(btn_configs)
+        set_row.addWidget(btn_add)
+        card.add_body(set_row)
 
         row1 = QHBoxLayout()
         btn_run_all = ActionButton("Run all experiments", Category.ANALYZE,
@@ -648,14 +678,8 @@ class HubWindow(QMainWindow):
             "Have an AI provider write the project narrative from the "
             "Combined Analysis; the next Project report embeds it.")
         btn_ai.clicked.connect(self._project_ai_narrative)
-        btn_add = ActionButton("Add experiment…", Category.LOAD,
-                               icon_name="project")
-        btn_add.setToolTip(
-            "Create a replicate subdirectory whose config is copied from the "
-            "first replicate — the shared design holds by construction.")
-        btn_add.clicked.connect(self._project_add_experiment)
         row3.addWidget(btn_ai)
-        row3.addWidget(btn_add)
+        row3.addStretch(1)
         card.add_body(row3)
 
         script_row = QHBoxLayout()
@@ -736,11 +760,19 @@ class HubWindow(QMainWindow):
         current_name = Path(self._project_dir).name if inside else None
         factors = ";  ".join(
             f"{k}: {', '.join(v)}" for k, v in project.design_factors.items())
+        pending = project.unconfigured_dirs()
         lines = [f"<b>{project.name}</b> — "
                  f"{project.experiment_type.display_name}, "
                  f"{len(project.experiment_names)} replicate(s)"]
         if factors:
             lines.append(factors)
+        if pending:
+            ## Discovery is by config file, so these folders would otherwise
+            ## be invisible — the Project would look empty to the user who
+            ## just created it around them.
+            lines.append(
+                f"<i>{len(pending)} folder(s) without a config: "
+                f"{', '.join(pending)} — 'Experiment configs…' creates them.</i>")
         for warning in project.warnings:
             lines.append(f"<i>Note: {warning}</i>")
         self._projectview_summary.setText("<br>".join(lines))
@@ -751,7 +783,7 @@ class HubWindow(QMainWindow):
             row = self._exp_table.rowCount()
             self._exp_table.insertRow(row)
             flies = str(st["flies"]) if st["analyzed"] else "not analyzed"
-            values = [name, flies,
+            values = [name, "yes", flies,
                       str(st["excluded"]) if st["excluded"] is not None else "—",
                       str(st["flagged"]) if st["flagged"] is not None else "—",
                       "yes" if st["report"] else "no"]
@@ -759,6 +791,18 @@ class HubWindow(QMainWindow):
                 self._exp_table.setItem(row, col, QTableWidgetItem(value))
             if current_name is not None and name == current_name:
                 self._exp_table.selectRow(row)
+        for name in pending:
+            row = self._exp_table.rowCount()
+            self._exp_table.insertRow(row)
+            values = [name, "missing", "—", "—", "—", "—"]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                # Italic: a folder without a config is not a replicate yet, so
+                # it must not read as one that simply hasn't been analyzed.
+                font = item.font()
+                font.setItalic(True)
+                item.setFont(font)
+                self._exp_table.setItem(row, col, item)
 
         # Script picker: the built-in Standard pipeline plus authored scripts.
         self._project_script_combo.blockSignals(True)
@@ -809,11 +853,48 @@ class HubWindow(QMainWindow):
             self._set_project_dir(parent)
 
     def _open_selected_replicate(self, item) -> None:
+        from .. import project as prj
+
         name_item = self._exp_table.item(item.row(), 0)
         root = self._effective_project_dir()
         if name_item is None or root is None:
             return
-        self._set_project_dir(root / name_item.text())
+        name = name_item.text()
+        target = Path(root) / name
+        ## A row without a config is a folder, not a replicate: opening it
+        ## would show an experiment card with nothing to load, so offer the
+        ## config the folder is missing instead.
+        if not prj.is_experiment_dir(target):
+            resp = QMessageBox.question(
+                self, "Create config",
+                f"'{name}' has no {_CANONICAL_CONFIG} yet.\n\nCreate one from "
+                "the project design and open it?")
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+            if self._create_replicate_config(name) is None:
+                return
+        self._set_project_dir(target)
+
+    def _create_replicate_config(self, name: str):
+        """Scaffold *name*'s tracking_config.yaml from the project design.
+
+        Returns the written path, or None when it failed (reported to the
+        user). Shared by the table's double-click, Add experiment, and the
+        Experiment configs dialog.
+        """
+        project = self._current_project()
+        if project is None:
+            return None
+        try:
+            path = project.scaffold_replicate(name)
+        except Exception as err:  # noqa: BLE001
+            self._warn(f"Could not create the config for '{name}': {err}")
+            return None
+        self._log.append_line(
+            f"Created {path} from the project design. Assign region "
+            "treatments in the Config Editor and put the DTrack export in "
+            f"{name}/data/.")
+        return path
 
     def _project_run_all(self) -> None:
         project = self._current_project()
@@ -877,6 +958,8 @@ class HubWindow(QMainWindow):
         self._spawn_task("AI narrative", _do)
 
     def _project_add_experiment(self) -> None:
+        from .. import project as prj
+
         project = self._current_project()
         if project is None:
             return
@@ -885,21 +968,21 @@ class HubWindow(QMainWindow):
         name = (name or "").strip()
         if not ok or not name:
             return
-        target = Path(self._project_dir) / name
-        if target.exists():
-            self._warn(f"'{name}' already exists.")
+        ## Anchor on the Project, not the selected directory: with a replicate
+        ## open, the latter nested the new replicate inside it.
+        if prj.is_experiment_dir(project.experiment_dir(name)):
+            self._warn(f"'{name}' already exists and has a config.")
             return
-        import yaml as _yaml
-        cfg = project.scaffold_replicate_config()
-        target.mkdir(parents=True)
-        (target / "data").mkdir()
-        with open(target / "tracking_config.yaml", "w",
-                  encoding="utf-8") as handle:
-            _yaml.safe_dump(cfg, handle, sort_keys=False, allow_unicode=True)
-        self._log.append_line(
-            f"Created replicate '{name}' with the project design. Add the "
-            "DTrack export to its data/ folder and adjust region treatments "
-            "in the Config Editor if needed.")
+        if self._create_replicate_config(name) is None:
+            return
+        self._refresh_project_view()
+
+    def _project_experiment_configs(self) -> None:
+        """Open the per-experiment config manager for the current Project."""
+        project = self._current_project()
+        if project is None:
+            return
+        ExperimentConfigsDialog(self, project).exec()
         self._refresh_project_view()
 
     def _project_run_script(self) -> None:
@@ -1041,6 +1124,8 @@ class HubWindow(QMainWindow):
                 "DTrack export to data/ before loading.")
 
     def _set_project_dir(self, path: str | Path) -> None:
+        from .. import project as prj
+
         p = Path(path).expanduser().resolve()
         self._project_dir = p
         # Show only the folder name; the full path lives in self._project_dir
@@ -1055,13 +1140,21 @@ class HubWindow(QMainWindow):
         _NOT_CONFIGS = {"project.yaml", "plot_specs.yaml"}
         yamls = sorted([f.name for f in p.glob("*.yaml")
                         if f.name not in _NOT_CONFIGS]) if p.exists() else []
-        if not yamls:
-            yamls = ["tracking_config.yaml"]
+        ## A Project has no tracking config of its own — each Experiment
+        ## directory carries one. Falling back to the canonical name here (as
+        ## this did unconditionally) pointed Edit config, Validate YAML and the
+        ## Scripts card at a file that should never exist in a Project root.
+        if not yamls and not prj.is_project_dir(p):
+            yamls = [_CANONICAL_CONFIG]
         for name in yamls:
             self._config_combo.addItem(name)
-        if "tracking_config.yaml" in yamls:
-            self._config_combo.setCurrentText("tracking_config.yaml")
+        if _CANONICAL_CONFIG in yamls:
+            self._config_combo.setCurrentText(_CANONICAL_CONFIG)
         self._config_combo.blockSignals(False)
+        has_config = bool(yamls)
+        self._config_combo.setEnabled(has_config)
+        self._btn_edit_cfg.setEnabled(has_config)
+        self._btn_qc_view.setEnabled(has_config)
         self._log.append_line(f"Project: {p}")
         self._on_config_changed()
         self._refresh_project_view()
@@ -1075,9 +1168,12 @@ class HubWindow(QMainWindow):
     # ==================================================================
 
     def _config_path(self) -> Path | None:
-        if self._project_dir is None:
+        """The selected tracking config, or None when the directory has none
+        (a Project root — its configs live one level down)."""
+        name = self._config_combo.currentText().strip()
+        if self._project_dir is None or not name:
             return None
-        return self._project_dir / self._config_combo.currentText()
+        return self._project_dir / name
 
     def _uses_canonical_config(self) -> bool:
         """True when the selected config is the one an Experiment would read."""
@@ -1091,7 +1187,16 @@ class HubWindow(QMainWindow):
         unconditionally, so the Hub validated one file and analysed another.
         The note stays because loading a non-default config is worth seeing.
         """
-        if self._uses_canonical_config():
+        if not self._config_combo.currentText().strip():
+            ## An empty selector means a Project directory: say where its
+            ## configs actually live rather than leaving a blank row.
+            self._config_note.setText(
+                f"A Project has no {_CANONICAL_CONFIG} of its own — each "
+                "experiment directory carries one. Use 'Experiment configs…' "
+                "in the Project card to create or edit them."
+            )
+            self._config_note.setVisible(True)
+        elif self._uses_canonical_config():
             self._config_note.setVisible(False)
         else:
             self._config_note.setText(
@@ -1673,7 +1778,12 @@ class HubWindow(QMainWindow):
     def _validate_yaml(self) -> None:
         if not self._project_dir:
             return
-        path = self._project_dir / self._config_combo.currentText()
+        path = self._config_path()
+        if path is None:
+            self._log_issue(
+                "[validate] No tracking config here — a Project's configs live "
+                "in its experiment directories ('Experiment configs…').")
+            return
         # Parsing cleanly is not the same as being usable — check the semantics
         # too, so an unknown rig or a missing movie calibration is reported here
         # rather than surfacing mid-analysis or silently falling back to defaults.
@@ -2445,6 +2555,161 @@ class ProjectInfoDialog(QDialog):
             return
         self.saved_dir = directory
         self.accept()
+
+
+class ExperimentConfigsDialog(QDialog):
+    """Create or edit the per-experiment ``tracking_config.yaml`` files of a
+    Project.
+
+    ``project.yaml`` holds the shared design; the tracking configs live one
+    level down, one per experiment directory — so a Project directory itself
+    has no config to select. This is where those files are made: every
+    immediate subdirectory is listed with its config status, missing ones are
+    scaffolded from the design (conformant by construction), and existing ones
+    open in the Config Editor for that experiment.
+    """
+
+    def __init__(self, hub: "HubWindow", project) -> None:
+        super().__init__(hub)
+        self._hub = hub
+        self._project = project
+        self._rows: list[tuple[str, bool]] = []   # (directory name, has config)
+        self.setWindowTitle("PyTrackingAnalysis — Experiment configs")
+        self.setMinimumWidth(560)
+
+        outer = QVBoxLayout(self)
+        intro = QLabel(
+            f"Each experiment directory in <b>{project.name}</b> carries its "
+            f"own {_CANONICAL_CONFIG} — region treatments and rig are "
+            "per-recording. Missing ones are created from the project design "
+            f"({project.experiment_type.display_name}), so they match it by "
+            "construction; edit one to assign its regions."
+        )
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        outer.addWidget(intro)
+
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(
+            ["Directory", "Config", "Data files"])
+        self._table.verticalHeader().setVisible(False)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows)
+        self._table.itemSelectionChanged.connect(self._sync_buttons)
+        self._table.itemDoubleClicked.connect(self._on_double_click)
+        outer.addWidget(self._table)
+
+        row = QHBoxLayout()
+        self._btn_create = ActionButton("Create config", Category.TOOLS,
+                                        icon_name="new")
+        self._btn_create.clicked.connect(self._create_selected)
+        self._btn_create_all = ActionButton("Create all missing",
+                                            Category.TOOLS, icon_name="batch")
+        self._btn_create_all.clicked.connect(self._create_all_missing)
+        self._btn_edit = ActionButton("Edit config…", Category.TOOLS,
+                                      icon_name="config")
+        self._btn_edit.setToolTip(
+            "Open this experiment's config in the Config Editor.")
+        self._btn_edit.clicked.connect(self._edit_selected)
+        row.addWidget(self._btn_create)
+        row.addWidget(self._btn_create_all)
+        row.addWidget(self._btn_edit)
+        outer.addLayout(row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+
+        self._reload()
+
+    # ---- table ------------------------------------------------------------
+
+    def _reload(self) -> None:
+        ## Re-read the Project: a config written a moment ago turns a listed
+        ## folder into a replicate, and the design validation runs again.
+        project = self._hub._current_project()
+        if project is not None:
+            self._project = project
+        project = self._project
+        root = Path(project.project_directory)
+
+        self._rows = [(name, True) for name in project.experiment_names]
+        self._rows += [(name, False) for name in project.unconfigured_dirs()]
+        self._rows.sort(key=lambda item: item[0].lower())
+
+        self._table.setRowCount(0)
+        for name, has_config in self._rows:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            data = root / name / "data"
+            try:
+                count = sum(1 for entry in data.iterdir() if entry.is_file())
+                files = f"{count} file(s)" if count else "empty"
+            except OSError:
+                files = "no data/ folder"
+            for col, value in enumerate(
+                    (name, "yes" if has_config else "missing", files)):
+                self._table.setItem(r, col, QTableWidgetItem(value))
+        if self._rows:
+            self._table.selectRow(0)
+        self._sync_buttons()
+
+    def _selected(self) -> tuple[str, bool] | None:
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        if len(rows) != 1:
+            return None
+        row = rows.pop()
+        return self._rows[row] if 0 <= row < len(self._rows) else None
+
+    def _sync_buttons(self) -> None:
+        selected = self._selected()
+        self._btn_create.setEnabled(selected is not None and not selected[1])
+        self._btn_edit.setEnabled(selected is not None and selected[1])
+        self._btn_create_all.setEnabled(
+            any(not has_config for _name, has_config in self._rows))
+
+    # ---- actions ----------------------------------------------------------
+
+    def _on_double_click(self, _item) -> None:
+        selected = self._selected()
+        if selected is None:
+            return
+        if selected[1]:
+            self._edit_selected()
+        else:
+            self._create_selected()
+
+    def _create_selected(self) -> None:
+        selected = self._selected()
+        if selected is None or selected[1]:
+            return
+        if self._hub._create_replicate_config(selected[0]) is not None:
+            self._reload()
+
+    def _create_all_missing(self) -> None:
+        missing = [name for name, has_config in self._rows if not has_config]
+        if not missing:
+            return
+        resp = QMessageBox.question(
+            self, self.windowTitle(),
+            f"Create a {_CANONICAL_CONFIG} from the project design in "
+            f"{len(missing)} directory(ies)?\n\n" + ", ".join(missing))
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        for name in missing:
+            self._hub._create_replicate_config(name)
+        self._reload()
+
+    def _edit_selected(self) -> None:
+        selected = self._selected()
+        if selected is None or not selected[1]:
+            return
+        self._hub._launch_subapp(
+            "config", Path(self._project.project_directory) / selected[0])
 
 
 class BatchToolsDialog(QDialog):
