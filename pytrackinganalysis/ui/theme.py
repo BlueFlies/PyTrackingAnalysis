@@ -80,80 +80,94 @@ def _resolve_auto() -> Literal["light", "dark"]:
         return "light"
 
 
+def surface_colors() -> dict:
+    """Explicit surface colors for the resolved theme.
+
+    qdarktheme's stylesheet leaves the Window/Base/Mid/Midlight palette
+    roles at the platform's LIGHT values, so any of our styles written as
+    ``palette(base)`` etc. rendered light chips with unreadable text on the
+    dark UI. Every custom surface resolves through this table instead."""
+    if _resolved_mode == "dark":
+        return {"base": "#1f2226", "band": "#26292d", "border": "#3f444b",
+                "hover": "#33383e", "text": "#e1e5e9", "muted": "#8b949e"}
+    return {"base": "#ffffff", "band": "#f4f5f7", "border": "#c4c8cc",
+            "hover": "#e4e7ea", "text": "#0f172a", "muted": "#64748b"}
+
+
 def _additional_qss() -> str:
     """QSS appended to qdarktheme's stylesheet for PyTrackingAnalysis widgets."""
-    return """
-    QPushButton#PtrackSidebarItem {
+    c = surface_colors()
+    return f"""
+    QPushButton#PtrackSidebarItem {{
         text-align: left;
         padding: 8px 12px;
         border: none;
         border-radius: 6px;
         font-weight: 500;
-    }
-    QPushButton#PtrackSidebarItem:hover {
-        background: palette(midlight);
-    }
-    QPushButton#PtrackSidebarItem:checked {
+    }}
+    QPushButton#PtrackSidebarItem:hover {{
+        background: {c["hover"]};
+    }}
+    QPushButton#PtrackSidebarItem:checked {{
         background: palette(highlight);
         color: palette(highlighted-text);
-    }
-    QFrame#PtrackCard {
+    }}
+    QFrame#PtrackCard {{
         border-radius: 10px;
-        background: palette(base);
-    }
-    QLabel#PtrackCardTitle {
+        background: {c["base"]};
+    }}
+    QLabel#PtrackCardTitle {{
         font-size: 13pt;
         font-weight: 600;
         padding-bottom: 2px;
-    }
-    QLabel#PtrackCardSubtitle {
-        color: palette(mid);
+        color: {c["text"]};
+    }}
+    QLabel#PtrackCardSubtitle {{
+        color: {c["muted"]};
         font-size: 9pt;
-    }
-    QLabel#PtrackSectionDivider {
-        color: palette(mid);
+    }}
+    QLabel#PtrackSectionDivider {{
+        color: {c["muted"]};
         font-size: 10px;
         padding-top: 6px;
-    }
-    QFrame#PtrackTopBar {
-        background: palette(base);
-        border-bottom: 1px solid palette(midlight);
-    }
-    QLabel#PtrackAppTitle {
+    }}
+    QFrame#PtrackTopBar {{
+        background: {c["base"]};
+        border-bottom: 1px solid {c["border"]};
+    }}
+    QLabel#PtrackAppTitle {{
         font-size: 14pt;
         font-weight: 600;
-    }
-    QPlainTextEdit#PtrackLog {
+        color: {c["text"]};
+    }}
+    QPlainTextEdit#PtrackLog {{
         font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
         font-size: 10pt;
-    }
+    }}
     /* Make dropdowns embedded in tables blend with the table cell background
        and preserve the cell grid lines on the right/bottom edges. */
-    QTableWidget QComboBox {
-        background: palette(base);
-        color: palette(text);
+    QTableWidget QComboBox {{
+        background: {c["base"]};
+        color: {c["text"]};
         border-top: 1px solid transparent;
         border-left: 1px solid transparent;
-        border-right: 1px solid palette(mid);
-        border-bottom: 1px solid palette(mid);
+        border-right: 1px solid {c["border"]};
+        border-bottom: 1px solid {c["border"]};
         padding: 2px 4px;
-    }
-    QTableWidget QComboBox:hover {
-        border-top: 1px solid palette(midlight);
-        border-left: 1px solid palette(midlight);
-        border-right: 1px solid palette(midlight);
-        border-bottom: 1px solid palette(midlight);
-    }
-    QTableWidget QComboBox::drop-down {
+    }}
+    QTableWidget QComboBox:hover {{
+        border: 1px solid {c["border"]};
+    }}
+    QTableWidget QComboBox::drop-down {{
         border: none;
         width: 16px;
-    }
-    QTableWidget QComboBox QAbstractItemView {
-        background: palette(base);
-        color: palette(text);
+    }}
+    QTableWidget QComboBox QAbstractItemView {{
+        background: {c["base"]};
+        color: {c["text"]};
         selection-background-color: palette(highlight);
         selection-color: palette(highlighted-text);
-    }
+    }}
     """
 
 

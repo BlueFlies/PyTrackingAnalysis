@@ -22,11 +22,21 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..ui import Category, category_color, icon
+from ..ui import Category, category_color, icon, resolved_mode
+
+
+def chrome_colors() -> dict:
+    """Surface colors for the strip, tiles, and panels — one source of truth
+    with the app theme (see ``ui.theme.surface_colors``)."""
+    from ..ui.theme import surface_colors
+
+    c = surface_colors()
+    return {"band": c["band"], "chip": c["base"], "border": c["border"],
+            "text": c["text"], "muted": c["muted"]}
 
 
 class StatusTile(QFrame):
-    """One strip tile: icon + title row and up to three live summary lines.
+    """One strip tile: icon + title row and up to two live summary lines.
 
     Tiles never hide or move (ADR-0007): an inapplicable tile is *dimmed*
     but stays clickable — its panel holds the control that fixes the
@@ -46,8 +56,13 @@ class StatusTile(QFrame):
         self._dimmed = False
         self._active = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setFixedSize(196, 84)
+        ## A width RANGE, not a fixed size: six fixed 196px tiles forced a
+        ## 1416px minimum window that no 1366x768 laptop could show.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred,
+                           QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(118)
+        self.setMaximumWidth(196)
+        self.setFixedHeight(84)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
@@ -76,13 +91,15 @@ class StatusTile(QFrame):
     # ------------------------------------------------------------------
 
     def set_summary(self, lines: list[str]) -> None:
+        full = [str(line) for line in lines]
         clipped = []
-        for line in lines[:2]:
-            line = str(line)
+        for line in full[:2]:
             if len(line) > self._MAX_LINE_CHARS:
                 line = line[: self._MAX_LINE_CHARS - 1] + "…"
             clipped.append(line)
         self._summary_lbl.setText("\n".join(clipped))
+        ## The untruncated summary is always one hover away.
+        self.setToolTip("\n".join(full))
 
     def summary_text(self) -> str:
         return self._summary_lbl.text()
@@ -100,13 +117,18 @@ class StatusTile(QFrame):
             self._active = active
             self._restyle()
 
+    def restyle(self) -> None:
+        """Public re-skin hook — the Hub calls it on theme toggles."""
+        self._restyle()
+
     def _restyle(self) -> None:
+        chrome = chrome_colors()
         color = category_color(self._category)
         border = f"2px solid {color}" if self._active \
-            else "1px solid palette(mid)"
-        text = "palette(mid)" if self._dimmed else "palette(text)"
+            else f"1px solid {chrome['border']}"
+        text = chrome["muted"] if self._dimmed else chrome["text"]
         self.setStyleSheet(
-            "StatusTile { background: palette(base); "
+            f"StatusTile {{ background: {chrome['chip']}; "
             f"border: {border}; border-radius: 8px; }} "
             f"QLabel {{ color: {text}; background: transparent; "
             "border: none; }")
@@ -132,10 +154,8 @@ class TilePanel(QFrame):
         self.key = key
         self._panel_width = width
         self.setObjectName("TilePanel")
-        self.setStyleSheet(
-            "QFrame#TilePanel { background: palette(window); "
-            "border: 1px solid palette(mid); border-radius: 10px; }")
         self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.restyle()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -152,6 +172,12 @@ class TilePanel(QFrame):
         outer.addWidget(self._scroll)
         self.hide()
 
+    def restyle(self) -> None:
+        chrome = chrome_colors()
+        self.setStyleSheet(
+            f"QFrame#TilePanel {{ background: {chrome['band']}; "
+            f"border: 1px solid {chrome['border']}; border-radius: 10px; }}")
+
     def add_card(self, card: QWidget) -> None:
         """Reparent an existing Card into this panel (its handlers, child
         widgets, and findChildren-visibility all come along)."""
@@ -166,7 +192,14 @@ class TilePanel(QFrame):
         panel never runs past *max_bottom* or the parent's right edge."""
         parent = self.parentWidget()
         width = min(self._panel_width, parent.width() - 16)
-        hint = self._scroll.widget().sizeHint().height() + 24
+        ## Recompute the content hint: widgets rebuilt while the panel was
+        ## hidden (e.g. plot buttons after a load) leave a stale cached hint,
+        ## which opened the panel far too short on its first click.
+        host = self._scroll.widget()
+        if host.layout() is not None:
+            host.layout().invalidate()
+            host.layout().activate()
+        hint = host.sizeHint().height() + 24
         height = max(120, min(hint, max_bottom - y - 8))
         x = max(8, min(x, parent.width() - width - 8))
         self.setGeometry(x, y, width, height)

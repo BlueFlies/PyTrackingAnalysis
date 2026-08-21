@@ -293,7 +293,7 @@ class ActionButton(QPushButton):
             f"  color: {fg};"
             f"}}"
             f"QPushButton:hover {{ background: {col}; color: white; }}"
-            f"QPushButton:disabled {{ color: palette(mid); border-left-color: palette(mid); }}"
+            f"QPushButton:disabled {{ color: palette(mid); border-left-color: palette(mid); background: palette(window); }}"
         )
 
 

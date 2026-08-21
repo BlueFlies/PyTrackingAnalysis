@@ -49,5 +49,12 @@ permanently taxed the space the user actually watches: the log and the plots.
   handler are reused inside panels — behavior-level tests largely survive.
 - Tile summaries are a new live-status surface that must refresh on the same
   events as the project view (directory change, task completion).
-- The strip is the new width constraint: six tiles must fit a laptop window;
-  tile summaries are hard-capped in length rather than allowed to grow.
+- The strip is the new width constraint: tiles compress between 118–196px,
+  giving the Hub a ~950px minimum width (fits 1366×768); tile summaries are
+  hard-capped in length (full text in the tooltip) rather than allowed to
+  grow.
+- The strip, tiles, and panels use explicit per-theme surface colors
+  (`ui.theme.surface_colors`) rather than `palette(...)` roles — qdarktheme
+  leaves Window/Base/Mid at light values, which rendered unreadable light
+  chips on the dark UI. The same fix was applied to the app-wide Card/TopBar
+  QSS, healing a pre-existing dark-mode defect in all four apps.

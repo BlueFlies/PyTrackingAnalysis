@@ -59,7 +59,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
-from ._hub_tiles import ClickAwayFilter, StatusTile, TilePanel
+from ._hub_tiles import ClickAwayFilter, StatusTile, TilePanel, chrome_colors
 from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
     ActionButton,
@@ -234,9 +234,6 @@ class HubWindow(QMainWindow):
         # the tile's anchored panel.
         self._strip = QFrame()
         self._strip.setObjectName("TileStrip")
-        self._strip.setStyleSheet(
-            "QFrame#TileStrip { background: palette(alternate-base); "
-            "border-bottom: 1px solid palette(mid); }")
         strip_lay = QHBoxLayout(self._strip)
         strip_lay.setContentsMargins(10, 8, 10, 8)
         strip_lay.setSpacing(8)
@@ -319,7 +316,20 @@ class HubWindow(QMainWindow):
             "or create a Project, or the Experiment tile to load a single "
             "experiment."
         )
+        self._restyle_chrome()
         self._refresh_tiles()
+
+    def _restyle_chrome(self) -> None:
+        """Skin the strip, tiles, and panels for the CURRENT theme — palette
+        roles cannot be trusted under qdarktheme (see chrome_colors)."""
+        chrome = chrome_colors()
+        self._strip.setStyleSheet(
+            f"QFrame#TileStrip {{ background: {chrome['band']}; "
+            f"border-bottom: 1px solid {chrome['border']}; }}")
+        for tile in self._tiles.values():
+            tile.restyle()
+        for panel in self._panels.values():
+            panel.restyle()
 
     # ---------------- Project card ----------------
 
@@ -1242,10 +1252,18 @@ class HubWindow(QMainWindow):
                 analyzed = sum(
                     1 for n in project.experiment_names
                     if project.experiment_status(n)["analyzed"])
-                tile.set_summary([
-                    project.name,
-                    f"{len(project.experiment_names)} replicates · "
-                    f"{analyzed} analyzed"])
+                n_reps = len(project.experiment_names)
+                try:
+                    pending = len(project.unconfigured_dirs())
+                except Exception:  # noqa: BLE001
+                    pending = 0
+                if pending and not n_reps:
+                    line = f"{pending} folder(s) await configs"
+                elif pending:
+                    line = f"{n_reps} reps · {analyzed} ✓ · {pending} pend"
+                else:
+                    line = f"{n_reps} replicates · {analyzed} analyzed"
+                tile.set_summary([project.name, line])
                 tile.set_dimmed(False)
             except Exception as err:  # noqa: BLE001
                 tile.set_summary(["project error", str(err)])
@@ -1270,9 +1288,9 @@ class HubWindow(QMainWindow):
             if flagged is not None and flagged.attrs.get("n_total"):
                 bits.append(f"{flagged.attrs['n_total']} flies")
             if excluded is not None:
-                bits.append(f"{len(excluded)} excl")
+                bits.append(f"{len(excluded)} ex")
             if flagged is not None:
-                bits.append(f"{len(flagged)} flagged")
+                bits.append(f"{len(flagged)} flag")
             tile.set_summary([name, " · ".join(bits) or "loaded"])
             tile.set_dimmed(False)
         elif root is not None:
@@ -2348,6 +2366,7 @@ class HubWindow(QMainWindow):
             return
         new_mode = "dark" if resolved_mode() == "light" else "light"
         apply_theme(app, mode=new_mode)
+        self._restyle_chrome()
         ui_settings.set_value("theme", new_mode)
         self._btn_theme.setIcon(
             icon("theme_dark" if resolved_mode() == "light" else "theme_light")
