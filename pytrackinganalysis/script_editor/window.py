@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from ..help import make_topbar_help_button
 from ..ui import ActionButton, Category, TopBar, apply_theme, icon, resolved_mode
 from .actions import ACTIONS, validation_issues
+from .project_actions import PROJECT_ACTIONS, project_validation_issues
 from .canvas import Canvas
 from .inspector import Inspector
 from .palette import Palette
@@ -50,6 +51,25 @@ class ScriptEditorWindow(QMainWindow):
         self.setWindowTitle(f"PyTrackingAnalysis — Script Editor — {self._config_path.name}")
         self.resize(1400, 860)
 
+        ## Sections (ADR-0006): a tracking_config.yaml has one (its scripts);
+        ## a project.yaml has two — Project Scripts (project-action palette)
+        ## and the centrally-held Experiment Scripts (experiment palette).
+        if self._config_path.name == "project.yaml":
+            self._sections = [
+                {"label": "Project scripts", "key": "scripts",
+                 "actions": PROJECT_ACTIONS,
+                 "validator": project_validation_issues, "scripts": []},
+                {"label": "Experiment scripts", "key": "experiment_scripts",
+                 "actions": ACTIONS,
+                 "validator": validation_issues, "scripts": []},
+            ]
+        else:
+            self._sections = [
+                {"label": "Scripts", "key": "scripts", "actions": ACTIONS,
+                 "validator": validation_issues, "scripts": []},
+            ]
+        self._section_idx = 0
+
         self._scripts: list[dict] = []
         self._active_idx: int = -1
         self._dirty: bool = False
@@ -57,6 +77,51 @@ class ScriptEditorWindow(QMainWindow):
 
         self._build_ui()
         self._load_from_disk()
+
+    # ---- section helpers (level switcher) -----------------------------
+
+    def _section(self) -> dict:
+        return self._sections[self._section_idx]
+
+    def _section_actions(self) -> dict:
+        return self._section()["actions"]
+
+    def _section_exp_type(self) -> str | None:
+        """The tracking-type filter for the ACTIVE section: project actions
+        are type-agnostic; experiment actions filter by the configured (or
+        design-declared) type."""
+        if self._section_actions() is PROJECT_ACTIONS:
+            return None
+        return self._experiment_type
+
+    def _apply_section(self) -> None:
+        """Point the shared widgets at the active section's registry and
+        scripts."""
+        self._scripts = self._section()["scripts"]
+        self._active_idx = 0 if self._scripts else -1
+        self._palette.set_actions(self._section_actions())
+        self._canvas.set_actions(self._section_actions())
+        self._palette.set_experiment_type(self._section_exp_type())
+        self._inspector.set_experiment_type(self._section_exp_type())
+        self._refresh_script_combo()
+        self._load_active_script_into_canvas()
+        self._refresh_errors()
+
+    def _on_section_changed(self, idx: int) -> None:
+        if idx < 0 or idx == self._section_idx:
+            return
+        self._sync_canvas_to_scripts()
+        was_dirty = self._dirty
+        self._section_idx = idx
+        if getattr(self, "_level_combo", None) is not None \
+                and self._level_combo.currentIndex() != idx:
+            self._level_combo.blockSignals(True)
+            self._level_combo.setCurrentIndex(idx)
+            self._level_combo.blockSignals(False)
+        self._apply_section()
+        ## Switching levels only changes what is shown — it edits nothing.
+        self._dirty = was_dirty
+        self._update_dirty_indicator()
 
     # ==================================================================
     # UI construction
@@ -71,6 +136,16 @@ class ScriptEditorWindow(QMainWindow):
 
         # ── Top bar with script switcher ────────────────────────────────
         self._top_bar = TopBar("Script Editor")
+        if len(self._sections) > 1:
+            self._level_combo = QComboBox()
+            for section in self._sections:
+                self._level_combo.addItem(section["label"])
+            self._level_combo.setToolTip(
+                "Which script list to edit: project-level steps, or the "
+                "experiment-level scripts held centrally for every replicate")
+            self._level_combo.currentIndexChanged.connect(
+                self._on_section_changed)
+            self._top_bar.add_right(self._level_combo)
         self._top_bar.add_right(self._build_script_switcher())
         self._top_bar.add_right(
             make_topbar_help_button(self, topic_id="scripts_overview")
@@ -196,25 +271,31 @@ class ScriptEditorWindow(QMainWindow):
     # ==================================================================
 
     def _load_from_disk(self) -> None:
-        self._scripts = load_scripts(self._config_path)
-        # Ensure scripts are well-formed
-        for s in self._scripts:
-            s.setdefault("name", "Untitled")
-            s.setdefault("steps", [])
-        self._active_idx = 0 if self._scripts else -1
-        self._refresh_script_combo()
-        self._load_active_script_into_canvas()
-        self._dirty = False
-        self._update_dirty_indicator()
+        for section in self._sections:
+            scripts = load_scripts(self._config_path, key=section["key"])
+            for s in scripts:
+                s.setdefault("name", "Untitled")
+                s.setdefault("steps", [])
+            section["scripts"] = scripts
 
-        # Restrict the action palette + inspector validation to whatever
-        # tracking type the project is configured for.
+        # Restrict the experiment-level palette + validation to the tracking
+        # type: from global: (tracking_config.yaml) or the project design.
         cfg = self._read_global_config()
         tt = cfg.get("tracking_type")
+        if tt is None and cfg.get("experiment_type"):
+            try:
+                from .. import experiment_types as _et
+                tt = _et.get_experiment_type(
+                    cfg["experiment_type"]).resolve_tracking_type(cfg).name
+            except Exception:  # noqa: BLE001
+                tt = None
         exp_type = str(tt).strip().upper() if tt else None
         self._experiment_type = exp_type
-        self._palette.set_experiment_type(exp_type)
-        self._inspector.set_experiment_type(exp_type)
+        self._apply_section()
+        ## After, not before: loading steps into the canvas emits
+        ## stepsChanged, which would otherwise mark a fresh load dirty.
+        self._dirty = False
+        self._update_dirty_indicator()
 
         # Surface YAML-inherited defaults as placeholder text in the
         # inspector. Right now only `cutoffs` inherits.
@@ -230,12 +311,15 @@ class ScriptEditorWindow(QMainWindow):
         self._refresh_errors()
 
     def _read_global_config(self) -> dict:
-        """Return the ``global:`` block from the project's YAML, or ``{}``."""
+        """The ``global:`` block (tracking_config.yaml), or the design's
+        global block (project.yaml), or ``{}``."""
         try:
             with open(self._config_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
         except Exception:  # noqa: BLE001
             return {}
+        if self._config_path.name == "project.yaml":
+            return (data.get("design") or {}).get("global") or {}
         return data.get("global") or {}
 
     def script_validation_errors(self) -> list[str]:
@@ -248,11 +332,16 @@ class ScriptEditorWindow(QMainWindow):
         dialog.
         """
         errors: list[str] = []
-        for script in self._scripts:
-            name = script.get("name", "Untitled")
-            steps = script.get("steps", [])
-            for i, err in validation_issues(steps, experiment_type=self._experiment_type):
-                errors.append(f"{name} — step {i + 1}: {err}")
+        for section in self._sections:
+            validator = section["validator"]
+            exp_type = (None if section["actions"] is PROJECT_ACTIONS
+                        else self._experiment_type)
+            for script in section["scripts"]:
+                name = script.get("name", "Untitled")
+                steps = script.get("steps", [])
+                for i, err in validator(steps, experiment_type=exp_type):
+                    errors.append(
+                        f"{section['label']}: {name} — step {i + 1}: {err}")
         return errors
 
     def _save(self) -> None:
@@ -267,7 +356,9 @@ class ScriptEditorWindow(QMainWindow):
             )
             return
         try:
-            save_scripts(self._config_path, self._scripts)
+            for section in self._sections:
+                save_scripts(self._config_path, section["scripts"],
+                             key=section["key"])
         except Exception as err:  # noqa: BLE001
             QMessageBox.critical(self, "Save failed", str(err))
             return
@@ -364,7 +455,7 @@ class ScriptEditorWindow(QMainWindow):
         if step is None:
             self._inspector.clear()
             return
-        action = ACTIONS.get(step.get("action", ""))
+        action = self._section_actions().get(step.get("action", ""))
         if action is None:
             self._inspector.clear()
             return
@@ -392,7 +483,8 @@ class ScriptEditorWindow(QMainWindow):
         if not (0 <= self._active_idx < len(self._scripts)):
             return
         steps = self._scripts[self._active_idx].get("steps", [])
-        issues = validation_issues(steps, experiment_type=self._experiment_type)
+        issues = self._section()["validator"](
+            steps, experiment_type=self._section_exp_type())
         by_idx: dict[int, list[str]] = {}
         for i, err in issues:
             by_idx.setdefault(i, []).append(err)
@@ -405,8 +497,8 @@ class ScriptEditorWindow(QMainWindow):
         script = self._scripts[self._active_idx]
         try:
             text = yaml.safe_dump(
-                {"scripts": [script]}, default_flow_style=False, sort_keys=False,
-                allow_unicode=True,
+                {self._section()["key"]: [script]}, default_flow_style=False,
+                sort_keys=False, allow_unicode=True,
             )
         except Exception as err:  # noqa: BLE001
             text = f"# Could not serialize: {err}"

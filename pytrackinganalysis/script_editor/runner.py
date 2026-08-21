@@ -121,9 +121,12 @@ def _sanitise_scripts(raw: Any) -> list[dict]:
     return clean
 
 
-def load_scripts(yaml_path: str | Path) -> list[dict]:
-    """Return the ``scripts:`` list from a tracking_config.yaml (empty if absent).
+def load_scripts(yaml_path: str | Path, key: str = "scripts") -> list[dict]:
+    """Return the script list under *key* from a yaml file (empty if absent).
 
+    *key* is ``scripts`` (experiment scripts in a tracking_config.yaml, or
+    Project Scripts in a project.yaml) or ``experiment_scripts`` (the
+    Project's centrally-held experiment-level scripts, ADR-0006).
     Raises :class:`ScriptError` if the block is present but malformed.
     """
     import yaml
@@ -134,28 +137,30 @@ def load_scripts(yaml_path: str | Path) -> list[dict]:
     with open(p, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
-        raise ScriptError(f"{p.name} is not a YAML mapping — cannot read 'scripts:'")
-    return _sanitise_scripts(data.get("scripts") or [])
+        raise ScriptError(f"{p.name} is not a YAML mapping — cannot read '{key}:'")
+    return _sanitise_scripts(data.get(key) or [])
 
 
 # ---------------------------------------------------------------------------
 # Saving
 # ---------------------------------------------------------------------------
 
-# A top-level ``scripts:`` key, i.e. one with no leading indentation.
-_SCRIPTS_KEY_RE = re.compile(r"^scripts\s*:")
+def _key_re(key: str) -> "re.Pattern[str]":
+    # A top-level key, i.e. one with no leading indentation.
+    return re.compile(rf"^{re.escape(key)}\s*:")
 
 
-def _dump_scripts_block(scripts: list[dict]) -> str:
+def _dump_scripts_block(scripts: list[dict], key: str = "scripts") -> str:
     import yaml
 
     return yaml.safe_dump(
-        {"scripts": scripts}, default_flow_style=False, sort_keys=False,
+        {key: scripts}, default_flow_style=False, sort_keys=False,
         allow_unicode=True,
     )
 
 
-def _splice_scripts_block(text: str, scripts: list[dict]) -> str:
+def _splice_scripts_block(text: str, scripts: list[dict],
+                          key: str = "scripts") -> str:
     """Return *text* with only its top-level ``scripts:`` block replaced.
 
     Rewriting the whole document through ``yaml.safe_dump`` would discard every
@@ -168,12 +173,13 @@ def _splice_scripts_block(text: str, scripts: list[dict]) -> str:
     this function makes no attempt to be a general YAML editor.
     """
     lines = text.splitlines()
+    key_re = _key_re(key)
     start = next(
-        (i for i, ln in enumerate(lines) if _SCRIPTS_KEY_RE.match(ln)), None
+        (i for i, ln in enumerate(lines) if key_re.match(ln)), None
     )
 
     if start is None:
-        block = _dump_scripts_block(scripts) if scripts else ""
+        block = _dump_scripts_block(scripts, key) if scripts else ""
         if not block:
             return text
         prefix = text if text.endswith("\n") or not text else text + "\n"
@@ -189,7 +195,7 @@ def _splice_scripts_block(text: str, scripts: list[dict]) -> str:
         if ln.strip() and not (ln[0].isspace() or ln.startswith("-")):
             break
         end += 1
-    block_lines = _dump_scripts_block(scripts).splitlines() if scripts else []
+    block_lines = _dump_scripts_block(scripts, key).splitlines() if scripts else []
     if block_lines:
         # Blank lines at the tail separate this block from the next section;
         # keep them. When the block is being deleted outright they go with it.
@@ -199,8 +205,9 @@ def _splice_scripts_block(text: str, scripts: list[dict]) -> str:
     return "\n".join(lines[:start] + block_lines + lines[end:]) + "\n"
 
 
-def save_scripts(yaml_path: str | Path, scripts: list[dict]) -> None:
-    """Overwrite the ``scripts:`` list in a tracking_config.yaml.
+def save_scripts(yaml_path: str | Path, scripts: list[dict],
+                 key: str = "scripts") -> None:
+    """Overwrite the script list under *key* in a yaml file.
 
     The write is atomic (temp file + ``os.replace``) so an interruption can
     never leave the user with a truncated config, and only the ``scripts:``
@@ -221,11 +228,11 @@ def save_scripts(yaml_path: str | Path, scripts: list[dict]) -> None:
 
     expected = dict(data)
     if scripts:
-        expected["scripts"] = scripts
+        expected[key] = scripts
     else:
-        expected.pop("scripts", None)
+        expected.pop(key, None)
 
-    text = _splice_scripts_block(original, scripts)
+    text = _splice_scripts_block(original, scripts, key)
     try:
         spliced_ok = (yaml.safe_load(text) or {}) == expected
     except yaml.YAMLError:

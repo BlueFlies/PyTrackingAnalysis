@@ -3,11 +3,11 @@
 Scripts are saved, re-runnable analysis recipes. Instead of clicking the same
 sequence of Hub buttons for every experiment, you record the sequence once —
 as an ordered list of *steps* — and run it with one click, or automatically
-across dozens of experiment folders in batch mode.
+across every replicate of a Project.
 
 This guide covers everything about scripts: where they live, how to author
 them in the visual Script Editor, what every action does, how they run, and
-the special role of the script named **`batch`**.
+Project-level scripting (`project.yaml`).
 
 ## Table of contents
 
@@ -18,7 +18,7 @@ the special role of the script named **`batch`**.
 5. [Action reference](#5-action-reference)
 6. [Faceting: how `facet` and `cutoffs` work](#6-faceting-how-facet-and-cutoffs-work)
 7. [Running scripts](#7-running-scripts)
-8. [The special `batch` script](#8-the-special-batch-script)
+8. [Project scripts (two-level scripting)](#8-project-scripts-two-level-scripting)
 9. [The YAML behind it all](#9-the-yaml-behind-it-all)
 10. [Validation and troubleshooting](#10-validation-and-troubleshooting)
 
@@ -30,29 +30,35 @@ the special role of the script named **`batch`**.
   `{name: "...", steps: [...]}`.
 - A **step** is one action plus its parameters:
   `{action: run_analysis, params: {facet: true}}`.
-- Scripts are **stored inside the project's `tracking_config.yaml`**, under a
-  top-level `scripts:` key. There is no separate script file — the recipe
-  travels with the experiment configuration it belongs to.
-- A project can hold **any number of scripts**, each with its own name.
+- Scripts exist at **two levels** (see `docs/adr/0006`):
+  - **Experiment Scripts** use experiment-level actions (load, QC, analysis,
+    plots, report) and are stored in an experiment's `tracking_config.yaml`
+    under `scripts:` — or, for the replicates of a Project, centrally in the
+    Project's `project.yaml` under `experiment_scripts:` (one recipe for
+    every replicate, never copied around).
+  - **Project Scripts** use project-level actions (run in experiments,
+    combined analysis, publication figures, project report, AI narrative) and
+    live in `project.yaml` under `scripts:`. See [§8](#8-project-scripts-two-level-scripting).
+- A file can hold **any number of scripts**, each with its own name.
 - Steps execute **top to bottom**. State flows through the run: the
   `load_experiment` step sets the current experiment, and every later step
   operates on it. Filters permanently modify the in-memory experiment for the
   remainder of the run (they never touch the data on disk).
-- One script name is reserved by convention: **`batch`** (any capitalisation).
-  It is the script that **Batch experiments** mode executes in every
-  sub-folder — see [§8](#8-the-special-batch-script).
 
 ---
 
 ## 2. Opening the Script Editor
 
-The Script Editor is part of the **Config Editor**:
+There are two routes into the same editor:
 
-1. Launch the Config Editor — `pytrack-config`, or from the Hub's Project
-   card via **Edit config…**.
-2. Open the project's `tracking_config.yaml` (passed on the command line, or
-   the last-used file).
-3. Click the **scripts icon** in the Config Editor's top bar.
+- **Experiment scripts** — launch the Config Editor (`pytrack-config`, or
+  **Edit config…** from the Hub), open the experiment's
+  `tracking_config.yaml`, and click the **scripts icon** in its top bar.
+- **Project scripts** — click **Edit scripts…** on the Hub's Project card.
+  The editor opens on `project.yaml` with a **level switcher** in the top
+  bar: *Project scripts* shows the project-action palette; *Experiment
+  scripts* shows the familiar experiment palette editing the centrally-held
+  `experiment_scripts:` recipes.
 
 The editor opens as its own window, titled with the YAML file it edits. It is
 non-modal, so you can keep the Config Editor and Hub open alongside it.
@@ -128,7 +134,7 @@ card's **Reload** if the Hub was already open), ready to run.
 an experiment raise *"no experiment loaded — add a 'Load experiment' step
 first"* otherwise. The only exception is a script you always run from the Hub
 *after* loading an experiment there — a script without a load step reuses the
-Hub's currently-loaded experiment (see §7). Scripts run in batch mode always
+Hub's currently-loaded experiment (see §7). Scripts run across replicates always
 start from nothing, so for them the load step is mandatory.
 
 ---
@@ -139,7 +145,7 @@ start from nothing, so for them the load step is mandatory.
 
 | Action | Key | Parameters | What it does |
 |--------|-----|------------|--------------|
-| **Load experiment** | `load_experiment` | `path` (default `.`), `force_preprocessing` (default off) | Loads the experiment from a project directory (`data/*.xlsx` + `tracking_config.yaml`) and makes it the current experiment for all later steps. `path` of `.` (or blank) resolves to the script's project dir — the Hub's project in single mode, the sub-folder in batch mode. `force_preprocessing` recomputes cached nearest-neighbour preprocessing. |
+| **Load experiment** | `load_experiment` | `path` (default `.`), `force_preprocessing` (default off) | Loads the experiment from a project directory (`data/*.xlsx` + `tracking_config.yaml`) and makes it the current experiment for all later steps. `path` of `.` (or blank) resolves to the script's own directory — the loaded experiment's dir, or the replicate being processed in a `run_in_experiments` run. `force_preprocessing` recomputes cached nearest-neighbour preprocessing. |
 
 ### QC / filtering
 
@@ -201,7 +207,7 @@ Resolution order at run time:
 4. `facet` on but no cutoffs anywhere → the step logs a notice and **falls
    back to flat** — it never fails just because cutoffs are missing.
 
-Leaving `cutoffs` blank is the recommended default: in batch runs each
+Leaving `cutoffs` blank is the recommended default: across replicates each
 sub-experiment then uses *its own* configured cutoffs.
 
 ---
@@ -226,10 +232,11 @@ If an experiment is already loaded in the Hub, a script that has *no*
 "filter-and-replot" recipes. A script *with* a load step always reloads
 fresh.
 
-### From batch mode
+### From a Project
 
-**Batch experiments** mode runs one specific script — the one named `batch` —
-in every sub-folder. See §8.
+The Hub's Project card has its own **Script** picker and **Run script**
+button for Project Scripts — including the built-in **Standard pipeline**.
+See §8.
 
 ### Editing while the Hub is open
 
@@ -238,43 +245,93 @@ Script Editor, click **Reload** in the Hub's Project card to pick up changes.
 
 ---
 
-## 8. The special `batch` script
+## 8. Project scripts (two-level scripting)
 
-The script **name `batch` is a magic name** (matched case-insensitively:
-`batch`, `Batch`, `BATCH` all count). It is the *only* script that **Batch
-experiments** mode looks for — one per sub-folder, defined in that
-sub-folder's own `tracking_config.yaml`.
+A **Project** (a directory of replicate experiments, see the user guide §3)
+has its own scripting level. Project Scripts live in `project.yaml` under
+`scripts:` and use **project actions**; they cannot contain experiment steps,
+and experiment scripts cannot contain project steps — the two levels meet in
+exactly one place, the `run_in_experiments` bridge.
 
-When you select **Batch experiments** in the Hub's Load card and click **Run
-batch script**, each immediate sub-directory of the chosen parent folder is
-visited in sorted order:
+### Project actions
 
-| Condition in the sub-folder | Result |
-|-----------------------------|--------|
-| No `tracking_config.yaml` | Skipped, warning in Output + Errors tabs |
-| YAML unreadable | Skipped, counted as failed |
-| No script named `batch` in its `scripts:` | Skipped, warning |
-| `batch` script present | Runs with the sub-folder as project dir |
-| `batch` script raises an error | Logged + counted as failed; **other folders still run** |
+| Action | What it does |
+|--------|--------------|
+| `validate_design` | Re-checks every replicate against the project design; fails the script on any mismatch. A cheap guard for the top of a pipeline. |
+| `run_in_experiments` | Runs a named **Experiment Script** in every replicate (see below). |
+| `run_all_analyses` | Full analysis (and report) for every replicate — the Project card's Run-all as a step. Options: create reports, skip already-analyzed. |
+| `build_combined_analysis` | Stacks the replicates' filtered summaries into the project `analysis/` with pooled + mixed-model statistics. |
+| `render_publication_figures` | Writes the pooled publication figures to `figures/` from `plot_specs.yaml` (SVG, PDF, or both) — the Plot Editor's saves, headless. |
+| `project_report` | Builds `<project>_report.pdf`. |
+| `generate_ai_narrative` | Asks an AI provider to write the project narrative. **Soft-fails by default** — a provider error is logged and the script continues. |
 
-A final summary line reports the counts (`N ran, N without 'batch' script, N
-without config, N failed`).
+### The `run_in_experiments` bridge
 
-Requirements for a good `batch` script:
+`run_in_experiments` takes one parameter — the **name** of an Experiment
+Script — and resolves it per replicate:
 
-- **It must begin with `Load experiment`** with *Project dir* left as `.` —
-  batch runs start from a clean slate in each folder, and `.` resolves to the
-  sub-folder being processed. Without a load step every subsequent step fails
-  with "no experiment loaded".
-- Leave `cutoffs` blank in faceted steps so each experiment uses its own
-  configured `facet_cutoffs`.
-- Because each sub-folder has its own YAML, different experiments can have
-  *different* `batch` scripts. To use one recipe everywhere, author it once
-  and push it out with **Tools → Batch tools → Copy YAML** (note this copies
-  the *whole* YAML, so it suits sub-folders that share a design).
+1. the Project's central **`experiment_scripts:`** section in `project.yaml`
+   (author once, runs identically in every replicate), then
+2. a script of that name in the replicate's own `tracking_config.yaml`.
 
-Any other script name (`full-run`, `nightly`, `quick-qc`, …) is entirely
-free-form and only runnable from the Scripts card.
+Replicates run in order with a `[name]` prefix on every log line. A failing
+replicate does **not** stop the others; all failures are summarized when the
+script ends. Because each replicate is loaded fresh, the script does *not*
+need a `load_experiment` step.
+
+> **Migrating from the old batch mode:** the retired *Batch experiments* mode
+> ran a script named `batch` from each sub-folder's own config. That still
+> works unchanged through the fallback: add a `project.yaml` to the parent
+> (Hub → Create project) and run a Project Script containing
+> `run_in_experiments` with `script: batch`.
+
+### The built-in Standard pipeline
+
+The Project card's script picker always offers **Standard pipeline
+(built-in)** — it is never written to your yaml, so it always matches the
+shipped default:
+
+1. `validate_design`
+2. `run_all_analyses`
+3. `build_combined_analysis`
+4. `render_publication_figures` (SVG)
+5. `project_report`
+
+Zero authoring gets a complete project run; your own scripts appear alongside
+it in the picker.
+
+### Central experiment scripts
+
+`project.yaml`'s `experiment_scripts:` holds experiment-LEVEL scripts at the
+project, in the same spirit as the `design:` section: one definition, every
+replicate. Edit them in the Script Editor's *Experiment scripts* level — the
+palette and validation are exactly the experiment ones (filtered by the
+design's experiment type).
+
+```yaml
+# project.yaml
+design: { ... }
+experiment_scripts:
+- name: nightly
+  steps:
+  - action: run_analysis
+    params: {}
+  - action: create_report
+    params: {}
+scripts:
+- name: full-pipeline
+  steps:
+  - action: validate_design
+    params: {}
+  - action: run_in_experiments
+    params: {script: nightly}
+  - action: build_combined_analysis
+    params: {}
+  - action: render_publication_figures
+    params: {format: both}
+  - action: project_report
+    params: {}
+```
 
 ---
 
@@ -286,7 +343,7 @@ and edit by hand. Scripts live under the top-level `scripts:` key of
 
 ```yaml
 scripts:
-- name: batch                    # ← the special batch-mode script (§8)
+- name: nightly
   steps:
   - action: load_experiment
     params:
@@ -344,10 +401,10 @@ Common messages and their fixes:
 | Message | Fix |
 |---------|-----|
 | `Script has no steps` | The script is empty — add steps, or delete it. |
-| `<action>: no experiment loaded — add a 'Load experiment' step first.` | Put `Load experiment` at the top (mandatory for batch scripts). |
+| `<action>: no experiment loaded — add a 'Load experiment' step first.` | Put `Load experiment` at the top. (Not needed for scripts run via `run_in_experiments` — each replicate is pre-loaded.) |
 | `cutoffs must be a comma-separated list of integers` | Use e.g. `10, 70` — minutes, integers only. |
 | `unknown action '<key>'` | Hand-edited YAML has a typo in `action:` — compare with the keys in §5. |
-| `[batch] <dir>: no script named 'batch' …` | That sub-folder's YAML has scripts but none named `batch` — rename or add one. |
+| `run_in_experiments: <rep>: no script named '…'` | Define the script in `project.yaml` `experiment_scripts:` (preferred) or in that replicate's own `tracking_config.yaml`. |
 | Script ran but faceted output is missing | No cutoffs anywhere (step blank + no `facet_cutoffs` in the YAML) — the step fell back to flat. Add cutoffs in either place. |
 
 Where to look when something goes wrong: the **Output** tab holds the full

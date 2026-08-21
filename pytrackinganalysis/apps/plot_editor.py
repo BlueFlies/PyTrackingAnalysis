@@ -162,6 +162,9 @@ class PlotEditorWindow(QMainWindow):
         self.resize(1380, 860)
 
         self._experiment = None
+        self._project = None          # a loaded Project (project mode)
+        self._facet_frame = None      # combined facet frame (project mode)
+        self._window_labels = None    # (windows, label_of) in project mode
         self._project_dir: str | None = None
         self._specs = pf.ProjectSpecs()
         self._specs.ensure_default_style()
@@ -382,6 +385,11 @@ class PlotEditorWindow(QMainWindow):
         sform.addRow("Reference line:", ref_holder)
         self.pvalues_check = QCheckBox("Welch / Tukey per facet")
         sform.addRow("P-value brackets:", self.pvalues_check)
+        self.mark_check = QCheckBox("point shape per replicate")
+        self.mark_check.setToolTip(
+            "Project mode only: each replicate experiment gets its own point "
+            "shape, with a legend. Ignored for a single experiment.")
+        sform.addRow("Mark experiments:", self.mark_check)
         lay.addWidget(spec_box)
 
         # ---- Facets -----------------------------------------------------
@@ -431,7 +439,8 @@ class PlotEditorWindow(QMainWindow):
         for edit in (self.title_edit, self.x_label, self.y_label):
             edit.textChanged.connect(self._on_changed)
         for check in (self.ylim_check, self.ref_check, self.pvalues_check,
-                      self.panel_bg_check, self.free_y_check):
+                      self.panel_bg_check, self.free_y_check,
+                      self.mark_check):
             check.toggled.connect(self._on_changed)
         for swatch in (self.mean_color, self.strip_bg, self.panel_bg,
                        self.text_color):
@@ -462,17 +471,60 @@ class PlotEditorWindow(QMainWindow):
             self.open_project(path)
 
     def open_project(self, path: str) -> None:
+        """Open either directory kind: a Project (combined, pooled data) or a
+        single Experiment (its own data) — the same editor serves both."""
+        from .. import project as prj
         from ..Experiment import Experiment
 
         path = os.path.abspath(path)
+        ## Publication figures are Project-level (plot_specs.yaml and figures/
+        ## live at the project root). An experiment inside a Project redirects
+        ## up to its parent; a standalone experiment is refused with guidance.
+        if not prj.is_project_dir(path) and prj.is_experiment_dir(path):
+            parent = os.path.dirname(path)
+            if prj.is_project_dir(parent):
+                path = parent
+            else:
+                QMessageBox.information(
+                    self, "Project-level tool",
+                    "Publication figures are managed at the Project level. "
+                    "This is a standalone experiment directory — create a "
+                    "Project around it first (Hub → Create project on the "
+                    "parent folder), then open that Project here.")
+                self.statusBar().showMessage(
+                    "Not opened: publication figures are project-level.")
+                return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         self.statusBar().showMessage(f"Loading {path} …")
         QApplication.processEvents()
         try:
-            self._experiment = Experiment(path)
+            if prj.is_project_dir(path):
+                loaded = prj.Project(path)
+                summary, facet, _excl, missing = loaded.combined_frames()
+                if facet is None:
+                    raise ValueError(
+                        "No replicate has a saved analysis yet — run the "
+                        "experiments first"
+                        + (f" (missing: {', '.join(missing)})" if missing
+                           else "") + ".")
+                self._project, self._experiment = loaded, None
+                self._facet_frame = facet
+                self._window_labels = loaded.window_labels(facet)
+                label = f"Project: {loaded.name} " \
+                        f"({facet['Experiment'].nunique()} replicates)"
+                if missing:
+                    QMessageBox.warning(
+                        self, "Replicates missing",
+                        "Not yet analyzed (omitted from pooled data): "
+                        + ", ".join(missing))
+            else:
+                self._experiment = Experiment(path)
+                self._project, self._facet_frame = None, None
+                self._window_labels = None
+                label = os.path.basename(path)
         except Exception as err:  # noqa: BLE001
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "Could not load project", str(err))
+            QMessageBox.critical(self, "Could not load", str(err))
             self.statusBar().showMessage("Load failed")
             return
         QApplication.restoreOverrideCursor()
@@ -480,7 +532,7 @@ class PlotEditorWindow(QMainWindow):
         self._project_dir = path
         self._data_cache.clear()
         self._specs = pf.load_project_specs(path)
-        self._project_label.setText(os.path.basename(path))
+        self._project_label.setText(label)
         try:
             ui_settings.add_recent_project(path)
         except Exception:  # noqa: BLE001
@@ -495,12 +547,25 @@ class PlotEditorWindow(QMainWindow):
 
     # ----------------------------------------------------- specs plumbing
 
+    @property
+    def _loaded(self) -> bool:
+        return self._experiment is not None or self._project is not None
+
+    def _region1(self) -> str:
+        if self._experiment is not None:
+            return pf.region1_name(self._experiment)
+        if self._project is not None:
+            first = self._project.experiment_names[0]
+            counting = (self._project.configs[first].get("counting_regions")
+                        or {})
+            for name in counting:
+                return str(name)
+        return "region 1"
+
     def _current_spec(self) -> pf.PlotSpec:
         spec = self._specs.plots.get(self._plot_id)
         if spec is None:
-            region1 = pf.region1_name(self._experiment) if self._experiment \
-                else "region 1"
-            spec = pf.default_spec(self._plot_id, region1)
+            spec = pf.default_spec(self._plot_id, self._region1())
             spec.style = self._specs.default_style
             self._specs.plots[self._plot_id] = spec
         if spec.style not in self._specs.styles:
@@ -511,12 +576,20 @@ class PlotEditorWindow(QMainWindow):
         return self._specs.style_for(self._current_spec())
 
     def _current_data(self):
-        if self._experiment is None:
+        if not self._loaded:
             return None
         if self._plot_id not in self._data_cache:
             metric = pf.PLOT_TYPES[self._plot_id]["metric"]
-            self._data_cache[self._plot_id] = pf.faceted_data(
-                self._experiment, metric)
+            if self._project is not None:
+                windows, label_of = self._window_labels
+                self._data_cache[self._plot_id] = \
+                    pf.faceted_data_from_combined(
+                        self._facet_frame, metric,
+                        [label_of[w] for w in windows],
+                        lambda v: label_of[self._project.parse_window(v)])
+            else:
+                self._data_cache[self._plot_id] = pf.faceted_data(
+                    self._experiment, metric)
         return self._data_cache[self._plot_id]
 
     def _reload_style_combo(self) -> None:
@@ -577,6 +650,7 @@ class PlotEditorWindow(QMainWindow):
                 self.ref_value.setValue(spec.ref_line)
             self.pvalues_check.setChecked(bool(spec.p_values))
             self.free_y_check.setChecked(bool(spec.free_y))
+            self.mark_check.setChecked(bool(spec.mark_experiments))
 
             self._load_facet_table(spec)
             self._load_treatment_table(spec, style)
@@ -654,6 +728,7 @@ class PlotEditorWindow(QMainWindow):
                          if self.ref_check.isChecked() else None)
         spec.p_values = self.pvalues_check.isChecked()
         spec.free_y = self.free_y_check.isChecked()
+        spec.mark_experiments = self.mark_check.isChecked()
 
         facets, facet_labels = [], {}
         for row in range(self.facet_table.rowCount()):
@@ -730,7 +805,7 @@ class PlotEditorWindow(QMainWindow):
     # ---------------------------------------------------------- rendering
 
     def _schedule_render(self) -> None:
-        if self._experiment is not None:
+        if self._loaded:
             self._render_timer.start()
 
     def _render_preview(self) -> None:
@@ -756,7 +831,7 @@ class PlotEditorWindow(QMainWindow):
     # -------------------------------------------------------------- saves
 
     def _save_figure(self, fmt: str) -> None:
-        if self._experiment is None or self._project_dir is None:
+        if not self._loaded or self._project_dir is None:
             return
         self._read_controls()
         figures_dir = os.path.join(self._project_dir, pf.FIGURES_DIRNAME)
@@ -780,7 +855,7 @@ class PlotEditorWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved: {path}")
 
     def _save_style_as(self) -> None:
-        if self._experiment is None:
+        if not self._loaded:
             return
         self._read_controls()
         name, ok = QInputDialog.getText(
@@ -808,10 +883,9 @@ class PlotEditorWindow(QMainWindow):
         """Reset the current plot's spec to its defaults (content only —
         shared styles are never touched), pointing it at the project default
         style."""
-        if self._experiment is None:
+        if not self._loaded:
             return
-        region1 = pf.region1_name(self._experiment)
-        spec = pf.default_spec(self._plot_id, region1)
+        spec = pf.default_spec(self._plot_id, self._region1())
         spec.style = self._specs.default_style
         self._specs.plots[self._plot_id] = spec
         self._reload_style_combo()
@@ -821,7 +895,7 @@ class PlotEditorWindow(QMainWindow):
             f"{pf.PLOT_TYPES[self._plot_id]['display']} reset to defaults")
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if self._experiment is not None:
+        if self._loaded:
             self._read_controls()
             self._persist_specs()
         super().closeEvent(event)

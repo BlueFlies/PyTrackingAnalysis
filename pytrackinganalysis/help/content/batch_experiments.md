@@ -1,3 +1,5 @@
+> The batch mode described here has been absorbed into **Projects**: add a `project.yaml` to the parent directory (Hub → New project…) and use the Project view's **Run all experiments** instead.
+
 # Batch experiments
 
 In **Batch experiments** mode the chosen project directory is treated as a **parent folder**: every immediate subdirectory is run as its own independent experiment. Click **Run batch script** (the Load button changes its label in batch mode) to start.

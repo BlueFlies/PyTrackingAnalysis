@@ -163,6 +163,10 @@ class PlotSpec:
     #: for unbounded metrics (movement, transitions). When on, ``y_limits``
     #: is ignored: one shared limit would re-couple the panels.
     free_y: bool = False
+    #: Project-level figures only: give each replicate experiment its own
+    #: point shape (with a legend), so batch structure is visible in the
+    #: pooled plot. Ignored when the data has no Experiment column.
+    mark_experiments: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -302,6 +306,29 @@ def faceted_data(experiment, metric: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def faceted_data_from_combined(facet_df: pd.DataFrame, metric: str,
+                               phase_labels: list[str],
+                               label_for) -> pd.DataFrame:
+    """Tidy per-fly data from a Project's combined facet frame.
+
+    *label_for* maps a raw ``FacetRange`` cell to its display label;
+    *phase_labels* fixes the phase order. The ``Experiment`` column (when
+    present) rides along so ``mark_experiments`` can encode it.
+    """
+    if metric not in facet_df.columns:
+        return pd.DataFrame(columns=["Treatment", "Phase", "Value"])
+    df = pd.DataFrame({
+        "Treatment": facet_df["Treatment"].astype(str).str.strip(),
+        "Phase": pd.Categorical(facet_df["FacetRange"].map(label_for),
+                                categories=list(phase_labels), ordered=True),
+        "Value": pd.to_numeric(facet_df[metric], errors="coerce"),
+    })
+    if "Experiment" in facet_df.columns:
+        df["Experiment"] = facet_df["Experiment"].astype(str)
+    df = df[(df["Treatment"] != "") & df["Value"].notna()]
+    return df.reset_index(drop=True)
+
+
 def data_treatments(df: pd.DataFrame) -> list[str]:
     seen: list[str] = []
     for value in df["Treatment"]:
@@ -376,7 +403,7 @@ def effective_height_mm(style: PlotStyle, spec: "PlotSpec | None" = None) -> flo
 
 
 def _theme_for(style: PlotStyle, n_facets: int | None = None,
-               height_mm: float | None = None):
+               height_mm: float | None = None, show_legend: bool = False):
     import plotnine as p9
 
     base = {"classic": p9.theme_classic,
@@ -390,7 +417,8 @@ def _theme_for(style: PlotStyle, n_facets: int | None = None,
         figure_size=(effective_width_mm(style, n_facets) / 25.4,
                      (height_mm if height_mm is not None
                       else style.height_mm) / 25.4),
-        legend_position="none",
+        legend_position="bottom" if show_legend else "none",
+        legend_title=p9.element_text(size=style.base_pt, color=ink),
         strip_text=p9.element_text(size=style.base_pt + 1, color=ink),
         plot_title=p9.element_text(size=style.base_pt + 2, color=ink),
         axis_text=p9.element_text(color=ink),
@@ -408,7 +436,13 @@ def _theme_for(style: PlotStyle, n_facets: int | None = None,
         overrides["strip_background"] = p9.element_blank()
     if style.panel_bg:
         overrides["panel_background"] = p9.element_rect(fill=style.panel_bg)
-    return base(base_size=style.base_pt) + p9.theme(**overrides)
+    ## base_family pins the theme's own defaults to the SAME resolved face
+    ## the text themeable uses — without it, individual elements (e.g. some
+    ## tick labels) fell back to rcParams' DejaVu while others got the
+    ## requested family, which reads as a "condensed" font appearing at some
+    ## sizes. Text is never shrunk to fit; overflow clips.
+    return base(base_size=style.base_pt,
+                base_family=families[0]) + p9.theme(**overrides)
 
 
 def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
@@ -457,20 +491,31 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
             outlier_size=(0 if style.geom == "box+dots"
                           else max(style.point_size * 0.8, 0.5)),
             outlier_alpha=style.point_alpha)
+    mark = bool(getattr(spec, "mark_experiments", False)) \
+        and "Experiment" in data.columns
     if style.geom in ("dots", "box+dots"):
         stroke = max(0.0, float(style.point_stroke))
+        point_aes = {}
+        if mark:
+            point_aes["shape"] = "Experiment"
         if stroke > 0:
             # Outlined points: black edge, treatment color as the fill.
             g = (g
-                 + p9.geom_jitter(p9.aes(fill="Treatment"), color="black",
-                                  stroke=stroke, width=style.jitter_width,
-                                  height=0, size=style.point_size,
+                 + p9.geom_jitter(p9.aes(fill="Treatment", **point_aes),
+                                  color="black", stroke=stroke,
+                                  width=style.jitter_width, height=0,
+                                  size=style.point_size,
                                   alpha=style.point_alpha, random_state=0)
                  + p9.scale_fill_manual(values=colors))
         else:
-            g = g + p9.geom_jitter(width=style.jitter_width, height=0,
+            g = g + p9.geom_jitter(p9.aes(**point_aes) if point_aes else None,
+                                   width=style.jitter_width, height=0,
                                    size=style.point_size,
                                    alpha=style.point_alpha, random_state=0)
+    if mark:
+        # Show only the shape (replicate) legend; treatments are named on the
+        # x axis already.
+        g = g + p9.guides(color="none", fill="none")
     if not boxed:
         # Mean overlay (± SEM, or ± 1.96×SEM for the 95% CI variants) belongs
         # to the dot plot; a boxplot already carries its own centre and spread.
@@ -504,7 +549,8 @@ def build_ggplot(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
     if y_limits is not None:
         g = g + p9.coord_cartesian(ylim=tuple(y_limits))
     return g + _theme_for(style, n_facets=len(shown),
-                          height_mm=effective_height_mm(style, spec))
+                          height_mm=effective_height_mm(style, spec),
+                          show_legend=mark)
 
 
 def mean_overlay(data: pd.DataFrame, mean_style: str) -> pd.DataFrame:
@@ -638,24 +684,60 @@ def figure_for(experiment, plot_id: str, spec: PlotSpec, style: PlotStyle):
 _VECTOR_RC = {"svg.fonttype": "none", "pdf.fonttype": 42, "ps.fonttype": 42}
 
 
+def _draw_rc(style: PlotStyle) -> dict:
+    """Draw-time rcParams: vector-text settings plus the style's resolved
+    font as the GLOBAL default, so any element that bypasses the theme
+    cascade still renders in the same face (mixed Liberation/DejaVu tick
+    labels read as a font "condensing" at some sizes)."""
+    families = resolve_font_family(style.font_family)
+    return {**_VECTOR_RC, "font.family": "sans-serif",
+            "font.sans-serif": families}
+
+
+def _draw_normalized(g, style: PlotStyle):
+    """Draw *g* and force ONE font family onto every text artist.
+
+    plotnine resolves some labels (e.g. individual tick labels) to concrete
+    single fonts on its own; on systems where the fallback chain mixes faces
+    (Liberation vs DejaVu) that read as the font "condensing" at some sizes.
+    Text is never shrunk to fit — an oversized label simply overflows."""
+    import matplotlib.text
+
+    families = resolve_font_family(style.font_family)
+    fig = g.draw()
+    for artist in fig.findobj(matplotlib.text.Text):
+        artist.set_fontfamily(families)
+    return fig
+
+
 def save_ggplot(g, path: str, style: PlotStyle, dpi: int = 300) -> str:
     """Write *g* to *path* (format from the suffix).
 
     The size comes from the figure's own theme (set by :func:`build_ggplot`),
     which is facet-aware when the style uses a per-facet width."""
-    del style  # kept for call-site symmetry; the theme owns the size
+    import matplotlib.pyplot as plt
+
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with matplotlib.rc_context(_VECTOR_RC):
-        g.save(path, dpi=dpi, verbose=False)
+    with matplotlib.rc_context(_draw_rc(style)):
+        fig = _draw_normalized(g, style)
+        try:
+            fig.savefig(path, dpi=dpi)
+        finally:
+            plt.close(fig)
     return path
 
 
 def render_png_bytes(g, style: PlotStyle, dpi: int = 120) -> bytes:
     """Raster preview from the SAME figure object the vector save uses."""
-    del style  # the theme owns the size; see save_ggplot
+    import matplotlib.pyplot as plt
+
     buf = io.BytesIO()
-    with matplotlib.rc_context(_VECTOR_RC):
-        g.save(buf, format="png", dpi=dpi, verbose=False)
+    with matplotlib.rc_context(_draw_rc(style)):
+        fig = _draw_normalized(g, style)
+        try:
+            fig.savefig(buf, format="png", dpi=dpi)
+        finally:
+            plt.close(fig)
     return buf.getvalue()
 
 

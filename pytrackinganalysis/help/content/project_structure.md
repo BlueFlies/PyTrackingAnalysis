@@ -38,3 +38,8 @@ AllExperiments/          ← select this in batch mode
 ```
 
 Each subfolder needs its own config (and, for Hub batch mode, a script named `batch`). See **Batch experiments** and **Batch tools** for more.
+
+
+## Projects (replicates)
+
+A directory with a `project.yaml` is a **Project**: its subdirectories holding a `tracking_config.yaml` are replicate experiments of one design (validated to share factors and levels exactly). The Hub shows a Project view with per-replicate status, **Run all experiments**, **Build combined analysis** (pooled CSVs + pooled & mixed-model stats into `analysis/`), and **Project report** (`<project>_report.pdf` with pooled publication figures, the stats tables, a per-replicate summary, and an optional AI narrative).

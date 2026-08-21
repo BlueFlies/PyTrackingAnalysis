@@ -86,7 +86,7 @@ class ConfigureExperimentDialog(QDialog):
 
     def __init__(self, parent=None, start_dir: str | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Create project")
+        self.setWindowTitle("Create experiment")
         self.setMinimumWidth(560)
         self._created_path: Path | None = None
 
@@ -101,7 +101,7 @@ class ConfigureExperimentDialog(QDialog):
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("new project folder name")
-        form.addRow("Project name:", self.name_edit)
+        form.addRow("Experiment name:", self.name_edit)
 
         self.dir_edit = QLineEdit(str(start_dir or ""))
         self.dir_edit.setReadOnly(True)
@@ -240,22 +240,22 @@ class ConfigureExperimentDialog(QDialog):
         name = self.name_edit.text().strip()
         parent = self.dir_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "Create project", "Enter a project name.")
+            QMessageBox.warning(self, "Create experiment", "Enter an experiment name.")
             return
         if not parent:
-            QMessageBox.warning(self, "Create project",
-                                "Choose where to create the project.")
+            QMessageBox.warning(self, "Create experiment",
+                                "Choose where to create the experiment.")
             return
         try:
             cutoffs = _parse_cutoffs(self.facets_edit.text())  # validate only
         except ValueError:
-            QMessageBox.warning(self, "Create project",
+            QMessageBox.warning(self, "Create experiment",
                                 "Facet cutoffs must be numbers, comma-separated (or blank).")
             return
         names = _parse_labels(self.facet_labels_edit.text())
         if cutoffs and names and len(names) != len(cutoffs) + 1:
             QMessageBox.warning(
-                self, "Create project",
+                self, "Create experiment",
                 f"{len(cutoffs)} facet cutoffs create {len(cutoffs) + 1} phases, "
                 f"so give {len(cutoffs) + 1} phase names (or leave them blank); "
                 f"got {len(names)}.")
@@ -263,10 +263,10 @@ class ConfigureExperimentDialog(QDialog):
         try:
             self._created_path = create_project(parent, name, self.build_config())
         except FileExistsError:
-            QMessageBox.warning(self, "Create project",
+            QMessageBox.warning(self, "Create experiment",
                                 f"A folder named '{name}' already exists there.")
             return
         except Exception as err:  # noqa: BLE001
-            QMessageBox.critical(self, "Create project", f"Could not create:\n{err}")
+            QMessageBox.critical(self, "Create experiment", f"Could not create:\n{err}")
             return
         self.accept()

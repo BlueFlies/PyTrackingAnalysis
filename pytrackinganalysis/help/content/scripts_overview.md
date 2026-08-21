@@ -32,3 +32,8 @@ Config Editor → scripts icon in the top bar. Non-modal: keep Hub / Config open
 ## Running from the Hub
 
 **Scripts** card lists recipes from the active YAML. **Run Script** / **Run All** streams logs to Output and figures to plot tabs. In batch mode, only the script named `batch` runs per subfolder.
+
+
+## Project scripts
+
+A Project's `project.yaml` holds **Project Scripts** (`scripts:`, project-level actions: run in experiments, combined analysis, publication figures, project report, AI narrative) and centrally-held **Experiment Scripts** (`experiment_scripts:`) that `run_in_experiments` executes in every replicate (each replicate's own scripts are the fallback). The level switcher in this editor's top bar picks which list you are editing. The Hub's Project card runs them — including the built-in **Standard pipeline**.

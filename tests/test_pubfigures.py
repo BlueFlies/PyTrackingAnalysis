@@ -564,3 +564,22 @@ def test_editor_round_trips_text_color_and_pvalue_size(editor):
     style = editor._current_style()
     assert style.text_color == "#222222"
     assert style.p_value_pt == 6.0
+
+
+def test_one_font_family_across_every_text_element(tmp_path):
+    # Mixed per-label font resolution (Liberation vs DejaVu on Linux) read as
+    # the font "condensing" at some sizes. Every text artist is normalized to
+    # the same resolved family at draw time; oversized labels overflow, they
+    # are never substituted or shrunk.
+    import re
+
+    exp = _Exp(_summary(), tmp_path)
+    spec = pf.default_spec("faceted_pi")
+    for base in (8, 22):
+        style = pf.PlotStyle(base_pt=base, facet_width_mm=28)
+        g = pf.figure_for(exp, "faceted_pi", spec, style)
+        path = pf.save_ggplot(g, str(tmp_path / f"f{base}.svg"), style)
+        texts = re.findall(r'<text[^>]*style="([^"]*)"', open(path).read())
+        primaries = {re.search(r"font(?:-family)?:\s*'?([^;',\"]+)", t).group(1).strip()
+                     for t in texts}
+        assert len(primaries) == 1, primaries

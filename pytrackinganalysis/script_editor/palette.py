@@ -108,7 +108,29 @@ class Palette(QWidget):
         self._tiles: list[_ActionTile] = []
         self._section_headers: list[tuple[Category, QLabel]] = []
         self._experiment_type: str | None = None
+        self._actions: dict[str, Action] = ACTIONS
         self._build_tiles()
+
+    def set_actions(self, actions: dict[str, Action]) -> None:
+        """Swap the registry the palette shows (project vs experiment level)
+        and rebuild the tiles."""
+        if actions is self._actions:
+            return
+        self._actions = actions
+        for tile in self._tiles:
+            tile.setParent(None)
+        for _cat, header in self._section_headers:
+            header.setParent(None)
+        self._tiles.clear()
+        self._section_headers.clear()
+        # Drop the trailing stretch added by the previous build.
+        while self._list_layout.count():
+            item = self._list_layout.takeAt(self._list_layout.count() - 1)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        self._build_tiles()
+        self._apply_filter(self._search.text())
 
     def set_experiment_type(self, exp_type: str | None) -> None:
         """Limit the visible tiles to actions applicable to *exp_type*."""
@@ -120,7 +142,7 @@ class Palette(QWidget):
         # Group actions by category, preserving the order categories appear
         # in the Category enum.
         by_cat: dict[Category, list[Action]] = defaultdict(list)
-        for action in ACTIONS.values():
+        for action in self._actions.values():
             by_cat[action.category].append(action)
 
         for cat in Category:

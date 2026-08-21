@@ -263,7 +263,7 @@ class ExperimentType:
         return [int(c) if float(c) == int(c) else c for c in cutoffs]
 
     def build_config(self, *, tracking_type=None, rig=None, facet_cutoffs=None,
-                     facet_labels=None, factors=None) -> dict:
+                     facet_labels=None, factors=None, **_) -> dict:
         """Build a full ``tracking_config.yaml`` dict from create-wizard inputs.
 
         Base (Custom) build: writes ``tracking_type`` (from the wizard), the rig,

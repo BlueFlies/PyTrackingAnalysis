@@ -7,7 +7,7 @@
    - [Windows](#21-windows)
    - [macOS](#22-macos)
    - [Linux](#23-linux)
-3. [Project directory structure](#3-project-directory-structure)
+3. [Directory structure: experiments and Projects](#3-directory-structure-experiments-and-projects)
 4. [The tracking\_config.yaml reference](#4-the-tracking_configyaml-reference)
 5. [The desktop UI](#5-the-desktop-ui)
    - [Launching the apps](#51-launching-the-apps)
@@ -16,7 +16,7 @@
    - [QC Viewer](#54-qc-viewer-pytrack-qc)
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
-8. [Batch analysis across multiple experiments](#8-batch-analysis-across-multiple-experiments)
+8. [Projects: replicates, combined analysis, and batch runs](#8-projects-replicates-combined-analysis-and-batch-runs)
 9. [Quick reference](#9-quick-reference)
 
 > Scripts (saved analysis recipes) and the visual Script Editor have their own
@@ -31,15 +31,19 @@ from DTrack.  A single configuration file (`tracking_config.yaml`) describes the
 experiment — the tracking hardware, the experimental design, and how each physical
 tracking region maps to a treatment group.  From that one file the pipeline can
 produce summary CSVs, statistical comparisons, publication-quality plots, and a
-multi-page PDF report.
+multi-page PDF report.  Several experiment directories can be grouped into a
+**Project** of replicates (§8) with a pooled Combined Analysis, project-level
+publication figures, and a Project Report; and any report can carry an
+optional **AI-written summary** (§5.2, §6).
 
-There are three ways to drive the pipeline:
+There are several ways to drive the pipeline:
 
 | Interface | Best for |
 |-----------|----------|
-| **Analysis Hub** (`pytrack-hub`) | Day-to-day use; loads experiments, runs analyses, shows plots in a tabbed dock |
+| **Analysis Hub** (`pytrack-hub`) | Day-to-day use; loads experiments and Projects, runs analyses, shows plots in a tabbed dock |
 | **Config Editor** (`pytrack-config`) | Authoring `tracking_config.yaml` + visual Script Editor for saved recipes |
 | **QC Viewer** (`pytrack-qc`) | Per-tracker data-quality tables + XY / distance / timeline plots |
+| **Plot Editor** (`pytrack-plots`) | Project-level publication figures (plotnine, vector SVG/PDF output) |
 | **Jupyter notebook** (`Notebooks/SimpleTracker.ipynb`) | Exploratory work; custom plots |
 | **Python script / REPL** | Automation; integration with other tools |
 
@@ -94,7 +98,7 @@ pytrack-qc                     # QC Viewer
 # Or without activating, using uv run:
 uv run pytrack-hub
 
-# With an explicit project directory:
+# With an explicit experiment (or Project) directory:
 uv run pytrack-hub "C:\Users\you\Experiments\Trial1"
 ```
 
@@ -139,7 +143,7 @@ pytrack-qc                     # QC Viewer
 # Without activating:
 uv run pytrack-hub
 
-# With a project directory:
+# With an experiment (or Project) directory:
 uv run pytrack-hub /path/to/Trial1
 ```
 
@@ -215,14 +219,16 @@ uv sync          # installs / removes packages to match the updated lock file
 
 ---
 
-## 3. Project directory structure
+## 3. Directory structure: experiments and Projects
 
-A **project directory** is the root folder for a single experiment.  It must
+An **experiment directory** is the root folder for a single recording. It must
 contain `tracking_config.yaml` and a `data/` sub-folder with the DTrack export
 files.  The pipeline creates `analysis/` and `qc/` automatically on first run.
+(Several experiment directories become replicates of a **Project** — see the
+Projects section below.)
 
 ```
-MyExperiment/                        ← project directory (pass this to the UI)
+MyExperiment/                        ← experiment directory (pass this to the UI)
 ├── tracking_config.yaml             ← experiment configuration (required)
 ├── data/                            ← DTrack export files (required)
 │   ├── ExperimentName.xlsx          ← main DTrack workbook
@@ -238,7 +244,6 @@ MyExperiment/                        ← project directory (pass this to the UI)
 │   ├── ExperimentName_Summary_Facet.csv
 │   ├── ExperimentName_Stats.txt
 │   ├── ExperimentName_Notes.txt     ← run notes typed in at Run Analysis (optional)
-│   ├── ExperimentName_report.pdf
 │   ├── ExperimentName_plot_pi_facet.png
 │   ├── ExperimentName_plot_percentage_facet.png
 │   ├── ExperimentName_plot_transitions_facet.png
@@ -254,30 +259,55 @@ MyExperiment/                        ← project directory (pass this to the UI)
 - The per-tracker CSVs must follow the pattern `<name>_Data_<N>.csv`.
   `N` is matched to tracking region `T_N-1` in the YAML
   (i.e. `_Data_1.csv` → region `T_0`).
-- `tracking_config.yaml` must be at the **top level** of the project directory —
-  not inside `data/`.
+- `tracking_config.yaml` must be at the **top level** of the experiment
+  directory — not inside `data/`.
 
-### Batch layout (multiple experiments)
+### Projects (replicates of one design)
 
-For batch analysis, place multiple project directories under a common parent:
+A **Project** is a directory with a `project.yaml` marker whose immediate
+subdirectories containing a `tracking_config.yaml` are its **Experiments** —
+replicates of one design (see `docs/adr/0005`):
 
 ```
-AllExperiments/                      ← select this as the project dir in Batch experiments mode
-├── Trial1/
+MyProject/
+├── project.yaml                 ← makes it a Project (name, notes, design, scripts)
+├── plot_specs.yaml              ← project-level publication figure specs
+├── analysis/                    ← Combined Analysis (pooled CSVs + stats + AI narrative)
+├── figures/                     ← project publication figures (SVG/PDF)
+├── MyProject_report.pdf         ← Project Report
+├── Trial1/                      ← an Experiment (replicate)
 │   ├── tracking_config.yaml
-│   └── data/ ...
-├── Trial2/
-│   ├── tracking_config.yaml
-│   └── data/ ...
-└── Trial3/
-    ├── tracking_config.yaml
-    └── data/ ...
+│   ├── data/  analysis/  qc/
+│   └── Trial1_report.pdf
+└── Trial2/ ...
 ```
 
-Each sub-directory is processed independently.  Directories that don't qualify
-are skipped: the Hub's batch mode reports each skip in the Output and Errors
-tabs, while the Python `batch_analyze()` helper skips quietly.  See §8 for the
-full batch procedure.
+`project.yaml`'s **`design:` section is the authority** for everything the
+replicates share: the experiment type, design factors *and levels*, facet
+cutoffs and phase names, quality criteria (`min_transitions`,
+`min_movement`), and the counting-region **names** (aliases stay
+per-experiment). Opening the Project **hard-validates** every replicate's
+resolved config against it (a config omitting a key the type defaults still
+matches a design stating that default); region→treatment assignments, fly
+counts, and rigs may differ. The Create/Edit Project dialog edits the design
+and **Add experiment** scaffolds new replicate configs from it — so an empty
+Project is a valid starting point. Projects also have their own scripts:
+`project.yaml` can carry **Project Scripts** (`scripts:`) and centrally-held
+**Experiment Scripts** (`experiment_scripts:`); the Project card's script
+picker always includes the built-in **Standard pipeline**. See
+**scripts_guide.md §8**. Flies from
+the same treatments are **pooled across replicates** for the combined plots,
+data, and statistics: the Combined Analysis stacks each replicate's
+*filtered* summaries with an `Experiment` column, and its statistics show the
+pooled per-fly Welch/Tukey tests beside a **linear mixed model** (treatment
+fixed, experiment random intercept) that accounts for between-replicate
+variation. An old batch parent becomes a Project by writing a `project.yaml`
+into it (the Hub's **Create project** button does exactly that).
+
+`project.yaml` may also hold two script sections (see §8.3): `scripts:` —
+**Project Scripts**, step lists of project-level actions — and
+`experiment_scripts:` — experiment-level scripts held centrally so one recipe
+serves every replicate without being copied into their configs.
 
 ---
 
@@ -296,15 +326,15 @@ There are three equally valid ways to create one:
    forms for every section, bulk region generation, and a live YAML preview,
    so the file is valid by construction.
 2. **Copy an existing config** — copy a working `tracking_config.yaml` into
-   the new project directory and edit it.  The Hub's **Batch tools → Copy
-   YAML** can push one file into every sub-directory of a batch parent.
+   the new experiment directory and edit it.  The Hub's **Batch tools → Copy
+   YAML** can push one file into every sub-directory of a parent; inside a
+   Project, **Add experiment…** scaffolds a design-conformant config for you.
 3. **Write it by hand** — any text editor works; the file is plain YAML.
 
 Rules that make a file *valid*:
 
-- The file must be named `tracking_config.yaml` and live in the project
-  directory (next to `data/`, not inside it).  Batch mode matches the name
-  case-insensitively; everywhere else use the exact lowercase name.
+- The file must be named `tracking_config.yaml` (exact lowercase) and live in
+  the experiment directory (next to `data/`, not inside it).
 - An experimental design is **required** — an experiment will refuse to load
   without a parseable config.
 - `tracking_type` must be one of the values in §4.1 (only a *missing* key
@@ -377,8 +407,8 @@ Rules for a typed experiment:
   `tracking_type`-driven behavior described below, unchanged. Existing configs
   keep working as-is.
 
-The fastest way to start is the **Create experiment…** button on the Analysis
-Hub's project card: pick the type and rig, optionally set facets (default 10, 70)
+The fastest way to start is the **Create experiment** button on the Analysis
+Hub's sidebar: pick the type and rig, optionally set facets (default 10, 70)
 and design factors, and it writes a ready-to-edit `tracking_config.yaml` and the
 `data/`/`analysis/`/`qc/` folders. For Valence it also lays out the plate — 36
 regions for Arena Max (with the first 18 X-flipped) or 24 for Colosseum, plus the
@@ -605,13 +635,12 @@ loading.
 
 ### 4.6 `scripts` — saved analysis recipes (optional)
 
-Saved, re-runnable step lists that the Hub's **Scripts** card and batch mode
-execute.  Normally you author these visually in the Script Editor rather than
-by hand:
+Saved, re-runnable step lists that the Hub's **Scripts** card executes.
+Normally you author these visually in the Script Editor rather than by hand:
 
 ```yaml
 scripts:
-- name: nightly            # free-form, except 'batch' which is special (§8)
+- name: nightly
   steps:
   - action: load_experiment
     params: {path: '.', force_preprocessing: false}
@@ -621,8 +650,12 @@ scripts:
 
 Each script is `{name, steps}`; each step is `{action, params}` where `action`
 is one of the registered action keys and `params` matches that action's
-schema.  A script named **`batch`** (case-insensitive) is what **Batch
-experiments** mode runs in each sub-folder.  See
+schema.  Inside a **Project**, experiment-level scripts can instead be held
+centrally in `project.yaml`'s `experiment_scripts:` section, and the Project
+Script action `run_in_experiments` runs a named experiment script in every
+replicate — resolved from the Project's central section first, falling back
+to a script of that name in each replicate's own `tracking_config.yaml`
+(which is how a legacy `batch` script still runs; see §8.3).  See
 **[scripts_guide.md](scripts_guide.md)** for the full action reference,
 validation rules, and hand-editing guidance.
 
@@ -659,10 +692,10 @@ bar, PlotDock) so the visual language is consistent across all of them.
 
 | Command | Window | Purpose |
 |---------|--------|---------|
-| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, runs single / batch analyses, renders figures in a tabbed dock, launches Config + QC + Plot Editor |
+| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, shows the Project view for a directory of replicates (run all, combined analysis, Project report), renders figures in a tabbed dock, launches Config + QC + Plot Editor |
 | `pytrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
 | `pytrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
-| `pytrack-plots`  | Plot Editor   | Publication figures: live-edit a plot's style and content, save vector output (SVG/PDF) for Illustrator |
+| `pytrack-plots`  | Plot Editor   | Publication figures (project-level): live-edit pooled plots' style and content, save vector output (SVG/PDF) for Illustrator |
 
 ### 5.1 Launching the apps
 
@@ -676,6 +709,8 @@ pytrack-config                           # Config Editor (opens last-used or ./t
 pytrack-config /path/to/MyExperiment     # Config Editor, pre-loaded project YAML
 
 pytrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded project
+
+pytrack-plots /path/to/MyProject         # Plot Editor (Project directories only)
 
 # Without activating, through uv:
 uv run pytrack-hub
@@ -699,27 +734,39 @@ uv run pytrack-install-desktop
 This also adds the apps to your desktop's application launcher. Re-run it if
 you move the project or recreate `.venv` (the entries embed absolute paths).
 
-All three apps persist the light/dark theme choice to
-`~/.config/pytrackinganalysis/ui.json`.  Recent projects are tracked there too.
+All four apps persist the light/dark theme choice to
+`~/.config/pytrackinganalysis/ui.json`.  Recent projects — and the last-used
+AI provider/model — are tracked there too.
 
 ---
 
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
-Six cards, each on a sidebar entry:
+The sidebar carries two creation shortcuts — **Create project** (write or
+edit a `project.yaml`, turning a directory of replicates into a Project) and
+**Create experiment** (scaffold a new experiment directory from an Experiment
+Type) — above the card entries:
 
-- **Project** — pick the experiment folder (the text box shows just the folder
-  name to stay readable; hover it for the full path), choose a YAML config,
-  launch the Config Editor or QC Viewer in their own windows, and **Reload**
-  to re-scan the folder.
-- **Load** — radio toggle between **Single project** and **Batch experiments**
-  (the round **?** button next to the radio opens an in-app explanation of the
-  batch procedure — see §8).  In single mode the button reads **Load
-  experiment** and caches the Experiment so subsequent analyses re-use the
-  parsed data; in batch mode it becomes **Run batch script** and runs the
-  script named `batch` in every sub-folder.
-- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report**
-  (single mode only).  All tasks run on a background thread; stdout/stderr
+- **Project** — pick the directory (an experiment directory *or* a Project;
+  the text box shows just the folder name to stay readable; hover it for the
+  full path), choose a YAML config, launch the Config Editor or QC Viewer in
+  their own windows, and **Reload** to re-scan the folder.  When the loaded
+  experiment is a replicate inside a Project, an **Up to project** button
+  returns to the enclosing Project view.
+- **Load** — **Load experiment** loads and caches the Experiment so
+  subsequent analyses re-use the parsed data; **Create project…** creates or
+  edits a `project.yaml` for the selected directory.
+- **Project view** (shown only when the selected directory is a Project) —
+  the main working surface for replicates: a table with per-replicate status
+  (**Experiment, Flies, Excluded, Flagged, Report**; double-click a row to
+  open that replicate), plus the project-level actions — **Run all
+  experiments**, **Build combined analysis**, **Project report**,
+  **Plot editor…**, **AI narrative…**, **Add experiment…** (scaffolds a new
+  replicate config from the project design) — and a **Script** picker with
+  **Run script** / **Edit scripts…** (§8.3; the built-in **Standard
+  pipeline** is always available).
+- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** for
+  the loaded experiment.  All tasks run on a background thread; stdout/stderr
   streams to the **Output** tab in real time.
 - **Plots** — dynamically populated with the faceted plots valid for the loaded
   tracking type (`plot_pi_facet`, `plot_totaldistance_facet`, etc.).  Each click
@@ -731,6 +778,16 @@ Six cards, each on a sidebar entry:
   log output to the Output tab and each figure to a PlotDock tab.  Author
   scripts from the Config Editor (see 5.3 and
   [the scripts guide](scripts_guide.md)).
+- **AI** — **AI summary…** opens a dialog to pick a provider (Anthropic or
+  OpenAI) and model, then writes a one-page, clearly-labeled **AI Summary**
+  of the loaded experiment's analysis to `analysis/<name>_AI_Summary.txt` and
+  rebuilds the report PDF to embed it.  The action is offered only when an
+  API key is present (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in a `.env` file
+  or the environment); the model dropdown refreshes itself monthly from the
+  providers, with a manual refresh button.  Re-running the analysis deletes
+  the saved summary so stale prose never sits beside fresh figures —
+  regenerate it afterwards if wanted.  A failed call shows an error and never
+  blocks the report.
 - **Tools** — validate YAML, open the `analysis/` or `qc/` folder in the system
   file browser, open the **Batch tools** dialog (convert sub-directory layouts,
   bulk-rename sub-directories, copy a YAML into every sub-directory, combine
@@ -741,7 +798,7 @@ Six cards, each on a sidebar entry:
 - The first tab is always **Output** — the chronological log of everything the
   Hub does.
 - The second tab is **Errors** — a permanent tab that collects only warnings
-  and errors (failed tasks with tracebacks, skipped batch sub-folders, YAML
+  and errors (failed tasks with tracebacks, skipped or failed replicates, YAML
   validation problems, dismissed warning pop-ups, …) so they can't get lost in
   the normal output.  When issues arrive while you're on another tab, the tab
   title shows an unseen count, e.g. **Errors (3)**; viewing the tab resets it.
@@ -784,10 +841,15 @@ Open via the scripts icon in the top bar.  A non-modal window with three panes:
 Scripts are stored under the `scripts:` key of the surrounding
 `tracking_config.yaml`.  The Hub's **Scripts** card reads the same file, so
 saving in the Script Editor makes scripts immediately runnable from the Hub.
-A script named **`batch`** has a special role in batch mode (§8).
 
-**Full documentation — every action, its parameters, faceting rules, and the
-`batch` special case — lives in [scripts_guide.md](scripts_guide.md).**
+Opened on a Project's `project.yaml` (Project view → **Edit scripts…**), the
+same editor gains a **level switcher**: **Project scripts** (the
+project-action palette — §8.3) and **Experiment scripts** (the familiar
+experiment palette, held centrally for every replicate).
+
+**Full documentation — every action and its parameters, faceting rules, and
+the two-level Project scripting model (§8.3) — lives in
+[scripts_guide.md](scripts_guide.md).**
 
 ---
 
@@ -813,9 +875,13 @@ Publication figures for Valence experiments (see `docs/adr/0004`), rendered by
 **plotnine** — a separate path from the PDF-report figures that shares the same
 summarized, exclusion-filtered data.
 
-- **Open a project** (or launch from the Hub's project card). The four faceted
-  plots are available: preference index, time in region 1, movement, and
-  transitions — each one panel per phase, dots + mean ± SEM.
+- **Project-level tool.** Open a **Project directory** (or launch from the
+  Hub's Project card): the four faceted plots show all flies **pooled across
+  replicates** (built from the replicates' filtered summaries), and a
+  **Mark experiments** option gives each replicate its own point shape with a
+  legend. `plot_specs.yaml` and `figures/` live at the **project root**.
+  Opening a replicate directory redirects up to its Project; a standalone
+  experiment is refused with guidance to create a Project around it first.
 - **Two-layer model.** A named **Plot Style** holds the look shared across
   plots (figure size in mm, theme, font, geometry — jittered dots, boxplots,
   or both — point/mean styling, line weight for axes/ticks/borders, facet
@@ -835,8 +901,9 @@ summarized, exclusion-filtered data.
   Illustrator (`svg.fonttype='none'`); PDF embeds TrueType fonts. The live
   preview is rendered from the same figure object that saving uses, so the
   file always matches the screen.
-- **Headless re-render**: `pubfigures.render_all(experiment)` regenerates
-  every figure defined in `plot_specs.yaml` without the app.
+- **Headless re-render**: `Project(project_dir).render_figures(formats=("svg", "pdf"))`
+  regenerates every figure defined in `plot_specs.yaml` without the app —
+  also available as the `render_publication_figures` Project Script action.
 
 ---
 
@@ -859,7 +926,7 @@ from pytrackinganalysis.Experiment import Experiment, batch_analyze
 ### Single experiment
 
 ```python
-# Pass the project directory — the one containing tracking_config.yaml and data/
+# Pass the experiment directory — the one containing tracking_config.yaml and data/
 exp = Experiment("./Data/Trial1/")
 
 # To analyse a project against a second config in the same directory, name it.
@@ -892,6 +959,13 @@ exp.create_report()
 # as <Experiment>_Notes.txt in analysis/ (the Hub prompts for these when you
 # press Run Analysis / Create PDF Report; blank clears saved notes).
 exp.create_report(notes="Pilot run; lights at 50% intensity.")
+
+# Optional AI Summary (needs ANTHROPIC_API_KEY or OPENAI_API_KEY in .env or
+# the environment). Writes analysis/<name>_AI_Summary.txt; the report embeds
+# it while that file exists, and run_analysis() deletes it (it describes a
+# single analysis run).
+exp.generate_ai_summary("anthropic")            # or "openai"; model=... to pick one
+exp.create_report()                             # now carries the AI Summary section
 
 # ── OR run the complete pipeline in one call: ────────────────────────────────
 exp.run_analysis()       # summary → qc → save_summary → save_plots → stats
@@ -937,6 +1011,34 @@ The available plot methods depend on `tracking_type`:
 | `PAIRWISEINTERACTIONTRACKER` | `plot_interactions_facet`, `plot_totaldistance_facet` |
 | `PAIRWISEINTERACTIONCOUNTER` | `plot_interactions_facet` |
 
+### Projects from Python
+
+The `Project` object (§8) mirrors everything the Hub's Project view does:
+
+```python
+from pytrackinganalysis.project import Project, create_project_file
+
+# One-time: turn a directory of replicate experiment directories into a
+# Project by writing the project.yaml marker (idempotent; preserves keys).
+create_project_file("./MyStudy/", name="MyStudy")
+
+prj = Project("./MyStudy/")        # discovers replicates, validates the design
+print(prj.experiment_names)        # the replicate directories
+print(prj.warnings)                # non-fatal differences (rigs, cutoffs, …)
+
+prj.run_all()                      # run_analysis + report in every replicate
+prj.build_combined_analysis()      # pooled CSVs + pooled/mixed stats → <project>/analysis/
+prj.render_figures(formats=("svg",))   # publication figures from plot_specs.yaml
+prj.generate_ai_summary("anthropic")   # optional AI narrative (embedded below)
+prj.create_report()                # <project>/<name>_report.pdf
+```
+
+`Project(...)` raises with a per-replicate problem list when a replicate does
+not match the design in `project.yaml` (or, without a `design:` section, when
+replicates disagree on experiment type or design factors/levels).
+`build_combined_analysis()` deletes any saved AI narrative — like
+`run_analysis()`, the narrative describes a single build.
+
 ### Batch processing from a script
 
 ```python
@@ -958,7 +1060,8 @@ dictionary.
 
 ## 7. Understanding the outputs
 
-All outputs are written relative to the project directory.
+All outputs are written relative to the experiment directory (project-level
+outputs to the Project root — see the last table below).
 
 ### `analysis/` — main results
 
@@ -970,7 +1073,8 @@ All outputs are written relative to the project directory.
 | `*_Excluded.csv` | (Valence) Flies removed by the low-transition exclusion — name, region, treatment, and transition count in the primary phase. Written even when no fly was excluded, so absence never needs interpreting |
 | `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample **Welch's** t-test (unequal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more. Each line carries both groups' N, mean and SD, and any trackers dropped for having no numeric value in the window are counted explicitly. Faceted runs append a note stating how many uncorrected tests were run and the Bonferroni-adjusted threshold. Pass `equal_var=True` to `run_pairwise_comparisons` for the classic Student's test. |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
-| `<project>_report.pdf` | **Written to the project root** (beside `tracking_config.yaml`), named after the project directory. Multi-page PDF: cover with status lines → analysis figures (per-phase when faceted) → statistical-comparisons table → structured experiment summary → QC figures (data quality plus per-tracker transitions/min and movement bars) |
+| `*_AI_Summary.txt` | (Optional) The saved AI Summary; provenance (provider, model, date) on the first line. The report embeds it while this file exists; **every `run_analysis()` deletes it** so it can never describe a stale run |
+| `<name>_report.pdf` | **Written to the experiment directory root** (beside `tracking_config.yaml`), named and titled after that directory. Multi-page PDF: cover with status lines → notes and AI Summary (when present) → analysis figures (per-phase when faceted) → statistical-comparisons table → structured experiment summary → QC figures (data quality plus per-tracker transitions/min and movement bars) |
 
 ### `qc/` — data quality
 
@@ -978,84 +1082,94 @@ All outputs are written relative to the project directory.
 |------|----------|
 | `*_data_quality.csv` | Per-tracker fraction of valid (non-missing) frames; trackers below `cutoff` are flagged |
 
+### Project outputs (Projects only — at the Project root)
+
+| File | Contents |
+|------|----------|
+| `analysis/<project>_Summary.csv` / `_Summary_Facet.csv` | The Combined Analysis: each replicate's *filtered* summaries stacked with an `Experiment` first column |
+| `analysis/<project>_Excluded.csv` | All replicates' excluded flies, tagged by replicate |
+| `analysis/<project>_Stats.txt` | Pooled per-fly Welch/Tukey tests beside the mixed-model p-values (treatment fixed, experiment random intercept), plus any cross-replicate warnings |
+| `analysis/<project>_AI_Summary.txt` | (Optional) The AI narrative; deleted by every `build_combined_analysis()` |
+| `plot_specs.yaml` | Publication-figure Plot Specs + Plot Styles (written by the Plot Editor) |
+| `figures/*.svg` / `*.pdf` | Vector publication figures rendered from the pooled data |
+| `<project>_report.pdf` | The Project Report: cover with per-replicate status → AI narrative (when present) → pooled publication figures → pooled + mixed statistics table → per-replicate summary table |
+
 ---
 
-## 8. Batch analysis across multiple experiments
+## 8. Projects: replicates, combined analysis, and batch runs
 
-There are two ways to process many experiments in one go: **Batch experiments
-mode in the Hub**, which runs a *script* of your choosing per sub-folder, and
-the Python **`batch_analyze()`** function, which runs the fixed full pipeline
-per sub-folder.
+A **Project** groups replicate experiment directories of one design under a
+parent directory marked by a `project.yaml` (layout and design rules in §3;
+`docs/adr/0005`).  It replaces the old "batch mode": the Hub's Project view
+runs every replicate, pools their results into a Combined Analysis, renders
+project-level publication figures, and builds a Project Report.
 
-### Layout requirement (both methods)
+### 8.1 Creating a Project
 
-Each experiment sub-directory must be a self-contained project directory under
-one common parent:
+- **New study** — Hub sidebar → **Create project**: pick/create the parent
+  directory and edit the project **design** (experiment type, design factors
+  and levels, facets, quality criteria, counting-region names).  The design
+  is seeded from the Experiment Type's defaults.  An empty Project is valid —
+  add replicates with **Add experiment…**, which scaffolds each new
+  `tracking_config.yaml` *from the design*.
+- **Existing replicates / old batch parent** — run **Create project** on the
+  parent: the dialog infers the design from the first replicate and writes
+  `project.yaml`; nothing inside the replicate directories changes.
 
-```
-ParentFolder/                         ← select this as the project directory
-├── Experiment_A/
-│   ├── tracking_config.yaml          ← required (with a 'batch' script for UI batch mode)
-│   └── data/
-│       ├── Experiment_A.xlsx         ← required
-│       └── Experiment_A_Data_*.csv
-└── Experiment_B/
-    ├── tracking_config.yaml
-    └── data/ ...
-```
+Opening a Project **hard-validates** every replicate's resolved config
+against the design and refuses to load on a mismatch, naming the offending
+replicate and key.  Region→treatment assignments, counting-region aliases,
+fly counts, and rigs may differ; differing cutoffs or quality criteria are
+surfaced as warnings, not errors.
 
-Each sub-directory uses its **own** `tracking_config.yaml`, so different
-experiments can have different tracking types, rigs, designs, and batch
-scripts.
+### 8.2 The Project view workflow
 
-### 8.1 Batch experiments mode in the Hub
+With a Project selected, the Hub shows the **Project view** (§5.2): the
+replicate table plus the project actions, in the natural order —
 
-This is the flexible method: *you* decide what runs in each sub-folder by
-authoring a script named **`batch`** in each sub-folder's YAML (Script Editor
-→ new script → name it `batch`; the name is matched case-insensitively).  The
-round **?** button next to the radio in the Load card shows this same
-procedure in-app.
+1. **Run all experiments** — full analysis + report in every replicate
+   (continue-on-error; failures summarized).
+2. **Build combined analysis** — stacks each replicate's *filtered* summary
+   CSVs (`Experiment` column added) into `<project>/analysis/`, with pooled
+   Welch/Tukey statistics beside the mixed-model p-values.  Replicates
+   without a saved analysis are reported as missing, never silently analyzed.
+3. **Plot editor…** — curate the pooled publication figures (§5.5).
+4. **AI narrative…** — optional AI-written narrative for the Project Report
+   (same rules as the per-experiment AI Summary: key-gated, clearly labeled,
+   deleted by the next combined-analysis build, never blocks the report).
+5. **Project report** — `<project>/<name>_report.pdf`: pooled publication
+   figures, the pooled + mixed statistics table, and a per-replicate summary
+   table.
 
-Step by step:
+Double-click a replicate row to open it as the current experiment (the
+regular Analyze/Plots/Scripts/AI cards then apply to it); **Up to project**
+returns to the Project view.
 
-1. In the **Project** card, browse to `ParentFolder/` (the *parent*, not one
-   of the experiments).
-2. In the **Load** card, select **Batch experiments**.  The load button
-   relabels to **Run batch script**; the single-project analysis buttons and
-   the Scripts card grey out since they don't apply.
-3. Click **Run batch script**.  For every immediate sub-directory (processed
-   in sorted order) the Hub:
-   - looks for `tracking_config.yaml` (case-insensitive).  Missing → the
-     sub-folder is **skipped** with a warning;
-   - reads its `scripts:` list.  Unreadable YAML → **skipped**, counted as
-     failed;
-   - finds the script named `batch` (case-insensitive).  Absent → **skipped**
-     with a warning;
-   - runs that script with the sub-directory as its project dir.  A
-     `load_experiment` step with `path: "."` therefore loads *that*
-     sub-folder's data.
-4. When the run finishes, all per-folder log lines flush to the **Output**
-   tab, every skip/failure also lands in the **Errors** tab, any figures the
-   scripts produced open as plot tabs, and a summary line reports the counts:
-   `Batch script complete: N ran, N without 'batch' script, N without config,
-   N failed (of N subdirs).`
+### 8.3 Project Scripts (two-level scripting)
 
-Because scripts start from a clean slate in each folder, a `batch` script
-**must begin with a `load_experiment` step** (leave its path as `.`).  A
-typical `batch` script is: `load_experiment` → `filter_by_quality` →
-`run_analysis` → `create_report`.
+Projects have their own saved scripts (`docs/adr/0006`) — same
+`{name, steps}` shape and the same visual editor as experiment scripts, but a
+separate **project-action** palette: `validate_design`, `run_in_experiments`,
+`run_all_analyses`, `build_combined_analysis`, `render_publication_figures`,
+`project_report`, and `generate_ai_narrative` (soft-fail).  They live under
+`scripts:` in `project.yaml`; the levels cannot mix.
 
-An error inside one sub-folder's script never stops the others — it is
-logged, counted as failed, and the run moves on.
+The one bridge to experiment level is **`run_in_experiments(script: NAME)`**:
+it runs the named *experiment-level* script in every replicate — resolved
+first from the Project's central `experiment_scripts:` section (one recipe
+for all replicates, never copied into their configs), falling back to a
+script of that name in each replicate's own `tracking_config.yaml`.  A legacy
+batch parent therefore still works: `run_in_experiments(script: batch)` runs
+the old per-folder `batch` scripts unchanged.  Execution is
+replicate-by-replicate with per-replicate log prefixes and continue-on-error.
 
-**Preparing many folders at once:** the Hub's **Tools → Batch tools** dialog
-can copy one master YAML (including its `batch` script) into every
-sub-directory, bulk-rename sub-directories, convert flat layouts into the
-`data/` structure, and afterwards combine every `*_Summary.csv` /
-`*_Summary_Facet.csv` across sub-folders into one CSV per type tagged by
-sub-directory name.
+The Project view's **Script** picker always includes the built-in **Standard
+pipeline** (validate design → run all analyses → build combined analysis →
+render publication figures → project report) — zero authoring gets a
+complete run.  **Edit scripts…** opens the Script Editor on `project.yaml`
+with the level switcher (§5.3).
 
-### 8.2 Fixed pipeline from Python
+### 8.4 Fixed pipeline from Python
 
 ```python
 from pytrackinganalysis.Experiment import batch_analyze
@@ -1067,14 +1181,20 @@ results = batch_analyze("./ParentFolder/")   # {path: 'ok' | error message}
 sub-directory that contains a `tracking_config.yaml` and a `data/` folder with
 at least one `.xlsx`; other directories are skipped.  Optional arguments:
 `cutoffs` (override every experiment's facet cutoffs), `qc_cutoff` (default
-0.9), and `force_preprocessing`.  No `batch` script is involved — use this
-when every experiment should get the identical standard pipeline.
+0.9), and `force_preprocessing`.  It needs no `project.yaml` and builds
+nothing at the parent level — for the pooled Combined Analysis and Project
+Report, use the `Project` API (§6) or the Hub's Project view.
+
+**Preparing many folders at once:** the Hub's **Tools → Batch tools** dialog
+can copy one master YAML into every sub-directory, bulk-rename
+sub-directories, convert flat layouts into the `data/` structure, and combine
+summary CSVs across sub-folders.
 
 ### Results
 
-Either way, results are written into each experiment's own `analysis/` and
-`qc/` folders (e.g. `Experiment_A/analysis/Experiment_A_report.pdf`) — batch
-runs never mix outputs across experiments.
+Per-replicate results always land in each experiment's own `analysis/` and
+`qc/` folders; the pooled artifacts land at the Project root (§7) — the two
+levels never mix outputs.
 
 ---
 
@@ -1096,6 +1216,9 @@ pytrack-config /path/to/project
 
 # Standalone QC Viewer:
 pytrack-qc /path/to/project
+
+# Plot Editor (publication figures; Project directories only):
+pytrack-plots /path/to/MyProject
 
 # One-time: install launcher entries + taskbar icon (Linux):
 pytrack-install-desktop
@@ -1125,10 +1248,28 @@ tracking_regions:
 
 ```python
 from pytrackinganalysis.Experiment import Experiment
-exp = Experiment("/path/to/project/")
+exp = Experiment("/path/to/experiment/")
 exp.run_analysis()
 exp.create_report()
 ```
+
+### Project pipeline (Python)
+
+```python
+from pytrackinganalysis.project import Project
+prj = Project("/path/to/MyProject/")
+prj.run_all()
+prj.build_combined_analysis()
+prj.create_report()
+```
+
+### AI features
+
+Put `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in a `.env` file (next to
+where you launch from, or `~/.config/pytrackinganalysis/.env`).  The Hub's
+**AI** card (per-experiment summary) and the Project view's **AI narrative…**
+then light up; without a key they stay disabled and everything else works
+unchanged.
 
 ### Rig calibration values
 

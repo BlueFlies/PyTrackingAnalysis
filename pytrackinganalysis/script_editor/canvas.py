@@ -228,8 +228,12 @@ class Canvas(QWidget):
         # callers that modify them go through update_params().
         return [dict(s, params=dict(s.get("params", {}))) for s in self._steps]
 
+    def set_actions(self, actions: dict[str, Action]) -> None:
+        """The registry used to resolve step cards (project vs experiment)."""
+        self._actions = actions
+
     def add_action(self, key: str) -> None:
-        action = ACTIONS.get(key)
+        action = getattr(self, "_actions", ACTIONS).get(key)
         if action is None:
             return
         defaults = {p.name: p.default for p in action.params if p.default is not None}
@@ -267,7 +271,7 @@ class Canvas(QWidget):
 
     def _append_card(self, step: dict) -> None:
         key = step.get("action", "")
-        action = ACTIONS.get(key) or _unknown_action(key)
+        action = getattr(self, "_actions", ACTIONS).get(key) or _unknown_action(key)
         idx = len(self._cards)
         card = _StepCard(idx, action, step.get("params", {}))
         card.selected.connect(self._on_card_selected)

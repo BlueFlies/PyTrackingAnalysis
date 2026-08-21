@@ -5,6 +5,65 @@ This glossary fixes the domain language; it is not a spec.
 
 ## Language
 
+**Project**:
+A directory with a `project.yaml` at its root whose immediate subdirectories
+holding a `tracking_config.yaml` are its Experiments — replicates of one
+design. The `project.yaml`'s `design:` section is the **authority** for the
+shared parameters (experiment type, factors and levels, facets, quality
+criteria, counting-region names); a Project owns the Combined Analysis, the
+project-level `plot_specs.yaml`/`figures/`, and the Project Report.
+_Avoid_: batch parent, parent directory
+
+**Experiment Directory**:
+One recording's directory — `tracking_config.yaml`, `data/`, `analysis/`,
+`qc/`, its own report — either standalone or as a replicate inside a Project.
+(Formerly called the "project directory".)
+
+**Replicate**:
+An Experiment inside a Project. Every replicate's resolved config is
+hard-validated against the Project's `design:` section (experiment type,
+factors and levels, facets, quality criteria, counting-region names in
+order); region→treatment assignments, counting-region aliases, fly counts,
+and rigs may differ. New replicates are scaffolded from the design.
+
+**Combined Analysis**:
+The Project-level results built by stacking each replicate's *filtered*
+summaries (exclusions and flags already applied) with an `Experiment` column:
+combined summary CSVs, aggregated exclusions, and statistics — pooled
+per-fly tests (Welch/Tukey, matching the plots) beside a linear mixed model
+(treatment fixed, experiment random) that accounts for between-replicate
+variation.
+
+**Project Report**:
+`<project>/<project>_report.pdf`: pooled publication figures rendered by the
+same Plot Spec/Style system the Plot Editor saves, the pooled + mixed
+statistics tables, a per-replicate summary table, and an opt-in AI-written
+narrative (same rule as AI Summary: it summarizes, never analyzes).
+
+**Experiment Script**:
+A saved, re-runnable step list of experiment-level actions (run analysis,
+plots, report…). Lives in an Experiment's `tracking_config.yaml` `scripts:` —
+or, for replicates, centrally in the Project's `experiment_scripts:` section,
+where one recipe serves every replicate without being copied into their
+configs.
+_Avoid_: recipe, macro
+
+**Project Script**:
+A saved step list of project-level actions (`run_in_experiments`,
+`run_all_analyses`, `build_combined_analysis`, `render_publication_figures`,
+`project_report`, `generate_ai_narrative`, `validate_design`) in
+`project.yaml` `scripts:`. Same shape and visual editor as an Experiment
+Script, but a separate action registry — levels cannot mix; the only bridge
+is `run_in_experiments`, which runs a named Experiment Script in every
+replicate (project-defined first, each replicate's own as fallback,
+continue-on-error).
+
+**Standard Pipeline**:
+The built-in Project Script every Project can run without authoring anything:
+validate design → run all analyses → build combined analysis → render
+publication figures → project report. Never written to `project.yaml`, so it
+tracks the shipped default.
+
 **Experiment Type**:
 A named bundle (e.g. Valence) that selects one Tracking Type and constrains the
 rest of an experiment — the allowed rigs, the facets, the required counting
@@ -102,8 +161,8 @@ _Avoid_: report figure, plot export
 **Plot Style**:
 A named, reusable look shared by every Publication Figure that references it:
 figure size, theme, fonts, point/mean styling, and the treatment→color
-mapping. Stored in `plot_specs.yaml` under `styles:`; `default_style:` names
-the one the Plot Editor auto-loads.
+mapping. Stored in the Project root's `plot_specs.yaml` under `styles:`;
+`default_style:` names the one the Plot Editor auto-loads.
 _Avoid_: theme (a plotnine theme is one field inside a style)
 
 **Plot Spec**:
@@ -114,7 +173,8 @@ plot id (e.g. `faceted_pi`).
 _Avoid_: plot config, settings
 
 **Plot Editor**:
-The fourth PyQt6 app (`pytrack-plots`): opens a project, renders a live
-preview from the same Spec+Style that saving uses, and writes the vector
-Publication Figures. Presentation only — it never alters the experiment
-definition in `tracking_config.yaml`.
+The fourth PyQt6 app (`pytrack-plots`), a **Project-level** tool: opens a
+Project, renders a live preview of the pooled figures from the same
+Spec+Style that saving uses, and writes the vector Publication Figures.
+Presentation only — it never alters `tracking_config.yaml`; opening a
+replicate redirects up to its Project.

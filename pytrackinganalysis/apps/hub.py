@@ -32,11 +32,17 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
+    QPlainTextEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -195,11 +201,17 @@ class HubWindow(QMainWindow):
 
         self._sidebar = SidebarNav()
         self._sidebar.add_item("project", "Project", "project", category=Category.NEUTRAL)
-        # A rail button (not a scroll anchor): create a new project from a type.
+        # Rail buttons (not scroll anchors): the two creation flows — the
+        # Project (the parent of replicates) first, then the experiment.
         create_proj_btn = self._sidebar.add_action(
-            "Create project", "new", category=Category.LOAD,
-            tooltip="Create a new project from an Experiment Type")
-        create_proj_btn.clicked.connect(lambda: self._create_experiment())
+            "Create project", "project", category=Category.LOAD,
+            tooltip="Create (or edit) a Project of replicate experiments — "
+                    "writes the project.yaml marker")
+        create_proj_btn.clicked.connect(lambda: self._new_project())
+        create_exp_btn = self._sidebar.add_action(
+            "Create experiment", "new", category=Category.LOAD,
+            tooltip="Create a new experiment directory from an Experiment Type")
+        create_exp_btn.clicked.connect(lambda: self._create_experiment())
         self._sidebar.add_item("load", "Load", "load", category=Category.LOAD)
         self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
         self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
@@ -221,6 +233,7 @@ class HubWindow(QMainWindow):
 
         self._build_project_card()
         self._build_load_card()
+        self._build_project_view_card()
         self._build_analyze_card()
         self._build_plots_card()
         self._build_scripts_card()
@@ -296,6 +309,13 @@ class HubWindow(QMainWindow):
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.addWidget(browse)
         btn_row.addWidget(reload_btn)
+        # Way back up from a replicate to its Project — drilling in via the
+        # Experiments table was otherwise a one-way door.
+        self._up_btn = ActionButton("Up to project", Category.NEUTRAL,
+                                    icon_name="project")
+        self._up_btn.setVisible(False)
+        self._up_btn.clicked.connect(self._go_up_to_project)
+        btn_row.addWidget(self._up_btn)
         btn_row.addStretch(1)
         proj_col.addLayout(btn_row)
         form.addRow("Project dir:", _wrap_layout(proj_col))
@@ -338,11 +358,8 @@ class HubWindow(QMainWindow):
         edit_cfg.clicked.connect(lambda: self._launch_subapp("config"))
         qc_view = ActionButton("QC viewer…", Category.QC, icon_name="qc")
         qc_view.clicked.connect(lambda: self._launch_subapp("qc"))
-        plot_editor = ActionButton("Plot editor…", Category.ANALYZE, icon_name="report")
-        plot_editor.clicked.connect(lambda: self._launch_subapp("plots"))
         launchers.addWidget(edit_cfg)
         launchers.addWidget(qc_view)
-        launchers.addWidget(plot_editor)
         card.add_body(launchers)
 
         self._cards["project"] = card
@@ -354,35 +371,27 @@ class HubWindow(QMainWindow):
         card = Card(
             "Load",
             category=Category.LOAD,
-            subtitle="Load a single experiment, or point at a parent dir for batch runs.",
+            subtitle="Load an experiment — or select a Project directory of replicates.",
             icon_name="load",
         )
-
-        self._mode_single = QRadioButton("Single project")
-        self._mode_batch = QRadioButton("Batch experiments")
-        self._mode_single.setChecked(True)
-        mode_group = QButtonGroup(self)
-        mode_group.addButton(self._mode_single)
-        mode_group.addButton(self._mode_batch)
-        mode_group.buttonClicked.connect(self._on_mode_changed)
-
-        batch_help = HelpButton(
-            "batch_experiments",
-            tooltip="How batch analyses work",
-        )
-
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(self._mode_single)
-        mode_row.addWidget(self._mode_batch)
-        mode_row.addWidget(batch_help)
-        mode_row.addStretch(1)
-        card.add_body(mode_row)
 
         load_btn = ActionButton(
             "Load experiment", Category.LOAD, icon_name="load", primary=True
         )
         load_btn.clicked.connect(self._load_experiment)
-        card.add_body(load_btn)
+        new_project_btn = ActionButton(
+            "Create project…", Category.LOAD, icon_name="project"
+        )
+        new_project_btn.setToolTip(
+            "Create (or edit) a Project of replicate experiments: choose the "
+            "parent directory and fill in the project.yaml information."
+        )
+        new_project_btn.clicked.connect(self._new_project)
+        load_row = QHBoxLayout()
+        load_row.addWidget(load_btn)
+        load_row.addWidget(new_project_btn)
+        load_row.addStretch(1)
+        card.add_body(load_row)
         self._load_btn = load_btn
 
         self._cards["load"] = card
@@ -579,6 +588,372 @@ class HubWindow(QMainWindow):
 
         AiSummaryDialog(self).exec()
 
+    # ---------------- Project view (a directory of replicates) ----------------
+
+    def _build_project_view_card(self) -> None:
+        """The Project view (ADR-0005): shown when the selected directory is a
+        Project — per-replicate status plus the project-level actions."""
+        card = Card(
+            "Project",
+            category=Category.ANALYZE,
+            subtitle="Replicate experiments of one design.",
+            icon_name="batch",
+        )
+        self._projectview_summary = QLabel("")
+        self._projectview_summary.setWordWrap(True)
+        card.add_body(self._projectview_summary)
+
+        self._exp_table = QTableWidget(0, 5)
+        self._exp_table.setHorizontalHeaderLabels(
+            ["Experiment", "Flies", "Excluded", "Flagged", "Report"])
+        self._exp_table.verticalHeader().setVisible(False)
+        self._exp_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers)
+        self._exp_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows)
+        self._exp_table.setMaximumHeight(170)
+        self._exp_table.itemDoubleClicked.connect(self._open_selected_replicate)
+        card.add_body(self._exp_table)
+        hint = QLabel("Double-click a replicate to open it as the current "
+                      "experiment.")
+        hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        card.add_body(hint)
+
+        row1 = QHBoxLayout()
+        btn_run_all = ActionButton("Run all experiments", Category.ANALYZE,
+                                   icon_name="basic", primary=True)
+        btn_run_all.clicked.connect(self._project_run_all)
+        btn_combined = ActionButton("Build combined analysis",
+                                    Category.ANALYZE, icon_name="csv")
+        btn_combined.clicked.connect(self._project_build_combined)
+        row1.addWidget(btn_run_all)
+        row1.addWidget(btn_combined)
+        card.add_body(row1)
+
+        row2 = QHBoxLayout()
+        btn_report = ActionButton("Project report", Category.ANALYZE,
+                                  icon_name="report")
+        btn_report.clicked.connect(self._project_report)
+        btn_plots = ActionButton("Plot editor…", Category.ANALYZE,
+                                 icon_name="report")
+        btn_plots.clicked.connect(
+            lambda: self._launch_subapp("plots", self._effective_project_dir()))
+        row2.addWidget(btn_report)
+        row2.addWidget(btn_plots)
+        card.add_body(row2)
+
+        row3 = QHBoxLayout()
+        btn_ai = ActionButton("AI narrative…", Category.AI, icon_name="ai")
+        btn_ai.setToolTip(
+            "Have an AI provider write the project narrative from the "
+            "Combined Analysis; the next Project report embeds it.")
+        btn_ai.clicked.connect(self._project_ai_narrative)
+        btn_add = ActionButton("Add experiment…", Category.LOAD,
+                               icon_name="project")
+        btn_add.setToolTip(
+            "Create a replicate subdirectory whose config is copied from the "
+            "first replicate — the shared design holds by construction.")
+        btn_add.clicked.connect(self._project_add_experiment)
+        row3.addWidget(btn_ai)
+        row3.addWidget(btn_add)
+        card.add_body(row3)
+
+        script_row = QHBoxLayout()
+        script_row.addWidget(QLabel("Script:"))
+        self._project_script_combo = QComboBox()
+        self._project_script_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents)
+        script_row.addWidget(self._project_script_combo, 1)
+        btn_run_script = ActionButton("Run script", Category.SCRIPTS,
+                                      icon_name="scripts")
+        btn_run_script.setToolTip(
+            "Run the selected Project Script. 'Standard pipeline' is built "
+            "in: validate design → run all analyses → combined analysis → "
+            "publication figures → project report.")
+        btn_run_script.clicked.connect(self._project_run_script)
+        btn_edit_scripts = ActionButton("Edit scripts…", Category.SCRIPTS,
+                                        icon_name="config")
+        btn_edit_scripts.setToolTip(
+            "Open the Script Editor on project.yaml — Project Scripts plus "
+            "the experiment scripts held centrally for every replicate.")
+        btn_edit_scripts.clicked.connect(self._project_edit_scripts)
+        script_row.addWidget(btn_run_script)
+        script_row.addWidget(btn_edit_scripts)
+        card.add_body(script_row)
+
+        card.setVisible(False)
+        self._cards["projectview"] = card
+        ## Above the Load card: when a Project is open, its view is the main
+        ## working surface.
+        self._cards_lay.insertWidget(1, card)
+
+    def _effective_project_dir(self):
+        """The Project the view represents: the selected directory itself, or
+        the enclosing Project when a replicate inside one is loaded."""
+        from .. import project as prj
+
+        if not self._project_dir:
+            return None
+        if prj.is_project_dir(self._project_dir):
+            return Path(self._project_dir)
+        return self._parent_project_dir()
+
+    def _current_project(self):
+        """The effective Project, loaded — or None (with the design-mismatch
+        error surfaced when that is why)."""
+        from .. import project as prj
+
+        root = self._effective_project_dir()
+        if root is None:
+            return None
+        try:
+            return prj.Project(str(root))
+        except Exception as err:  # noqa: BLE001
+            self._log_issue(f"Project failed to load: {err}")
+            self._projectview_summary.setText(
+                f"<b style='color:#dc2626'>Project failed to load:</b> {err}")
+            self._cards["projectview"].setVisible(True)
+            return None
+
+    def _refresh_project_view(self) -> None:
+        from .. import project as prj
+
+        card = self._cards.get("projectview")
+        if card is None:
+            return
+        self._update_up_button()
+        ## The card stays up while a replicate is loaded: it represents the
+        ## enclosing Project, with the current replicate highlighted, so
+        ## project actions and replicate-hopping stay one click away.
+        root = self._effective_project_dir()
+        if root is None:
+            card.setVisible(False)
+            return
+        project = self._current_project()
+        if project is None:
+            return
+        inside = str(root) != str(self._project_dir)
+        current_name = Path(self._project_dir).name if inside else None
+        factors = ";  ".join(
+            f"{k}: {', '.join(v)}" for k, v in project.design_factors.items())
+        lines = [f"<b>{project.name}</b> — "
+                 f"{project.experiment_type.display_name}, "
+                 f"{len(project.experiment_names)} replicate(s)"]
+        if factors:
+            lines.append(factors)
+        for warning in project.warnings:
+            lines.append(f"<i>Note: {warning}</i>")
+        self._projectview_summary.setText("<br>".join(lines))
+
+        self._exp_table.setRowCount(0)
+        for name in project.experiment_names:
+            st = project.experiment_status(name)
+            row = self._exp_table.rowCount()
+            self._exp_table.insertRow(row)
+            flies = str(st["flies"]) if st["analyzed"] else "not analyzed"
+            values = [name, flies,
+                      str(st["excluded"]) if st["excluded"] is not None else "—",
+                      str(st["flagged"]) if st["flagged"] is not None else "—",
+                      "yes" if st["report"] else "no"]
+            for col, value in enumerate(values):
+                self._exp_table.setItem(row, col, QTableWidgetItem(value))
+            if current_name is not None and name == current_name:
+                self._exp_table.selectRow(row)
+
+        # Script picker: the built-in Standard pipeline plus authored scripts.
+        self._project_script_combo.blockSignals(True)
+        self._project_script_combo.clear()
+        self._project_script_combo.addItem("Standard pipeline (built-in)",
+                                           None)
+        for script in project.scripts:
+            self._project_script_combo.addItem(
+                str(script.get("name", "Untitled")), script.get("name"))
+        self._project_script_combo.blockSignals(False)
+        card.setVisible(True)
+
+    def _parent_project_dir(self):
+        """The enclosing Project directory when the current directory is a
+        replicate inside one, else None."""
+        from .. import project as prj
+
+        if not self._project_dir:
+            return None
+        parent = Path(self._project_dir).parent
+        if prj.is_project_dir(parent) and not prj.is_project_dir(
+                self._project_dir):
+            return parent
+        return None
+
+    def _update_up_button(self) -> None:
+        import yaml as _yaml
+
+        from .. import project as prj
+
+        parent = self._parent_project_dir()
+        if parent is None:
+            self._up_btn.setVisible(False)
+            return
+        try:
+            with open(parent / prj.PROJECT_FILENAME, encoding="utf-8") as fh:
+                name = str((_yaml.safe_load(fh) or {}).get("name")
+                           or parent.name)
+        except Exception:  # noqa: BLE001
+            name = parent.name
+        self._up_btn.setText(f"⬆ Project: {name}")
+        self._up_btn.setToolTip(f"Back to the Project view ({parent})")
+        self._up_btn.setVisible(True)
+
+    def _go_up_to_project(self) -> None:
+        parent = self._parent_project_dir()
+        if parent is not None:
+            self._set_project_dir(parent)
+
+    def _open_selected_replicate(self, item) -> None:
+        name_item = self._exp_table.item(item.row(), 0)
+        root = self._effective_project_dir()
+        if name_item is None or root is None:
+            return
+        self._set_project_dir(root / name_item.text())
+
+    def _project_run_all(self) -> None:
+        project = self._current_project()
+        if project is None:
+            return
+
+        def _do() -> str:
+            failures = project.run_all()
+            if failures:
+                raise RuntimeError(
+                    f"{len(failures)} replicate(s) failed: "
+                    + "; ".join(failures))
+            return (f"Ran {len(project.experiment_names)} replicate "
+                    f"analyses (with reports).")
+
+        self._spawn_task("Run all experiments", _do)
+
+    def _project_build_combined(self) -> None:
+        project = self._current_project()
+        if project is None:
+            return
+
+        def _do() -> str:
+            result = project.build_combined_analysis()
+            msg = f"Combined analysis written ({len(result['written'])} files)."
+            if result["missing"]:
+                msg += (" Not yet analyzed (omitted): "
+                        + ", ".join(result["missing"]))
+            return msg
+
+        self._spawn_task("Build combined analysis", _do)
+
+    def _project_report(self) -> None:
+        project = self._current_project()
+        if project is None:
+            return
+        self._spawn_task("Project report", lambda: project.create_report())
+
+    def _project_ai_narrative(self) -> None:
+        from ..ai import available_providers
+
+        project = self._current_project()
+        if project is None:
+            return
+        providers = [p.provider_name for p in available_providers()]
+        if not providers:
+            self._warn("No AI provider key found (.env: ANTHROPIC_API_KEY "
+                       "or OPENAI_API_KEY).")
+            return
+        choice, ok = QInputDialog.getItem(
+            self, "AI narrative", "Provider:", providers, 0, False)
+        if not ok:
+            return
+
+        def _do() -> str:
+            project.generate_ai_summary(choice)
+            return ("AI narrative saved — the next Project report embeds it. "
+                    "It summarizes the pipeline's numbers; it performs no "
+                    "analysis of its own.")
+
+        self._spawn_task("AI narrative", _do)
+
+    def _project_add_experiment(self) -> None:
+        project = self._current_project()
+        if project is None:
+            return
+        name, ok = QInputDialog.getText(
+            self, "Add experiment", "New replicate directory name:")
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        target = Path(self._project_dir) / name
+        if target.exists():
+            self._warn(f"'{name}' already exists.")
+            return
+        import yaml as _yaml
+        cfg = project.scaffold_replicate_config()
+        target.mkdir(parents=True)
+        (target / "data").mkdir()
+        with open(target / "tracking_config.yaml", "w",
+                  encoding="utf-8") as handle:
+            _yaml.safe_dump(cfg, handle, sort_keys=False, allow_unicode=True)
+        self._log.append_line(
+            f"Created replicate '{name}' with the project design. Add the "
+            "DTrack export to its data/ folder and adjust region treatments "
+            "in the Config Editor if needed.")
+        self._refresh_project_view()
+
+    def _project_run_script(self) -> None:
+        from ..script_editor.project_actions import (
+            STANDARD_PIPELINE,
+            run_project_script,
+        )
+
+        project = self._current_project()
+        if project is None:
+            return
+        name = self._project_script_combo.currentData()
+        if name is None:
+            script = STANDARD_PIPELINE
+        else:
+            script = project.find_script(str(name))
+            if script is None:
+                self._warn(f"No project script named '{name}'.")
+                return
+
+        def _do() -> str:
+            figures: list = []
+            run_project_script(
+                script, project, log_cb=print,
+                figure_cb=lambda title, fig: figures.append(title))
+            msg = f"Project script '{script.get('name')}' complete."
+            if figures:
+                msg += (f" ({len(figures)} figure(s) were produced by "
+                        "replicate steps; open a replicate to view plots.)")
+            return msg
+
+        self._spawn_task(f"Project script: {script.get('name')}", _do)
+
+    def _project_edit_scripts(self) -> None:
+        from .. import project as prj
+        from ..script_editor.window import ScriptEditorWindow
+
+        root = self._effective_project_dir()
+        if root is None:
+            return
+        window = ScriptEditorWindow(Path(root) / prj.PROJECT_FILENAME,
+                                    parent=self)
+        window.scriptsSaved.connect(
+            lambda _path: self._refresh_project_view())
+        window.show()
+        self._script_editor_win = window   # keep a reference alive
+
+    def _new_project(self) -> None:
+        """Open the Create/Edit Project dialog (the project.yaml editor)."""
+        start = str(self._project_dir) if self._project_dir else os.getcwd()
+        dialog = ProjectInfoDialog(self, start_dir=start)
+        if dialog.exec() and dialog.saved_dir:
+            self._set_project_dir(dialog.saved_dir)
+
     # ---------------- Tools card ----------------
 
     def _build_tools_card(self) -> None:
@@ -665,24 +1040,6 @@ class HubWindow(QMainWindow):
                 "Assign region treatments in the Config Editor, then add the "
                 "DTrack export to data/ before loading.")
 
-    def _on_mode_changed(self) -> None:
-        is_batch = self._mode_batch.isChecked()
-        self._load_btn.setText("Run batch script" if is_batch else "Load experiment")
-        # Single-project analyses only make sense for single mode
-        for btn in (
-            self._btn_run_analysis,
-            self._btn_run_qc,
-            self._btn_create_report,
-        ):
-            btn.setVisible(not is_batch)
-        # Scripts and AI cards run against a single loaded experiment; disable
-        # them wholesale in batch mode so only the load card's "Run batch
-        # script" button stays interactive.
-        for key in ("scripts", "ai"):
-            card = self._cards.get(key)
-            if card is not None:
-                card.setEnabled(not is_batch)
-
     def _set_project_dir(self, path: str | Path) -> None:
         p = Path(path).expanduser().resolve()
         self._project_dir = p
@@ -694,7 +1051,10 @@ class HubWindow(QMainWindow):
         # Populate config combo
         self._config_combo.blockSignals(True)
         self._config_combo.clear()
-        yamls = sorted([f.name for f in p.glob("*.yaml")]) if p.exists() else []
+        ## project.yaml and plot_specs.yaml are not tracking configs.
+        _NOT_CONFIGS = {"project.yaml", "plot_specs.yaml"}
+        yamls = sorted([f.name for f in p.glob("*.yaml")
+                        if f.name not in _NOT_CONFIGS]) if p.exists() else []
         if not yamls:
             yamls = ["tracking_config.yaml"]
         for name in yamls:
@@ -704,6 +1064,7 @@ class HubWindow(QMainWindow):
         self._config_combo.blockSignals(False)
         self._log.append_line(f"Project: {p}")
         self._on_config_changed()
+        self._refresh_project_view()
 
     def _reload_project(self) -> None:
         if self._project_dir:
@@ -865,8 +1226,12 @@ class HubWindow(QMainWindow):
     # ==================================================================
 
     def _load_experiment(self) -> None:
-        if self._mode_batch.isChecked():
-            self._run_batch_scripts_per_subdir()
+        from .. import project as prj
+        if self._project_dir and prj.is_project_dir(self._project_dir):
+            self._warn(
+                "This is a Project directory. Double-click a replicate in the "
+                "Experiments table to load it, or use the Project actions."
+            )
             return
         if not self._project_dir:
             self._warn("Choose a project directory first.")
@@ -1144,115 +1509,6 @@ class HubWindow(QMainWindow):
 
             self._spawn_task("Pairwise", _do)
 
-    def _run_batch_scripts_per_subdir(self) -> None:
-        """Run the script named ``batch`` against every immediate subdirectory
-        of the project directory. Each subdir is treated as its own project:
-        scripts are loaded from ``<subdir>/tracking_config.yaml``. Subdirs
-        that don't define a ``batch`` script are reported as warnings and
-        skipped."""
-        from ..script_editor.runner import load_scripts, run_script
-
-        if self._project_dir is None:
-            self._warn("Choose a project directory first.")
-            return
-        parent = self._project_dir
-        if not parent.is_dir():
-            self._warn(f"Project directory is not a directory: {parent}")
-            return
-        subdirs = sorted(d for d in parent.iterdir() if d.is_dir())
-        if not subdirs:
-            self._warn(f"No subdirectories found in {parent}.")
-            return
-
-        figures: list[tuple[str, object]] = []
-        worker_log: list[str] = []
-        issues: list[str] = []  # warning/error lines, mirrored to the Errors tab
-
-        def _log_cb(msg: str) -> None:
-            worker_log.append(str(msg))
-
-        def _issue(msg: str) -> None:
-            worker_log.append(msg)
-            issues.append(msg)
-
-        def _fig_cb(title: str, fig) -> None:
-            figures.append((title, fig))
-
-        def _find_config(subdir: Path) -> Path | None:
-            for entry in subdir.iterdir():
-                if entry.is_file() and entry.name.lower() == "tracking_config.yaml":
-                    return entry
-            return None
-
-        def _find_batch_script(scripts: list[dict]) -> dict | None:
-            for s in scripts:
-                if str(s.get("name", "")).strip().lower() == "batch":
-                    return s
-            return None
-
-        def _do() -> str:
-            ran = 0
-            skipped_no_config = 0
-            skipped_no_script = 0
-            failed = 0
-            for sub in subdirs:
-                cfg = _find_config(sub)
-                if cfg is None:
-                    _issue(f"[batch] {sub.name}: no tracking_config.yaml — skipped.")
-                    skipped_no_config += 1
-                    continue
-                try:
-                    scripts = load_scripts(cfg)
-                except Exception as err:  # noqa: BLE001
-                    _issue(f"[batch] {sub.name}: failed to read scripts ({err}) — skipped.")
-                    failed += 1
-                    continue
-                script = _find_batch_script(scripts)
-                if script is None:
-                    _issue(
-                        f"[batch] {sub.name}: no script named 'batch' in {cfg.name} — skipped."
-                    )
-                    skipped_no_script += 1
-                    continue
-                worker_log.append(f"── Running 'batch' in {sub.name} ──")
-                try:
-                    run_script(
-                        script,
-                        project_dir=sub,
-                        log_cb=_log_cb,
-                        figure_cb=_fig_cb,
-                        exp=None,
-                    )
-                    ran += 1
-                except Exception as err:  # noqa: BLE001
-                    _issue(f"[batch] {sub.name}: script failed: {err}")
-                    failed += 1
-            return (
-                f"Batch script complete: {ran} ran, "
-                f"{skipped_no_script} without 'batch' script, "
-                f"{skipped_no_config} without config, "
-                f"{failed} failed (of {len(subdirs)} subdirs)."
-            )
-
-        def _on_ok(msg: str) -> None:
-            for ln in worker_log:
-                self._log.append_line(ln)
-            for ln in issues:
-                self._err_log.append_line(ln)
-            interactive = self._interactive_checkbox.isChecked()
-            for title, fig in figures:
-                self._plot_dock.add_figure(title, fig, interactive=interactive)
-            self._log.append_line(msg)
-
-        def _on_fail(msg: str) -> None:
-            for ln in worker_log:
-                self._log.append_line(ln)
-            for ln in issues:
-                self._err_log.append_line(ln)
-            self._log_issue(msg)
-
-        self._spawn_task_with_callbacks("Batch script", _do, _on_ok, _on_fail)
-
     def _spawn_task(self, task_name: str, fn: Callable[[], object]) -> None:
         self._spawn_task_with_callbacks(task_name, fn, self._on_task_ok, self._on_task_failed)
 
@@ -1375,6 +1631,11 @@ class HubWindow(QMainWindow):
             self._worker = None
         self._progress.setVisible(False)
         self._set_busy(False)
+        ## Any finished task may have changed replicate artifacts (a Run
+        ## Analysis on the loaded experiment included), so the project view's
+        ## status table refreshes here — the one GUI-thread point every task
+        ## passes through.
+        self._refresh_project_view()
 
     def _set_busy(self, busy: bool) -> None:
         for btn in (
@@ -1403,8 +1664,6 @@ class HubWindow(QMainWindow):
             card = self._cards.get(key)
             if card is None:
                 continue
-            if key == "scripts" and self._mode_batch.isChecked():
-                continue  # already disabled wholesale by _on_mode_changed
             card.setEnabled(not busy)
 
     # ==================================================================
@@ -1665,16 +1924,20 @@ class HubWindow(QMainWindow):
 
         self._spawn_task("Combine summaries", _do_combine)
 
-    def _launch_subapp(self, which: str) -> None:
-        """Launch the Config or QC viewer in a separate process.
+    def _launch_subapp(self, which: str, directory=None) -> None:
+        """Launch a child app in a separate process.
 
         The child outlives the Hub on purpose, so the user can close the Hub and
         keep editing. We keep the handles only so a child that dies immediately
         (bad install, import error) gets reported instead of vanishing silently.
+        *directory* overrides the selected directory (the Plot Editor is
+        project-level, so its button passes the effective Project root even
+        when a replicate is the current directory).
         """
         args = [sys.executable, "-m", "pytrackinganalysis", which]
-        if self._project_dir:
-            args.append(str(self._project_dir))
+        target = directory if directory is not None else self._project_dir
+        if target:
+            args.append(str(target))
         try:
             process = subprocess.Popen(args, close_fds=True)
         except Exception as err:  # noqa: BLE001
@@ -1854,6 +2117,334 @@ def _run_pairwise_flat(exp) -> None:
     with open(path, "w") as f:
         f.write(text)
     print(f"Saved: {path}")
+
+
+class ProjectInfoDialog(QDialog):
+    """Create or edit a Project's ``project.yaml`` (ADR-0005): the directory
+    that will hold the replicate experiments, the project's display name, and
+    free-text notes (rendered near the top of the Project Report)."""
+
+    def __init__(self, parent=None, start_dir: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Create project")
+        self.setMinimumWidth(560)
+        self.saved_dir: str | None = None
+
+        from .. import project as prj
+        self._prj = prj
+
+        outer = QVBoxLayout(self)
+        intro = QLabel(
+            "A Project is a directory whose subdirectories are replicate "
+            "experiments of one design. This writes its project.yaml — "
+            "choosing a directory that already is a Project edits it instead."
+        )
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        dir_row = QHBoxLayout()
+        self.dir_edit = QLineEdit(start_dir or "")
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        dir_row.addWidget(self.dir_edit, 1)
+        dir_row.addWidget(browse)
+        holder = QWidget()
+        holder.setLayout(dir_row)
+        form.addRow("Directory:", holder)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("defaults to the directory name")
+        form.addRow("Project name:", self.name_edit)
+
+        self.notes_edit = QPlainTextEdit()
+        self.notes_edit.setPlaceholderText(
+            "Optional notes — shown near the top of the Project Report.")
+        self.notes_edit.setMaximumHeight(80)
+        form.addRow("Notes:", self.notes_edit)
+        outer.addLayout(form)
+
+        # ---- shared design (the authority every replicate must match) ----
+        from .. import experiment_types as _et
+
+        design_box = QGroupBox("Shared design (enforced on every replicate)")
+        dform = QFormLayout(design_box)
+        dform.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        self.type_combo = QComboBox()
+        for t in _et.available_experiment_types():
+            self.type_combo.addItem(t.display_name, t.name)
+        ## A design-bearing Project is almost always typed: default to the
+        ## first concrete type rather than Custom.
+        for i in range(self.type_combo.count()):
+            if self.type_combo.itemData(i) != "Custom":
+                self.type_combo.setCurrentIndex(i)
+                break
+        self.type_combo.currentIndexChanged.connect(self._on_type_changed)
+        dform.addRow("Experiment type:", self.type_combo)
+
+        self.factors_table = QTableWidget(0, 2)
+        self.factors_table.setHorizontalHeaderLabels(
+            ["Factor", "Levels (comma-separated)"])
+        self.factors_table.horizontalHeader().setStretchLastSection(True)
+        self.factors_table.verticalHeader().setVisible(False)
+        self.factors_table.setMaximumHeight(110)
+        dform.addRow("Design factors:", self.factors_table)
+        frow = QHBoxLayout()
+        add_f = QPushButton("Add factor")
+        add_f.clicked.connect(lambda: self.factors_table.insertRow(
+            self.factors_table.rowCount()))
+        rm_f = QPushButton("Remove selected")
+        rm_f.clicked.connect(self._remove_factor_row)
+        frow.addWidget(add_f)
+        frow.addWidget(rm_f)
+        frow.addStretch()
+        fholder = QWidget()
+        fholder.setLayout(frow)
+        dform.addRow("", fholder)
+
+        self.cutoffs_edit = QLineEdit()
+        self.cutoffs_edit.setPlaceholderText("e.g. 10, 70")
+        dform.addRow("Facet cutoffs (min):", self.cutoffs_edit)
+        self.labels_edit = QLineEdit()
+        self.labels_edit.setPlaceholderText(
+            "e.g. Acclimation, Experiment, Cooldown")
+        dform.addRow("Phase names:", self.labels_edit)
+        self.min_transitions_edit = QLineEdit()
+        self.min_transitions_edit.setMaximumWidth(80)
+        dform.addRow("min_transitions:", self.min_transitions_edit)
+        self.min_movement_edit = QLineEdit()
+        self.min_movement_edit.setMaximumWidth(80)
+        dform.addRow("min_movement (mm/min):", self.min_movement_edit)
+        self.counting_edit = QLineEdit()
+        self.counting_edit.setPlaceholderText("e.g. Light, NoLight")
+        self.counting_edit.setToolTip(
+            "Counting-region NAMES, in order — enforced on every replicate; "
+            "each replicate keeps its own aliases.")
+        dform.addRow("Counting regions:", self.counting_edit)
+        outer.addWidget(design_box)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+
+        self.dir_edit.textChanged.connect(self._prefill_from_dir)
+        self._prefill_from_dir()
+        self._on_type_changed()   # seed type defaults into empty fields
+
+    def _browse(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Choose (or create) the Project directory",
+            self.dir_edit.text() or os.getcwd())
+        if chosen:
+            self.dir_edit.setText(chosen)
+
+    def _prefill_from_dir(self) -> None:
+        """When the directory already is a Project, edit it: prefill name and
+        notes from its project.yaml and say so in the title."""
+        directory = self.dir_edit.text().strip()
+        if directory and self._prj.is_project_dir(directory):
+            import yaml as _yaml
+            try:
+                with open(os.path.join(directory, self._prj.PROJECT_FILENAME),
+                          encoding="utf-8") as handle:
+                    meta = _yaml.safe_load(handle) or {}
+            except Exception:  # noqa: BLE001
+                meta = {}
+            self.name_edit.setText(str(meta.get("name") or ""))
+            self.notes_edit.setPlainText(str(meta.get("notes") or ""))
+            self._load_design(dict(meta.get("design") or {})
+                              or self._design_from_experiments(directory))
+            self.setWindowTitle("Edit project")
+        else:
+            if directory and os.path.isdir(directory):
+                inferred = self._design_from_experiments(directory)
+                if inferred:
+                    self._load_design(inferred)
+            self.setWindowTitle("Create project")
+
+    def _remove_factor_row(self) -> None:
+        rows = {i.row() for i in self.factors_table.selectedIndexes()}
+        for r in sorted(rows, reverse=True):
+            self.factors_table.removeRow(r)
+
+    def _on_type_changed(self) -> None:
+        """Prefill type-derived defaults into empty design fields."""
+        from .. import experiment_types as _et
+
+        t = _et.get_experiment_type(self.type_combo.currentData())
+        if not self.cutoffs_edit.text().strip() and t.facet_cutoffs:
+            self.cutoffs_edit.setText(
+                ", ".join(str(c) for c in t.facet_cutoffs))
+        if not self.labels_edit.text().strip() and t.phase_labels:
+            self.labels_edit.setText(", ".join(t.phase_labels))
+        if not self.min_transitions_edit.text().strip() \
+                and t.default_min_transitions is not None:
+            self.min_transitions_edit.setText(str(t.default_min_transitions))
+        if not self.min_movement_edit.text().strip() \
+                and t.default_min_movement is not None:
+            self.min_movement_edit.setText(f"{t.default_min_movement:g}")
+        if not self.counting_edit.text().strip() \
+                and t.required_counting_regions:
+            self.counting_edit.setText(
+                ", ".join(t.required_counting_regions))
+
+    def _design_from_experiments(self, directory) -> dict:
+        """Infer a design from the first experiment subdirectory (migration:
+        wrapping existing replicates into a Project)."""
+        import yaml as _yaml
+
+        from .. import experiment_types as _et
+
+        try:
+            for entry in sorted(os.listdir(directory)):
+                cfg_path = os.path.join(directory, entry,
+                                        "tracking_config.yaml")
+                if not os.path.isfile(cfg_path):
+                    continue
+                with open(cfg_path, encoding="utf-8") as handle:
+                    cfg = _yaml.safe_load(handle) or {}
+                g = cfg.get("global") or {}
+                t = _et.get_experiment_type(g.get("experiment_type"))
+                design_global = {"experiment_type": t.name}
+                cutoffs = t.resolve_facet_cutoffs(g)
+                if cutoffs:
+                    design_global["facet_cutoffs"] = list(cutoffs)
+                labels = list(g.get("facet_labels") or t.phase_labels or [])
+                if labels:
+                    design_global["facet_labels"] = labels
+                factors = g.get("experimental_design_factors") or {}
+                if factors:
+                    design_global["experimental_design_factors"] = factors
+                if t.resolve_min_transitions(g) is not None:
+                    design_global["min_transitions"] = \
+                        t.resolve_min_transitions(g)
+                if t.resolve_min_movement(g) is not None:
+                    value = t.resolve_min_movement(g)
+                    design_global["min_movement"] = \
+                        int(value) if value == int(value) else value
+                design = {"global": design_global}
+                counting = list((cfg.get("counting_regions") or {}).keys())
+                if counting:
+                    design["counting_regions"] = counting
+                return design
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+
+    def _load_design(self, design: dict) -> None:
+        g = dict((design or {}).get("global") or {})
+        idx = self.type_combo.findData(
+            __import__("pytrackinganalysis.experiment_types",
+                       fromlist=["get_experiment_type"]).get_experiment_type(
+                g.get("experiment_type")).name)
+        self.type_combo.setCurrentIndex(max(idx, 0))
+        self.factors_table.setRowCount(0)
+        for factor, levels in (g.get("experimental_design_factors")
+                               or {}).items():
+            r = self.factors_table.rowCount()
+            self.factors_table.insertRow(r)
+            self.factors_table.setItem(r, 0, QTableWidgetItem(str(factor)))
+            self.factors_table.setItem(
+                r, 1, QTableWidgetItem(", ".join(str(l) for l in levels)))
+        cutoffs = g.get("facet_cutoffs") or []
+        self.cutoffs_edit.setText(", ".join(str(c) for c in cutoffs))
+        self.labels_edit.setText(
+            ", ".join(str(l) for l in (g.get("facet_labels") or [])))
+        self.min_transitions_edit.setText(
+            str(g["min_transitions"]) if "min_transitions" in g else "")
+        self.min_movement_edit.setText(
+            str(g["min_movement"]) if "min_movement" in g else "")
+        self.counting_edit.setText(
+            ", ".join(str(n) for n in (design.get("counting_regions") or [])))
+
+    def _build_design(self) -> dict | None:
+        """The design dict from the widgets, or None after showing an error."""
+        g: dict = {"experiment_type": self.type_combo.currentData()}
+        factors: dict = {}
+        for r in range(self.factors_table.rowCount()):
+            name_item = self.factors_table.item(r, 0)
+            level_item = self.factors_table.item(r, 1)
+            factor = (name_item.text().strip() if name_item else "")
+            if not factor:
+                continue
+            levels = [l.strip() for l in
+                      (level_item.text() if level_item else "").split(",")
+                      if l.strip()]
+            if not levels:
+                QMessageBox.warning(self, self.windowTitle(),
+                                    f"Factor '{factor}' needs at least one "
+                                    "level.")
+                return None
+            factors[factor] = levels
+        if factors:
+            g["experimental_design_factors"] = factors
+        text = self.cutoffs_edit.text().strip()
+        if text:
+            try:
+                cutoffs = [float(v) for v in text.split(",") if v.strip()]
+            except ValueError:
+                QMessageBox.warning(self, self.windowTitle(),
+                                    "Facet cutoffs must be numbers, "
+                                    "comma-separated.")
+                return None
+            g["facet_cutoffs"] = [int(c) if c == int(c) else c
+                                  for c in cutoffs]
+            labels = [l.strip() for l in self.labels_edit.text().split(",")
+                      if l.strip()]
+            if labels and len(labels) != len(cutoffs) + 1:
+                QMessageBox.warning(
+                    self, self.windowTitle(),
+                    f"{len(cutoffs)} cutoffs create {len(cutoffs) + 1} "
+                    f"phases — give {len(cutoffs) + 1} names or none.")
+                return None
+            if labels:
+                g["facet_labels"] = labels
+        for key, edit in (("min_transitions", self.min_transitions_edit),
+                          ("min_movement", self.min_movement_edit)):
+            text = edit.text().strip()
+            if text:
+                try:
+                    value = float(text)
+                except ValueError:
+                    QMessageBox.warning(self, self.windowTitle(),
+                                        f"{key} must be a number.")
+                    return None
+                g[key] = int(value) if value == int(value) else value
+        design: dict = {"global": g}
+        counting = [n.strip() for n in self.counting_edit.text().split(",")
+                    if n.strip()]
+        if counting:
+            design["counting_regions"] = counting
+        return design
+
+    def _save(self) -> None:
+        directory = self.dir_edit.text().strip()
+        if not directory:
+            QMessageBox.warning(self, self.windowTitle(),
+                                "Choose the Project directory.")
+            return
+        design = self._build_design()
+        if design is None:
+            return
+        try:
+            os.makedirs(directory, exist_ok=True)
+            self._prj.create_project_file(
+                directory,
+                self.name_edit.text().strip() or None,
+                self.notes_edit.toPlainText().strip(),
+                design=design)
+        except Exception as err:  # noqa: BLE001
+            QMessageBox.critical(self, self.windowTitle(),
+                                 f"Could not write project.yaml:\n{err}")
+            return
+        self.saved_dir = directory
+        self.accept()
 
 
 class BatchToolsDialog(QDialog):
