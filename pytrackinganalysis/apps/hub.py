@@ -782,7 +782,12 @@ class HubWindow(QMainWindow):
             st = project.experiment_status(name)
             row = self._exp_table.rowCount()
             self._exp_table.insertRow(row)
-            flies = str(st["flies"]) if st["analyzed"] else "not analyzed"
+            ## "no data" and "not analyzed" are different problems: the first
+            ## needs the DTrack export dropped into data/, the second a run.
+            if st["analyzed"]:
+                flies = str(st["flies"])
+            else:
+                flies = "not analyzed" if st["has_data"] else "no data"
             values = [name, "yes", flies,
                       str(st["excluded"]) if st["excluded"] is not None else "—",
                       str(st["flagged"]) if st["flagged"] is not None else "—",
@@ -873,6 +878,9 @@ class HubWindow(QMainWindow):
                 return
             if self._create_replicate_config(name) is None:
                 return
+            ## The dialog promises to OPEN the new config, not just write it —
+            ## without this the user was left hunting for the file by hand.
+            self._launch_subapp("config", directory=str(target))
         self._set_project_dir(target)
 
     def _create_replicate_config(self, name: str):

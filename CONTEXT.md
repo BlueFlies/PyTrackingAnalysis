@@ -40,6 +40,15 @@ same Plot Spec/Style system the Plot Editor saves, the pooled + mixed
 statistics tables, a per-replicate summary table, and an opt-in AI-written
 narrative (same rule as AI Summary: it summarizes, never analyzes).
 
+**Analysis Hub**:
+The main app (`pytrack`): a left rail, a horizontal **tile strip** across the
+top (Project · Experiment · Analyze · Plots · Scripts · AI — each tile shows
+only live status), and a full-width output/plots area below. All controls
+live in a tile's **anchored panel** (one open at a time; launching a task
+closes it). Tiles never move or hide — an inapplicable tile dims and its
+panel holds the fix.
+_Avoid_: card column (the pre-2026-08 layout)
+
 **Experiment Script**:
 A saved, re-runnable step list of experiment-level actions (run analysis,
 plots, report…). Lives in an Experiment's `tracking_config.yaml` `scripts:` —

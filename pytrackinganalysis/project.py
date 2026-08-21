@@ -27,17 +27,25 @@ PROJECT_FILENAME = "project.yaml"
 #: design lives in ``project.yaml`` and each replicate carries this file.
 CONFIG_FILENAME = "tracking_config.yaml"
 
-#: Subdirectories of a Project root that are its own outputs, never
-#: candidate replicates.
-_PROJECT_OUTPUT_DIRS = {"analysis", "figures", "qc"}
-
-
 def is_project_dir(path) -> bool:
     return os.path.isfile(os.path.join(str(path), PROJECT_FILENAME))
 
 
 def is_experiment_dir(path) -> bool:
     return os.path.isfile(os.path.join(str(path), CONFIG_FILENAME))
+
+
+def has_experiment_data(path) -> bool:
+    """True when *path* holds a recording: a ``data/`` subdirectory with at
+    least one ``.xlsx`` workbook (the DTrack export that defines an
+    experiment). This is the experiment-shape test for listing candidate
+    replicates in the Project view; any other subdirectory is ignored."""
+    data = os.path.join(str(path), "data")
+    try:
+        entries = os.listdir(data)
+    except OSError:
+        return False
+    return any(entry.lower().endswith(".xlsx") for entry in entries)
 
 
 def create_project_file(project_dir, name: str | None = None,
@@ -352,23 +360,24 @@ class Project:
         return cfg
 
     def unconfigured_dirs(self) -> list[str]:
-        """Immediate subdirectories that are not Experiments yet — folders
-        with no ``tracking_config.yaml``.
+        """Immediate subdirectories that hold a recording but are not
+        Experiments yet — experiment-shaped folders (a ``data/`` directory
+        with at least one ``.xlsx``, see :func:`has_experiment_data`) with no
+        ``tracking_config.yaml``.
 
-        Discovery is by config file, so a directory dropped into the Project
-        (or wrapped by creating the project.yaml around it) is invisible to
-        :attr:`experiment_names` until it has one. These are the candidates
-        :meth:`scaffold_replicate` gives a config to.
+        Membership is by config file, so such a directory is invisible to
+        :attr:`experiment_names` until it has one; these are the candidates
+        :meth:`scaffold_replicate` gives a config to. Every other
+        subdirectory (project outputs, caches, unrelated folders) is ignored
+        — the data criterion is the whole test, no denylist.
         """
         pending: list[str] = []
         for entry in sorted(os.listdir(self.project_directory)):
             sub = os.path.join(self.project_directory, entry)
             if not os.path.isdir(sub) or is_experiment_dir(sub):
                 continue
-            if entry.lower() in _PROJECT_OUTPUT_DIRS \
-                    or entry.startswith((".", "_")):
-                continue
-            pending.append(entry)
+            if has_experiment_data(sub):
+                pending.append(entry)
         return pending
 
     def scaffold_replicate(self, name: str) -> str:
@@ -418,7 +427,8 @@ class Project:
     def experiment_status(self, name: str) -> dict:
         """Cheap per-replicate status from saved artifacts (no data load)."""
         status = {"analyzed": False, "report": False, "flies": None,
-                  "excluded": None, "flagged": None}
+                  "excluded": None, "flagged": None,
+                  "has_data": has_experiment_data(self.experiment_dir(name))}
         path = self._summary_csv(name)
         if path:
             status["analyzed"] = True

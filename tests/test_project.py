@@ -55,6 +55,9 @@ def _make_project(tmp_path, names=("Rep1", "Rep2"), with_analysis=True,
     for i, name in enumerate(names):
         d = tmp_path / name
         (d / "analysis").mkdir(parents=True)
+        # A replicate holds a recording: data/ with at least one xlsx.
+        (d / "data").mkdir()
+        (d / "data" / "Rec.xlsx").write_bytes(b"")
         cfg = (config_for or (lambda _n: _exp_config()))(name)
         (d / "tracking_config.yaml").write_text(
             yaml.safe_dump(cfg), encoding="utf-8")
@@ -602,21 +605,32 @@ def _project_with_bare_dirs(tmp_path, names=("FirstOne", "SecondOne")):
     prj.create_project_file(str(tmp_path), "Bare",
                             design=copy.deepcopy(_DESIGN))
     for name in names:
-        (tmp_path / name / "data").mkdir(parents=True)
+        data = tmp_path / name / "data"
+        data.mkdir(parents=True)
+        # An experiment directory is one with data/ + at least one xlsx.
+        (data / f"{name}.xlsx").write_bytes(b"")
     (tmp_path / "analysis").mkdir()          # a project output, not a replicate
     return prj.Project(str(tmp_path))
 
 
-def test_unconfigured_dirs_lists_folders_without_a_config(tmp_path):
+def test_unconfigured_dirs_lists_only_experiment_shaped_folders(tmp_path):
     p = _project_with_bare_dirs(tmp_path)
-    assert p.experiment_names == []          # discovery is by config file
+    assert p.experiment_names == []          # membership is by config file
     assert p.unconfigured_dirs() == ["FirstOne", "SecondOne"]
 
-    # Project outputs and dot/underscore folders are never candidates.
+    # A subdirectory is a candidate iff data/ holds at least one .xlsx —
+    # everything else (outputs, caches, unrelated folders) is ignored.
     (tmp_path / "figures").mkdir()
     (tmp_path / ".cache").mkdir()
+    (tmp_path / "random_notes").mkdir()                    # no data/ at all
+    (tmp_path / "EmptyData" / "data").mkdir(parents=True)  # data/, no xlsx
+    (tmp_path / "EmptyData" / "data" / "readme.txt").write_text("x")
     assert prj.Project(str(tmp_path)).unconfigured_dirs() == \
         ["FirstOne", "SecondOne"]
+
+    # Case-insensitive on the workbook extension.
+    (tmp_path / "EmptyData" / "data" / "run.XLSX").write_bytes(b"")
+    assert "EmptyData" in prj.Project(str(tmp_path)).unconfigured_dirs()
 
 
 def test_scaffold_replicate_adopts_an_existing_folder(tmp_path):
@@ -711,6 +725,37 @@ def test_experiment_configs_dialog_creates_and_edits(qapp, tmp_path, monkeypatch
     dlg._edit_selected()
     assert launched and launched[0][-1] == str(tmp_path / "FirstOne")
     dlg.close()
+    win.close()
+
+
+def test_hub_double_click_creates_and_opens_the_config(qapp, tmp_path,
+                                                       monkeypatch):
+    # The "Create config" prompt says the new config will be created AND
+    # opened; it used to only write the file and select the directory.
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    # An experiment-shaped folder (data/ + xlsx) without a config.
+    fresh_data = tmp_path / "Fresh" / "data"
+    fresh_data.mkdir(parents=True)
+    (fresh_data / "Fresh.xlsx").write_bytes(b"")
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    launched = []
+    monkeypatch.setattr(
+        HubWindow, "_launch_subapp",
+        lambda self, which, directory=None: launched.append((which, directory)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    rows = {win._exp_table.item(r, 0).text(): r
+            for r in range(win._exp_table.rowCount())}
+    win._open_selected_replicate(win._exp_table.item(rows["Fresh"], 0))
+    assert (tmp_path / "Fresh" / "tracking_config.yaml").is_file()
+    assert launched == [("config", str(tmp_path / "Fresh"))]
     win.close()
 
 
