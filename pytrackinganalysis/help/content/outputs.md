@@ -1,6 +1,6 @@
 # Outputs
 
-All outputs are written relative to the project directory. Open them from the Hub **Tools** card (**Open analysis folder** / **Open qc folder**).
+All outputs are written relative to the project directory. Open them from the Hub **Tools** panel (sidebar) (**Open analysis folder** / **Open qc folder**).
 
 ## `analysis/` — main results
 

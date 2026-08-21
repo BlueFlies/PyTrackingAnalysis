@@ -13,8 +13,8 @@ The pipeline creates `analysis/` and `qc/` on first run.
 ## First-time workflow
 
 1. **Create / open the project folder** in the Analysis Hub (**Project → Browse…**).
-2. **Edit the config** — Project card → **Edit config…**, or run `pytrack-config`. Set tracking type, rig, design factors, and regions.
-3. **Load the experiment** — Hub **Load** card → **Single project** → **Load experiment**.
+2. **Edit the config** — Project tile → **Edit config…**, or run `pytrack-config`. Set tracking type, rig, design factors, and regions.
+3. **Load the experiment** — click the **Experiment** tile → **Load experiment**. (Tiles across the top show live status; every tile opens its controls in a drop-down panel.)
 4. **Run analysis** — **Analyze → Run Analysis** (or open **Scripts** and run a saved recipe).
 5. **Check quality** — **QC viewer…** or `pytrack-qc` for per-tracker quality and trajectories.
 

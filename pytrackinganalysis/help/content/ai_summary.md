@@ -7,7 +7,7 @@ performs its own.
 
 ## Enabling it
 
-The AI card's action is offered only when a provider API key is available.
+The AI panel's action is offered only when a provider API key is available.
 Put one (or both) of these in a `.env` file — in the folder you launch the app
 from, or in `~/.config/pytrackinganalysis/.env` — or in the environment:
 
@@ -22,7 +22,7 @@ up as an error message when a summary is requested.
 ## Generating a summary
 
 1. Load an experiment and run the analysis.
-2. In the **AI** card, click **AI summary…**, pick a provider and model, and
+2. Open the **AI** tile and click **AI summary…**, pick a provider and model, and
    click **Generate**. The choice is remembered for next time. The model list
    is fetched from each provider and cached; it refreshes itself when it is
    more than a month old, and the refresh button next to the model dropdown
@@ -42,7 +42,7 @@ nothing else changes — the report is never blocked by the AI.
   exactly when `<name>_AI_Summary.txt` exists.
 - **Re-running the analysis deletes the saved summary.** It describes a single
   analysis run; once the figures and statistics change, keeping it would put
-  stale prose next to fresh results. Regenerate it from the AI card after the
+  stale prose next to fresh results. Regenerate it from the AI panel after the
   run.
 - Regenerating replaces the saved summary and rebuilds the report.
 

@@ -744,12 +744,28 @@ AI provider/model — are tracked there too.
 
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
-The sidebar carries two creation shortcuts — **Create project** (write or
-edit a `project.yaml`, turning a directory of replicates into a Project) and
-**Create experiment** (scaffold a new experiment directory from an Experiment
-Type) — above the card entries:
+The Hub's layout (see `docs/adr/0007`) is a **tile strip** across the top —
+six compact live-status tiles: **Project · Experiment · Analyze · Plots ·
+Scripts · AI** — with the **output area at full width** underneath. A tile
+shows only status (the project's name and replicate health, the loaded
+experiment's fly counts, whether analysis is faceted, …); **clicking it
+drops an anchored panel** holding all of that area's controls. One panel is
+open at a time; **Esc** or clicking anywhere else closes it, and **starting
+any task closes it automatically** so the streaming log and plots are
+immediately visible. Tiles never move or hide: an inapplicable tile is
+dimmed with a hint, and its panel contains exactly the control that fixes
+the missing state (the dimmed Experiment tile opens the panel with the Load
+button in it).
 
-- **Project** — pick the directory (an experiment directory *or* a Project;
+The left sidebar opens the same panels (Tools lives *only* there), and
+carries the two creation shortcuts — **Create project** (write or edit a
+`project.yaml`, turning a directory of replicates into a Project) and
+**Create experiment** (scaffold a new experiment directory from an
+Experiment Type).
+
+The panels:
+
+- **Project** (also holds the Project view) — pick the directory (an experiment directory *or* a Project;
   the text box shows just the folder name to stay readable; hover it for the
   full path), choose a YAML config, launch the Config Editor or QC Viewer in
   their own windows, and **Reload** to re-scan the folder.  A **Project**
@@ -759,10 +775,12 @@ Type) — above the card entries:
   **Experiment configs…** in the Project view instead.  When the loaded
   experiment is a replicate inside a Project, an **Up to project** button
   returns to the enclosing Project view.
-- **Load** — **Load experiment** loads and caches the Experiment so
-  subsequent analyses re-use the parsed data; **Create project…** creates or
+- **Experiment** — **Load experiment** loads and caches the Experiment so
+  subsequent analyses re-use the parsed data (the Experiment tile then shows
+  its name and fly/excluded/flagged counts); **Create project…** creates or
   edits a `project.yaml` for the selected directory.
-- **Project view** (shown only when the selected directory is a Project) —
+- **Project view** (inside the Project panel; populated when the selected
+  directory is — or sits inside — a Project) —
   the main working surface for replicates: a table with per-replicate status
   (**Experiment, Config, Flies, Excluded, Flagged, Report**; double-click a
   row to open that replicate), plus **Experiment configs…** and
@@ -801,7 +819,7 @@ Type) — above the card entries:
   bulk-rename sub-directories, copy a YAML into every sub-directory, combine
   summary CSVs across sub-directories), and clear the matplotlib cache.
 
-#### The plot dock (right-hand side)
+#### The output area (below the strip)
 
 - The first tab is always **Output** — the chronological log of everything the
   Hub does.

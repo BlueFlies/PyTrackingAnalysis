@@ -21,4 +21,4 @@ For each subfolder, only its script named `batch` is executed, with that subfold
 
 When finished, a summary line reports how many subfolders ran, were skipped, or failed. Figures the scripts produce open as plot tabs.
 
-**Batch tools** (Tools card) helps prepare parent folders: convert to `data/` layout, rename subdirs, copy YAML, combine summary CSVs.
+**Batch tools** (Tools panel, in the sidebar) helps prepare parent folders: convert to `data/` layout, rename subdirs, copy YAML, combine summary CSVs.
