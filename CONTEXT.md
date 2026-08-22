@@ -8,22 +8,26 @@ This glossary fixes the domain language; it is not a spec.
 **Batch**:
 A directory whose immediate subdirectories holding a `project.yaml` are its
 Projects — the same structural rule a Project applies to its Experiments, one
-level up. Purely a processing convenience: it exists to run many Projects
-unattended, its only output is a per-Project run summary, and it never pools
+level up. Only existing Projects qualify: a **Batch Run** (one execution of
+batch mode over a Batch) never creates or upgrades a `project.yaml`, and
+children that are not Projects are skipped with a log line. Purely a
+processing convenience: it exists to run many Projects unattended, it is not
+itself a Project and holds no analysis outputs of its own, it never pools
 results across Projects (each Project has its own design; there is no
-cross-Project analysis). Nothing marks a Batch — being one is structural, and
-a `batch.yaml` at its root appears only once batch-level scripting is
-authored, because unlike a Project a Batch has no authority to declare.
-Batch mode runs one **designated Project Script** in every Project
-(continue-on-error, per-Project log prefixes, run summary; default: the
-Standard Pipeline, so zero authoring yields a full run). `batch.yaml` holds
-that designation (`script:`) and a central `project_scripts:` section — one
-recipe serving every Project without being copied, the `experiment_scripts:`
-idea one level up.
-_Avoid_: study, collection, batch script (there is no third script level —
-the thing batch mode runs IS a Project Script). Unrelated to **Batch Tools**
-(per-Project directory operations) and to the retired batch-over-experiments
-mode.
+cross-Project analysis), and its only product is a per-Project run summary.
+Nothing marks a Batch — being one is structural, and a `batch.yaml` at its
+root appears only once batch-level scripting is authored, because unlike a
+Project a Batch has no authority to declare. A Batch Run executes one
+**designated Project Script** in every Project (continue-on-error,
+per-Project log prefixes; default: the Report Pipeline, so zero authoring
+means "Create report on every Project"). `batch.yaml` holds that
+designation (`script:`) and a
+central `project_scripts:` section — one recipe serving every Project without
+being copied, the `experiment_scripts:` idea one level up.
+_Avoid_: study, collection, batch root (the Batch IS the directory), batch
+parent, batch script (there is no third script level — the thing a Batch Run
+runs IS a Project Script). Unrelated to **Batch Tools** (per-Project
+directory operations) and to the retired batch-over-experiments mode.
 
 **Project**:
 A directory with a `project.yaml` at its root whose immediate subdirectories
@@ -82,7 +86,9 @@ A saved, re-runnable step list of experiment-level actions (run analysis,
 plots, report…). Lives in an Experiment's `tracking_config.yaml` `scripts:` —
 or, for replicates, centrally in the Project's `experiment_scripts:` section,
 where one recipe serves every replicate without being copied into their
-configs.
+configs. Central scripts run only through the bridge (`run_in_experiments`,
+broadcast or targeted); the Hub's Scripts tile lists solely the loaded
+experiment's own `scripts:`.
 _Avoid_: recipe, macro
 
 **Project Script**:
@@ -92,14 +98,30 @@ A saved step list of project-level actions (`run_in_experiments`,
 `project.yaml` `scripts:`. Same shape and visual editor as an Experiment
 Script, but a separate action registry — levels cannot mix; the only bridge
 is `run_in_experiments`, which runs a named Experiment Script in every
-replicate (project-defined first, each replicate's own as fallback,
-continue-on-error).
+replicate — or, with its optional `only:` list of replicate directory names,
+in just those replicates (project-defined first, each replicate's own as
+fallback, continue-on-error). A replicate where the name resolves nowhere is
+logged, counted in the failure summary, and the run continues; unknown
+replicate names and unresolvable script names are flagged by pre-run
+validation when a Project is in hand.
 
 **Standard Pipeline**:
-The built-in Project Script every Project can run without authoring anything:
+A built-in Project Script every Project can run without authoring anything:
 validate design → run all analyses → build combined analysis → render
 publication figures → project report. Never written to `project.yaml`, so it
 tracks the shipped default.
+
+**Report Pipeline**:
+The built-in Project Script matching the Hub's Create report button plus
+curated figures: run all analyses → build combined analysis → render
+publication figures (skipped when the Project has no `plot_specs.yaml`) →
+project report. The default designation for a Batch Run — preferred there
+over the Standard Pipeline because it neither gates on `validate_design`
+(which would fail Projects mid-migration) nor renders uncurated default-spec
+figures on an unattended run. Code-defined like every built-in; the
+conditional figure step never appears in yaml. Listed beside the Standard
+Pipeline in every script picker, Project and Batch alike.
+_Avoid_: default batch, batch pipeline
 
 **Experiment Type**:
 A named bundle (e.g. Valence) that selects one Tracking Type and constrains the
