@@ -70,6 +70,12 @@ TOPICS: tuple[HelpTopic, ...] = (
         "project_actions.md",
     ),
     HelpTopic(
+        "batch_run",
+        "Batch runs",
+        "Run a designated Project Script in every Project of a folder.",
+        "batch_run.md",
+    ),
+    HelpTopic(
         "plot_editor",
         "Plot Editor",
         "Project-level publication figures, plot_specs.yaml, styles, and vector exports.",

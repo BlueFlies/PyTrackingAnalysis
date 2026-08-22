@@ -12,6 +12,7 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -20,6 +21,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -96,6 +99,10 @@ class Inspector(QWidget):
         # script will inherit from the project's tracking_config.yaml when
         # left blank.
         self._inherited: dict[str, str] = {}
+        # param name → live option list for "multilist" params (e.g. the
+        # replicate directory names for run_in_experiments' `only`). Without
+        # options the widget degrades to a comma-separated line edit.
+        self._choices: dict[str, list[str]] = {}
         # param name → field widget for the currently rendered step. Used by
         # _collect_params so we never depend on form-row indexing.
         self._widgets_by_name: dict[str, QWidget] = {}
@@ -120,6 +127,14 @@ class Inspector(QWidget):
         step will fall back to when the field is left blank.
         """
         self._inherited = dict(values)
+        if self._current_index >= 0 and self._current_action is not None:
+            self.show_step(self._current_index, self._current_action, self._collect_params())
+
+    def set_choices(self, values: dict[str, list[str]]) -> None:
+        """Provide live option lists for ``multilist`` params, mapped by
+        param name (the window fills this — the inspector never reads the
+        project itself)."""
+        self._choices = {k: list(v) for k, v in values.items()}
         if self._current_index >= 0 and self._current_action is not None:
             self.show_step(self._current_index, self._current_action, self._collect_params())
 
@@ -280,6 +295,40 @@ class Inspector(QWidget):
             w.textChanged.connect(lambda _: self._validate_and_emit())
             return w
 
+        if spec.kind == "multilist":
+            if isinstance(value, (list, tuple)):
+                current = {str(v).strip() for v in value if str(v).strip()}
+            elif isinstance(value, str):
+                current = {v.strip() for v in value.split(",") if v.strip()}
+            else:
+                current = set()
+            options = self._choices.get(spec.name) or []
+            if not options:
+                # No live options to offer (no project open behind this
+                # yaml): degrade to the comma-separated line edit so
+                # hand-authoring still works.
+                w = QLineEdit()
+                if current:
+                    w.setText(", ".join(sorted(current)))
+                w.setPlaceholderText("comma-separated (blank = all)")
+                w.textChanged.connect(lambda _: self._validate_and_emit())
+                return w
+            w = QListWidget()
+            w.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            ## A saved name whose replicate has vanished stays visible and
+            ## checked — silently dropping it would rewrite the script.
+            stale = [name for name in sorted(current) if name not in options]
+            for name in list(options) + stale:
+                item = QListWidgetItem(name)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if name in current
+                                   else Qt.CheckState.Unchecked)
+                w.addItem(item)
+            w.setMaximumHeight(min(150, 22 * max(w.count(), 3) + 10))
+            w.setToolTip("Checked replicates only; none checked = all.")
+            w.itemChanged.connect(lambda _item: self._validate_and_emit())
+            return w
+
         # default: string
         w = QLineEdit()
         w.setText(str(value) if value is not None else str(spec.default or ""))
@@ -315,6 +364,14 @@ class Inspector(QWidget):
             if not raw:
                 return []
             return [x.strip() for x in raw.split(",") if x.strip()]
+        if spec.kind == "multilist":
+            if isinstance(widget, QLineEdit):  # degraded, no live options
+                raw = widget.text().strip()
+                if not raw:
+                    return []
+                return [x.strip() for x in raw.split(",") if x.strip()]
+            return [widget.item(i).text() for i in range(widget.count())
+                    if widget.item(i).checkState() == Qt.CheckState.Checked]
         return widget.text()
 
     # ------------------------------------------------------------------

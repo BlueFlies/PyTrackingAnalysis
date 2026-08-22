@@ -39,4 +39,8 @@ Project-level outputs are written at the Project root.
 - `figures/*.svg` and `figures/*.pdf` - pooled publication figures.
 - `<project>_report.pdf` - Project Report with pooled figures, statistics, replicate summary, and any saved AI narrative. In the Hub, **Create report** / **Update report** refreshes all replicate analyses, rebuilds Combined Analysis, and then writes this PDF.
 
+## Batch outputs
+
+A Batch Run writes only into each Project: their replicates' analyses and the Project-level Combined Analysis, figures, and reports listed above. The Batch folder itself gains at most a `batch.yaml`; there are no batch-level analysis outputs. See the **Batch runs** help topic.
+
 The Hub **Tools** panel opens `analysis/` and `qc/` for the currently selected directory. If a replicate is loaded, those buttons open the replicate folders; at a Project root, they open Project-level folders when they exist.

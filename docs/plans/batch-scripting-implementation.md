@@ -5,6 +5,22 @@ CONTEXT.md and ADR-0009) with the sibling session's completed work. Delete
 once shipped. Decisions live in the ADRs; this file is only the remaining
 work.
 
+**STATUS 2026-08-21: Lanes 1 and 2 are IMPLEMENTED and green (full suite:
+452 passed).** New code: `pytrackinganalysis/batch.py` (detection,
+batch.yaml IO, resolution, Batch Run executor), Batch tile/panel/state in
+`apps/hub.py`, `REPORT_PIPELINE` + `report_pipeline_for` + `only:` +
+`preflight_project_script_issues` in `script_editor/project_actions.py`,
+the `multilist` inspector kind fed by `window.py`, the `batch_run` help
+topic, and tests (`tests/test_batch.py`, extended `test_hub_tiles.py` /
+`test_project_scripts.py`). Since then: full docs/help sweep done (guide
+§8.5, all 16 help pages audited against code), question-mark help buttons on
+every card/dialog, a Choose-batch-folder picker on the Batch panel, and an
+adversarial review pass whose confirmed findings are fixed and pinned by
+tests (preflight hardened against lenient script shapes; empty-error-message
+summary guards; central-first designation resolution pinned — it was once
+flipped on disk without attribution). Final suite: 466 passed. Lane 3
+(Batch tools rework) remains parked.
+
 ## Already done (verified in repo)
 
 - Two-level scripting (ADR-0006) fully implemented: `PROJECT_ACTIONS`

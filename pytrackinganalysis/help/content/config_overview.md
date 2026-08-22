@@ -7,7 +7,7 @@
 - **`global`** - experiment type or tracking type, rig, design factors, facet settings, quality criteria, and optional parameter overrides.
 - **`tracking_regions`** - one entry per tube, well, or tracked animal region.
 - **`counting_regions`** - treatment labels and DTrack aliases for two-choice and counter assays.
-- **`scripts`** - optional experiment-level scripts run from the Hub's **Scripts** tile or from a Project Script.
+- **`scripts`** - optional experiment-level scripts run from the Hub's **Scripts** tile or from a Project Script (the `run_in_experiments` bridge - every replicate, or only ones named in its `only:` list).
 
 Project-level scripts live in `project.yaml`, not in a replicate's `tracking_config.yaml`.
 

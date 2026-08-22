@@ -4,8 +4,9 @@ Project Scripts share the experiment-script language — ``{name,
 steps:[{action, params}]}`` in ``project.yaml`` ``scripts:`` — but dispatch
 through this separate registry with a :class:`ProjectRunContext`, so levels
 cannot mix. The only bridge to experiment level is ``run_in_experiments``,
-which runs a named Experiment Script in every replicate (the Project's
-central ``experiment_scripts:`` first, each replicate's own
+which runs a named Experiment Script in every replicate — or, with its
+optional ``only:`` list of replicate directory names, in just those — (the
+Project's central ``experiment_scripts:`` first, each replicate's own
 ``tracking_config.yaml`` as fallback — which also absorbs the legacy
 ``batch`` convention), continue-on-error with a failure summary.
 
@@ -53,8 +54,21 @@ def _exec_validate_design(_params: dict, ctx: ProjectRunContext) -> None:
         ctx.log(f"Note: {warning}")
 
 
+def _parse_only(value) -> list[str]:
+    """The ``only`` param as a list of replicate names. The inspector saves a
+    real list; a hand-edited yaml may hold a comma-separated string. A null
+    item (yaml ``~``) is dropped rather than becoming the name "None"."""
+    if isinstance(value, (list, tuple)):
+        return [str(v).strip() for v in value
+                if v is not None and str(v).strip()]
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return []
+
+
 def _exec_run_in_experiments(params: dict, ctx: ProjectRunContext) -> None:
-    """The bridge: run an Experiment Script in every replicate."""
+    """The bridge: run an Experiment Script in every replicate — or, with
+    ``only:``, in just the named ones."""
     from .runner import load_scripts, run_script
 
     project = ctx.project
@@ -63,14 +77,33 @@ def _exec_run_in_experiments(params: dict, ctx: ProjectRunContext) -> None:
     source = "project" if script is not None else None
 
     ran, failures = 0, []
-    for exp_name in project.experiment_names:
+    targets = list(project.experiment_names)
+    only = _parse_only(params.get("only"))
+    if only:
+        known = set(project.experiment_names)
+        for missing in [n for n in only if n not in known]:
+            ## A targeted name that matches nothing is loud, never silent
+            ## (grill 2026-08): recorded and summarized, run continues.
+            failures.append(f"{missing}: no replicate of that name")
+            ctx.log(f"[{missing}] SKIPPED — no replicate of that name")
+        wanted = set(only)
+        targets = [n for n in project.experiment_names if n in wanted]
+    for exp_name in targets:
         exp_dir = project.experiment_dir(exp_name)
         replicate_script = script
         if replicate_script is None:
             ## Fallback: the replicate's own script of that name — this is
-            ## also how a legacy 'batch' parent keeps running unchanged.
+            ## also how a legacy 'batch' parent keeps running unchanged. A
+            ## malformed config is that replicate's failure, never the
+            ## step's (continue-on-error).
             import os
-            own = load_scripts(os.path.join(exp_dir, "tracking_config.yaml"))
+            try:
+                own = load_scripts(
+                    os.path.join(exp_dir, "tracking_config.yaml"))
+            except Exception as err:  # noqa: BLE001
+                failures.append(f"{exp_name}: unreadable scripts — {err}")
+                ctx.log(f"[{exp_name}] FAILED to read scripts: {err}")
+                continue
             replicate_script = next(
                 (s for s in own if s.get("name") == name), None)
         if replicate_script is None:
@@ -142,9 +175,14 @@ def _exec_ai_narrative(params: dict, ctx: ProjectRunContext) -> None:
 
 
 def _validate_run_in_experiments(params: dict, _t: str | None) -> list[str]:
+    errs: list[str] = []
     if not str(params.get("script", "")).strip():
-        return ["'Experiment script name' is required"]
-    return []
+        errs.append("'Experiment script name' is required")
+    only = params.get("only", "")
+    if only not in ("", None) and not isinstance(only, (list, tuple, str)):
+        errs.append("'Only replicates' must be replicate names "
+                    "(a list, or comma-separated)")
+    return errs
 
 
 def _build_project_actions() -> dict[str, Action]:
@@ -163,9 +201,10 @@ def _build_project_actions() -> dict[str, Action]:
             key="run_in_experiments",
             title="Run in experiments",
             description="Run a named Experiment Script in every replicate — "
-                        "the project's experiment_scripts first, each "
-                        "replicate's own config as fallback. Continues on "
-                        "error; failures are summarized at the end.",
+                        "or only the ones named below — the project's "
+                        "experiment_scripts first, each replicate's own "
+                        "config as fallback. Continues on error; failures "
+                        "are summarized at the end.",
             category=Category.ANALYZE,
             icon_name="batch",
             params=(
@@ -173,6 +212,11 @@ def _build_project_actions() -> dict[str, Action]:
                           default="", help="Name resolved in project.yaml "
                           "experiment_scripts, then in each replicate's "
                           "tracking_config.yaml scripts."),
+                ParamSpec("only", "multilist", "Only replicates",
+                          default="", help="Optional replicate directory "
+                          "names; blank = every replicate. A name matching "
+                          "no replicate is reported in the failure summary "
+                          "and the run continues."),
             ),
             validate_fn=_validate_run_in_experiments,
             execute_fn=_exec_run_in_experiments,
@@ -263,6 +307,42 @@ STANDARD_PIPELINE: dict = {
     ],
 }
 
+#: The report-button sequence as a built-in (ADR-0009) — the default Batch
+#: designation. No validate_design gate (it would fail Projects
+#: mid-migration), and the publication-figure step runs only from curated
+#: specs: :func:`report_pipeline_for` applies that condition per Project, so
+#: the conditionality never appears in yaml.
+REPORT_PIPELINE: dict = {
+    "name": "Report pipeline",
+    "steps": [
+        {"action": "run_all_analyses", "params": {}},
+        {"action": "build_combined_analysis", "params": {}},
+        {"action": "render_publication_figures", "params": {"format": "svg"}},
+        {"action": "project_report", "params": {}},
+    ],
+}
+
+
+def report_pipeline_for(project) -> tuple[dict, str | None]:
+    """The Report Pipeline as it will actually run on *project*.
+
+    The publication-figure step is dropped when the Project has no
+    ``plot_specs.yaml`` — nobody curated figures, and an unattended run must
+    not invent default-spec ones. Returns ``(script, note)``; *note* explains
+    a dropped step, or is None.
+    """
+    import os
+
+    from ..pubfigures import SPECS_FILENAME
+
+    specs = os.path.join(str(project.project_directory), SPECS_FILENAME)
+    if os.path.isfile(specs):
+        return REPORT_PIPELINE, None
+    steps = [dict(s) for s in REPORT_PIPELINE["steps"]
+             if s.get("action") != "render_publication_figures"]
+    return ({"name": REPORT_PIPELINE["name"], "steps": steps},
+            f"no {SPECS_FILENAME} — publication-figure step skipped")
+
 
 def project_validation_issues(steps: list[dict],
                               experiment_type: str | None = None) -> list[tuple[int, str]]:
@@ -278,6 +358,72 @@ def project_validation_issues(steps: list[dict],
             continue
         for err in action.validate(step.get("params", {})):
             issues.append((i, err))
+    return issues
+
+
+def preflight_project_script_issues(script: dict, project) -> list[str]:
+    """Project-in-hand checks the static validator cannot do, run by the Hub
+    before spawning a script so a typo never reaches a run (grill 2026-08):
+    unknown ``only:`` replicate names, and an experiment-script name that
+    resolves nowhere it is asked to run.
+
+    For a targeted step every named replicate must resolve the script
+    (centrally or in its own config); for a broadcast step only a name that
+    resolves *nowhere at all* is an issue — a partial spread is normal
+    fallback territory and stays a loud runtime summary, not a block.
+    """
+    import os
+
+    from .runner import load_scripts
+
+    issues: list[str] = []
+    known = list(getattr(project, "experiment_names", []))
+
+    def _own_has(rep: str, name: str) -> bool:
+        cfg = os.path.join(project.experiment_dir(rep),
+                           "tracking_config.yaml")
+        try:
+            own = load_scripts(cfg)
+        except Exception:  # noqa: BLE001
+            return False
+        return any(s.get("name") == name for s in own)
+
+    ## Scripts arrive through the LENIENT parses (Project.__init__,
+    ## load_batch_file), so steps may be None/non-list and a step or its
+    ## params any type. This runs in a Qt slot, where an uncaught exception
+    ## is fatal — malformed shapes are skipped here and reported by
+    ## run_project_script's validation instead.
+    raw_steps = script.get("steps")
+    steps = raw_steps if isinstance(raw_steps, list) else []
+    for i, step in enumerate(steps, 1):
+        if not isinstance(step, dict) \
+                or step.get("action") != "run_in_experiments":
+            continue
+        params = step.get("params")
+        if not isinstance(params, dict):
+            continue
+        name = str(params.get("script", "")).strip()
+        only = _parse_only(params.get("only"))
+        unknown = [n for n in only if n not in known]
+        if unknown:
+            issues.append(f"Step {i}: no replicate named "
+                          + ", ".join(f"'{n}'" for n in unknown))
+        if not name or project.find_experiment_script(name) is not None:
+            continue
+        if only:
+            unresolved = [n for n in only
+                          if n in known and not _own_has(n, name)]
+            if unresolved:
+                issues.append(
+                    f"Step {i}: script '{name}' resolves nowhere for "
+                    + ", ".join(f"'{n}'" for n in unresolved)
+                    + " (not in project.yaml experiment_scripts nor in "
+                    "their tracking_config.yaml)")
+        elif known and not any(_own_has(n, name) for n in known):
+            issues.append(
+                f"Step {i}: script '{name}' resolves nowhere — not in "
+                "project.yaml experiment_scripts nor in any replicate's "
+                "tracking_config.yaml")
     return issues
 
 

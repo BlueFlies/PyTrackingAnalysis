@@ -4,11 +4,15 @@ The Hub is the main day-to-day surface. It is Project-first: open a Project, man
 
 ## Layout
 
-Across the top is a live tile strip: **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
+Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
 
 Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
 
 The status readout to the right of the Tools tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
+
+## Batch panel
+
+The selection names a Batch or a Project. Selecting a folder whose immediate subdirectories are Projects lights the **Batch** tile: its panel holds **Choose batch folder...** (pick the parent directory and every Project inside auto-loads), a checkable projects table, a **Script** picker for the designated Project Script, and **Run batch**. Double-click a row to select that Project. See the **Batch runs** help topic for the full reference.
 
 ## Project panel
 
@@ -25,7 +29,7 @@ Project actions:
 - **Create report** / **Update report** - analyze every replicate, rebuild Combined Analysis, and write the Project PDF report. The label changes depending on whether `<project>_report.pdf` already exists.
 - **Plot editor...** - curate pooled publication figures after a report refresh has created combined faceted data.
 - **AI narrative...** - create an optional Project-level AI narrative from the current Combined Analysis and rebuild the PDF to embed it.
-- **Script** picker - run the built-in **Standard pipeline** or saved Project Scripts.
+- **Script** picker - run the built-in **Report pipeline** or **Standard pipeline**, or saved Project Scripts.
 
 For a custom sequence, use **Edit scripts...** and make a Project Script. Scripts can run lower-level steps such as replicate analysis, Combined Analysis, publication figure rendering, report creation, AI narrative, or a named Experiment Script in every replicate.
 
@@ -44,7 +48,7 @@ When **Faceted** is checked in the Analyze panel, summaries, pairwise comparison
 
 ## Tools
 
-The **Tools** tile opens `analysis/` or `qc/`, validates the loaded replicate's YAML, opens Batch tools for parent-folder cleanup, and clears the matplotlib cache.
+The **Tools** tile opens `analysis/` or `qc/`, validates the loaded replicate's YAML, and clears the matplotlib cache.
 
 ## Output area
 

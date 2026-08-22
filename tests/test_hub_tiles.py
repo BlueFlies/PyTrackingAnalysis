@@ -1,8 +1,9 @@
-"""Tests for the Hub tile-strip redesign (ADR-0007) and the Project-first Hub
-(ADR-0008): the strip's six tiles, their live summaries and dimming across
-loading states, the anchored panels (open/close/one-at-a-time/
-auto-close-on-launch), and loading an experiment by double-clicking its row in
-the replicates table."""
+"""Tests for the Hub tile-strip redesign (ADR-0007), the Project-first Hub
+(ADR-0008), and the Batch level (ADR-0009): the strip's seven tiles, their
+live summaries and dimming across loading states, the anchored panels
+(open/close/one-at-a-time/auto-close-on-launch), loading an experiment by
+double-clicking its row in the replicates table, and the Batch panel's
+projects table, script picker, and Batch Run."""
 
 from __future__ import annotations
 
@@ -27,10 +28,21 @@ def hub(qapp):  # noqa: F811
     win.close()
 
 
-TILE_ORDER = ["project", "analyze", "plots", "scripts", "ai", "tools"]
+TILE_ORDER = ["batch", "project", "analyze", "plots", "scripts", "ai",
+              "tools"]
 
 
-def test_strip_has_six_fixed_tiles_and_full_width_output(hub):
+def _make_batch(tmp_path, names=("P1", "P2")):
+    """A Batch on disk: Projects in subdirectories, plus one non-Project
+    child that must never be listed."""
+    for name in names:
+        (tmp_path / name).mkdir()
+        _make_project(tmp_path / name)
+    (tmp_path / "notes").mkdir()
+    return tmp_path
+
+
+def test_strip_has_seven_fixed_tiles_and_full_width_output(hub):
     assert list(hub._tiles) == TILE_ORDER
     assert not hasattr(hub, "_sidebar")
     assert "tools" in hub._panels
@@ -44,6 +56,8 @@ def test_strip_has_six_fixed_tiles_and_full_width_output(hub):
 def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
     assert hub._tiles["project"].is_dimmed()
     assert "no project" in hub._tiles["project"].summary_text()
+    assert hub._tiles["batch"].is_dimmed()
+    assert "no batch" in hub._tiles["batch"].summary_text()
     # Every experiment-dependent tile waits on a load, Scripts included:
     # its recipes run against the loaded experiment.
     for key in ("analyze", "plots", "scripts"):
@@ -475,3 +489,245 @@ def test_project_card_edits_project_yaml_not_tracking_configs(
     hub._btn_edit_cfg.click()
     assert opened == [str(tmp_path.resolve())]
     assert (tmp_path / "project.yaml").read_text(encoding="utf-8") == before
+
+
+# ---- the Batch tile & panel (ADR-0009) ------------------------------------
+
+def test_batch_selection_lights_the_batch_tile_and_dims_project(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    assert not hub._tiles["batch"].is_dimmed()
+    assert "2 project" in hub._tiles["batch"].summary_text()
+    # The Project tile's fix is choosing a project in the Batch panel.
+    assert hub._tiles["project"].is_dimmed()
+    text = hub._status_panel.status_text()
+    assert "Batch" in text
+    assert "2 Project" in text
+    assert "Report pipeline" in text          # the default designation
+
+
+def test_project_selection_dims_the_batch_tile(hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    assert hub._tiles["batch"].is_dimmed()
+    assert not hub._tiles["project"].is_dimmed()
+
+
+def test_batch_table_lists_projects_checked_by_default(hub, qapp, tmp_path):  # noqa: F811
+    from PyQt6.QtCore import Qt
+
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    table = hub._batch_table
+    # 'notes' (no project.yaml) is never a row; all Projects start checked.
+    assert [table.item(r, 0).text()
+            for r in range(table.rowCount())] == ["P1", "P2"]
+    assert hub._batch_checked_names() == ["P1", "P2"]
+    # Unchecking survives a refresh; new rows still default to checked.
+    table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    hub._refresh_batch_view()
+    assert hub._batch_checked_names() == ["P2"]
+
+
+def test_batch_double_click_is_an_ordinary_selection_change(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    table = hub._batch_table
+    row = next(r for r in range(table.rowCount())
+               if table.item(r, 0).text() == "P2")
+    table.itemDoubleClicked.emit(table.item(row, 0))
+    qapp.processEvents()
+    # The selection moved down to the Project — no second context, no
+    # 'up to batch' button to return from (ADR-0009).
+    assert hub._project_dir == tmp_path / "P2"
+    assert not hub._tiles["project"].is_dimmed()
+    assert hub._tiles["batch"].is_dimmed()
+
+
+def test_batch_picker_defaults_to_report_pipeline_and_persists(
+        hub, qapp, tmp_path):  # noqa: F811
+    import yaml
+
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    combo = hub._batch_script_combo
+    items = [(combo.itemText(i), combo.itemData(i))
+             for i in range(combo.count())]
+    assert items[0] == ("Report pipeline (built-in)", ("builtin", "report"))
+    assert items[1] == ("Standard pipeline (built-in)",
+                        ("builtin", "standard"))
+    assert combo.currentIndex() == 0
+    # The default never creates batch.yaml — the lazy-marker rule.
+    assert not (tmp_path / "batch.yaml").exists()
+
+    combo.setCurrentIndex(1)                  # the user designates Standard
+    qapp.processEvents()
+    data = yaml.safe_load((tmp_path / "batch.yaml").read_text())
+    assert data["script"] == "Standard pipeline"
+
+    combo.setCurrentIndex(0)                  # back to the default
+    qapp.processEvents()
+    data = yaml.safe_load((tmp_path / "batch.yaml").read_text()) or {}
+    assert "script" not in data               # cleared, file kept
+
+
+def test_run_batch_runs_checked_projects_and_unloads_first(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    from PyQt6.QtCore import Qt
+
+    from pytrackinganalysis import batch as batch_mod
+
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._batch_table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+
+    calls: list = []
+
+    def fake_run_batch(root, script_name=None, project_names=None, log=print):
+        calls.append((root, script_name, project_names))
+        return {"P2": "ok"}
+
+    monkeypatch.setattr(batch_mod, "run_batch", fake_run_batch)
+    unloaded: list = []
+    monkeypatch.setattr(type(hub), "_unload_experiment",
+                        lambda self: unloaded.append(True))
+    spawned: list = []
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda name, fn: spawned.append((name, fn())))
+
+    hub._run_batch()
+
+    assert unloaded == [True]
+    assert spawned[0][0] == "Batch Run"
+    root, script_name, project_names = calls[0]
+    assert root == str(tmp_path)
+    assert script_name is None                # Report pipeline default
+    assert project_names == ["P2"]
+    assert "1/1" in spawned[0][1]
+
+
+def test_batch_panel_has_its_own_folder_picker(hub, qapp, tmp_path,
+                                               monkeypatch):  # noqa: F811
+    """Choosing the batch parent from the Batch panel auto-loads every
+    Project inside it — no detour through the Project tile."""
+    from PyQt6.QtWidgets import QFileDialog, QPushButton
+
+    _make_batch(tmp_path)
+    buttons = {b.text(): b for b in
+               hub._cards["batch"].findChildren(QPushButton)}
+    assert "Choose batch folder…" in buttons
+    btn = buttons["Choose batch folder…"]
+    assert btn.isEnabled()                    # the way in is never gated
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    btn.click()
+    qapp.processEvents()
+    assert hub._project_dir == tmp_path
+    assert [hub._batch_table.item(r, 0).text()
+            for r in range(hub._batch_table.rowCount())] == ["P1", "P2"]
+    assert not hub._tiles["batch"].is_dimmed()
+
+
+def test_batch_tools_button_parked_in_batch_panel_disabled(hub):
+    from PyQt6.QtWidgets import QPushButton
+
+    labels = [b.text() for b in hub._cards["batch"].findChildren(QPushButton)]
+    assert any("Batch tools" in t for t in labels)
+    assert not hub._btn_batch_tools.isEnabled()
+    tools = [b.text() for b in hub._cards["tools"].findChildren(QPushButton)]
+    assert not any("Batch tools" in t for t in tools)
+
+
+def test_hub_preflight_blocks_a_typoed_script_before_running(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """Typos never reach a run: an only: name matching no replicate aborts
+    with a warning before anything spawns."""
+    from pytrackinganalysis.script_editor.runner import save_scripts
+
+    _make_project(tmp_path)
+    save_scripts(str(tmp_path / "project.yaml"),
+                 [{"name": "target", "steps": [
+                     {"action": "run_in_experiments",
+                      "params": {"script": "qc", "only": ["Ghost"]}}]}],
+                 key="scripts")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    warnings: list = []
+    spawned: list = []
+    monkeypatch.setattr(type(hub), "_warn",
+                        lambda self, msg: warnings.append(msg))
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda name, fn: spawned.append(name))
+    combo = hub._project_script_combo
+    combo.setCurrentIndex(next(i for i in range(combo.count())
+                               if combo.itemData(i) == "target"))
+    hub._project_run_script()
+    assert spawned == []
+    assert warnings and "Ghost" in warnings[0]
+
+
+def test_batch_table_shows_replicate_and_report_status(hub, qapp, tmp_path):  # noqa: F811
+    _make_batch(tmp_path)
+    (tmp_path / "P1" / "Proj_report.pdf").write_bytes(b"%PDF-")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    table = hub._batch_table
+    rows = {table.item(r, 0).text():
+            (table.item(r, 1).text(), table.item(r, 2).text())
+            for r in range(table.rowCount())}
+    assert rows["P1"] == ("2", "yes")
+    assert rows["P2"] == ("2", "no")
+
+
+def test_busy_state_greys_the_batch_card(hub):
+    hub._set_busy(True)
+    assert not hub._cards["batch"].isEnabled()
+    hub._set_busy(False)
+    assert hub._cards["batch"].isEnabled()
+
+
+def test_run_batch_requires_a_checked_project(hub, qapp, tmp_path,
+                                              monkeypatch):  # noqa: F811
+    from PyQt6.QtCore import Qt
+
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    for r in range(hub._batch_table.rowCount()):
+        hub._batch_table.item(r, 0).setCheckState(Qt.CheckState.Unchecked)
+    warnings: list = []
+    spawned: list = []
+    monkeypatch.setattr(type(hub), "_warn",
+                        lambda self, msg: warnings.append(msg))
+    monkeypatch.setattr(hub, "_spawn_task",
+                        lambda name, fn: spawned.append(name))
+    hub._run_batch()
+    assert spawned == []
+    assert warnings
+
+
+def test_batch_picker_lists_an_unlisted_designation(hub, qapp, tmp_path):  # noqa: F811
+    """A designation naming a script each project.yaml defines has no
+    central entry to select — it gets its own '(from each project)' row
+    rather than silently reverting to the default."""
+    import yaml
+
+    _make_batch(tmp_path)
+    (tmp_path / "batch.yaml").write_text(
+        yaml.safe_dump({"script": "per-project"}), encoding="utf-8")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    combo = hub._batch_script_combo
+    items = [(combo.itemText(i), combo.itemData(i))
+             for i in range(combo.count())]
+    assert ("per-project (from each project)",
+            ("name", "per-project")) in items
+    assert combo.currentData() == ("name", "per-project")

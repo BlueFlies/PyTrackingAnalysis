@@ -12,17 +12,20 @@ The pipeline creates `analysis/` and `qc/` folders when it writes results.
 
 ## First-time workflow
 
-1. Open the **Analysis Hub** (`pytrack`) and choose the parent folder from **Project -> Browse...**.
+1. Open the **Analysis Hub** (`pytrack`) and choose the parent folder from **Project -> Load...**.
 2. Make or edit the Project: **Project -> Create/Load -> Create config...** writes `project.yaml` and opens the Project editor. If you point at a folder that is already an Experiment Directory, the Hub offers to create the Project on the parent so that experiment becomes a replicate.
 3. Add or adopt replicates from the Project panel's **Analysis** card. Use **Add experiment...** for a new replicate directory, or **Experiment configs...** to create missing `tracking_config.yaml` files from the project design.
 4. Finish each replicate config in the Config Editor: choose the rig, assign every tracking region to the design factors, and check counting-region aliases.
 5. Load a replicate by **double-clicking its row** in the Project table. This is the Hub's only experiment-loading path, and it runs QC as the experiment loads.
 6. Run a single replicate from **Analyze -> Run Analysis**, or run the whole study from the Project panel with **Create report**. After the PDF exists, the same button reads **Update report**; both labels analyze every replicate, rebuild Combined Analysis, and write the Project report.
 
+Later, when several sibling Projects sit in one folder, the Hub's **Batch** tile can run them all unattended - pick the parent with the Batch panel's **Choose batch folder...** button; see the **Batch runs** help topic.
+
 ## Apps
 
-- **Analysis Hub** (`pytrack` / `pytrack-hub`) - day-to-day Project workflow: load replicates, run analyses, view plots, build combined results, run Project scripts.
+- **Analysis Hub** (`pytrack` / `pytrack-hub`) - day-to-day Project workflow: load replicates, run analyses, view plots, build combined results, run Project scripts and Batch runs.
 - **Config Editor** (`pytrack-config`) - structured editor for each replicate's `tracking_config.yaml`, plus the Script Editor for experiment scripts.
 - **QC Viewer** (`pytrack-qc`) - per-tracker data-quality table and diagnostic plots for one Experiment Directory.
+- **Plot Editor** (`pytrack-plots`) - Project-level publication figures: live preview, Plot Specs and Styles in `plot_specs.yaml`, vector exports to `figures/`.
 
 Use the **?** buttons next to controls for topic-specific help. The top-bar **Help** button opens the full help browser.

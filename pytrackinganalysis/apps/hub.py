@@ -214,7 +214,10 @@ class HubWindow(QMainWindow):
         strip_lay.setContentsMargins(10, 8, 10, 8)
         strip_lay.setSpacing(8)
         self._tiles: dict[str, StatusTile] = {}
+        ## Leftmost: the containment hierarchy reads left-to-right — a Batch
+        ## holds Projects, a Project holds experiments (ADR-0009).
         for key, title, icon_name, cat in (
+            ("batch", "Batch", "batch", Category.NEUTRAL),
             ("project", "Project", "project", Category.NEUTRAL),
             ("analyze", "Analyze", "basic", Category.ANALYZE),
             ("plots", "Plots", "plots", Category.PLOTS),
@@ -245,6 +248,7 @@ class HubWindow(QMainWindow):
         # then move each into its tile's anchored panel.
         cards_host = QWidget()
         self._cards_lay = QVBoxLayout(cards_host)
+        self._build_batch_card()
         self._build_project_card()
         self._build_project_view_card()
         self._build_analyze_card()
@@ -255,6 +259,7 @@ class HubWindow(QMainWindow):
 
         self._panels: dict[str, TilePanel] = {}
         panel_map = {
+            "batch": (620, ["batch"]),
             "project": (640, ["project", "projectview"]),
             "analyze": (460, ["analyze"]),
             "plots": (500, ["plots"]),
@@ -667,9 +672,11 @@ class HubWindow(QMainWindow):
         btn_run_script = ActionButton("Run script", Category.SCRIPTS,
                                       icon_name="scripts")
         btn_run_script.setToolTip(
-            "Run the selected Project Script. 'Standard pipeline' is built "
-            "in: validate design → run all analyses → combined analysis → "
-            "publication figures → project report.")
+            "Run the selected Project Script. Built-ins: 'Standard pipeline' "
+            "(validate design → run all analyses → combined analysis → "
+            "publication figures → project report) and 'Report pipeline' "
+            "(the Create-report sequence; figures only when plot_specs.yaml "
+            "exists).")
         btn_run_script.clicked.connect(self._project_run_script)
         btn_edit_scripts = ActionButton("Edit scripts…", Category.SCRIPTS,
                                         icon_name="config")
@@ -789,11 +796,15 @@ class HubWindow(QMainWindow):
                 item.setFont(font)
                 self._exp_table.setItem(row, col, item)
 
-        # Script picker: the built-in Standard pipeline plus authored scripts.
+        # Script picker: the built-in pipelines plus authored scripts.
+        # Built-ins carry a ("builtin", key) sentinel; authored scripts their
+        # name (ADR-0009: the Report pipeline appears in both pickers).
         self._project_script_combo.blockSignals(True)
         self._project_script_combo.clear()
         self._project_script_combo.addItem("Standard pipeline (built-in)",
-                                           None)
+                                           ("builtin", "standard"))
+        self._project_script_combo.addItem("Report pipeline (built-in)",
+                                           ("builtin", "report"))
         for script in project.scripts:
             self._project_script_combo.addItem(
                 str(script.get("name", "Untitled")), script.get("name"))
@@ -976,20 +987,34 @@ class HubWindow(QMainWindow):
     def _project_run_script(self) -> None:
         from ..script_editor.project_actions import (
             STANDARD_PIPELINE,
+            preflight_project_script_issues,
+            report_pipeline_for,
             run_project_script,
         )
 
         project = self._current_project()
         if project is None:
             return
-        name = self._project_script_combo.currentData()
-        if name is None:
+        data = self._project_script_combo.currentData()
+        note = None
+        if data == ("builtin", "report"):
+            script, note = report_pipeline_for(project)
+        elif data is None or data == ("builtin", "standard"):
             script = STANDARD_PIPELINE
         else:
-            script = project.find_script(str(name))
+            script = project.find_script(str(data))
             if script is None:
-                self._warn(f"No project script named '{name}'.")
+                self._warn(f"No project script named '{data}'.")
                 return
+        ## Project-in-hand pre-check the static validator cannot do: unknown
+        ## only: replicate names and scripts that resolve nowhere abort here,
+        ## so a typo never reaches a run (grill 2026-08).
+        issues = preflight_project_script_issues(script, project)
+        if issues:
+            self._warn("Script pre-check failed:\n" + "\n".join(issues))
+            return
+        if note:
+            self._log.append_line(f"[report pipeline] {note}")
 
         def _do() -> str:
             figures: list = []
@@ -1053,20 +1078,13 @@ class HubWindow(QMainWindow):
             "Clear matplotlib cache", Category.TOOLS, icon_name="clear"
         )
         btn_clear_cache.clicked.connect(self._clear_mpl_cache)
-        btn_batch_tools = ActionButton(
-            "Batch tools", Category.TOOLS, icon_name="batch"
-        )
-        btn_batch_tools.setToolTip(
-            "Open a window with batch operations across project subdirectories: "
-            "convert to data/ layout, rename subdirectories, and combine summary CSVs."
-        )
-        btn_batch_tools.clicked.connect(self._open_batch_tools)
-        # Two columns: five full-width stacked buttons made the card oddly wide
-        # and tall for what are small housekeeping actions.
+        # Two columns: full-width stacked buttons made the card oddly wide
+        # and tall for what are small housekeeping actions. Batch tools moved
+        # to the Batch panel (disabled, pending rework — ADR-0009).
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        buttons = (btn_open_analysis, btn_open_qc, btn_batch_tools, btn_validate,
+        buttons = (btn_open_analysis, btn_open_qc, btn_validate,
                    btn_clear_cache)
         for i, b in enumerate(buttons):
             grid.addWidget(b, i // 2, i % 2)
@@ -1075,6 +1093,305 @@ class HubWindow(QMainWindow):
         card.add_body(grid)
         self._cards["tools"] = card
         self._cards_lay.addWidget(card)
+
+    # ---------------- Batch card ----------------
+
+    def _build_batch_card(self) -> None:
+        """The Batch panel (ADR-0009): a Batch is a directory whose immediate
+        subdirectories are Projects. A Batch Run executes one designated
+        Project Script in every checked Project — there is no third script
+        level, and a Batch never pools results across Projects."""
+        card = Card(
+            "Batch",
+            category=Category.NEUTRAL,
+            subtitle="Run a Project Script in every Project of this folder.",
+            icon_name="batch",
+        )
+        card.add_title_widget(
+            HelpButton("batch_run", tooltip="Batch Runs over many Projects")
+        )
+        ## The panel's own way in: choosing the parent directory here
+        ## auto-loads every Project inside it into the table below. Never
+        ## gated — it IS the fix for the empty state.
+        pick_row = QHBoxLayout()
+        btn_pick_batch = ActionButton("Choose batch folder…", Category.LOAD,
+                                      icon_name="browse")
+        btn_pick_batch.setToolTip(
+            "Pick the parent directory whose subdirectories are Projects — "
+            "every Project found in it is listed below for the run.")
+        btn_pick_batch.clicked.connect(self._pick_batch_dir)
+        pick_row.addWidget(btn_pick_batch)
+        pick_row.addStretch(1)
+        card.add_body(pick_row)
+        self._batch_empty = QLabel(
+            "Choose a batch folder — one whose subdirectories are Projects — "
+            "and every Project in it is listed here for the run.")
+        self._batch_empty.setStyleSheet(
+            "color: palette(mid); font-style: italic;")
+        self._batch_empty.setWordWrap(True)
+        card.add_body(self._batch_empty)
+
+        self._batch_table = QTableWidget(0, 3)
+        self._batch_table.setHorizontalHeaderLabels(
+            ["Project", "Replicates", "Report"])
+        header = self._batch_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._batch_table.verticalHeader().setVisible(False)
+        self._batch_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers)
+        self._batch_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows)
+        self._batch_table.setMaximumHeight(170)
+        self._batch_table.setToolTip(
+            "Checked Projects join the next Batch Run. Double-click a row to "
+            "select that Project.")
+        self._batch_table.itemDoubleClicked.connect(
+            self._open_selected_batch_project)
+        card.add_body(self._batch_table)
+        hint = QLabel("Double-click a project to select it — the strip "
+                      "switches to that Project.")
+        hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        card.add_body(hint)
+
+        script_row = QHBoxLayout()
+        script_row.addWidget(QLabel("Script:"))
+        self._batch_script_combo = QComboBox()
+        self._batch_script_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._batch_script_combo.setMinimumContentsLength(12)
+        self._batch_script_combo.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                               QSizePolicy.Policy.Fixed)
+        self._batch_script_combo.setToolTip(
+            "The designated Project Script — resolved per Project from "
+            "batch.yaml project_scripts, then the project's own scripts, "
+            "then the built-ins. Changing it is remembered in batch.yaml.")
+        self._batch_script_combo.currentIndexChanged.connect(
+            self._on_batch_script_changed)
+        script_row.addWidget(self._batch_script_combo, 1)
+        self._btn_run_batch = ActionButton("Run batch", Category.ANALYZE,
+                                           icon_name="run", primary=True)
+        self._btn_run_batch.setToolTip(
+            "Run the designated Project Script in every checked Project — "
+            "continue-on-error, per-Project summary at the end. Unloads the "
+            "loaded experiment first.")
+        self._btn_run_batch.clicked.connect(self._run_batch)
+        script_row.addWidget(self._btn_run_batch)
+        card.add_body(script_row)
+
+        ## Parked here from the Tools card: Batch Tools iterates a Project's
+        ## subdirectories and predates the Project structure — disabled until
+        ## its rework (ADR-0009).
+        self._btn_batch_tools = ActionButton("Batch tools", Category.TOOLS,
+                                             icon_name="batch")
+        self._btn_batch_tools.setEnabled(False)
+        self._btn_batch_tools.setToolTip(
+            "Temporarily disabled — being reworked for the Project "
+            "directory structure.")
+        self._btn_batch_tools.clicked.connect(self._open_batch_tools)
+        card.add_body(self._btn_batch_tools)
+
+        for w in (self._batch_table, self._batch_script_combo,
+                  self._btn_run_batch):
+            w.setEnabled(False)
+        self._cards["batch"] = card
+        self._cards_lay.addWidget(card)
+
+    def _pick_batch_dir(self) -> None:
+        """The Batch panel's own way in: pick the parent directory, and every
+        Project inside it auto-loads into the projects table (the ordinary
+        selection machinery does the rest)."""
+        from .. import project as prj
+
+        start = str(self._project_dir) if self._project_dir else os.getcwd()
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Choose batch directory (a folder of Projects)", start)
+        if not chosen:
+            return
+        p = Path(chosen).expanduser().resolve()
+        self._set_project_dir(p)
+        if self._batch_root() is None:
+            ## Not a Batch after all — say why, in the folder's own terms.
+            if prj.is_project_dir(p):
+                self._log_issue(
+                    f"[batch] {p.name} is a single Project — to batch it, "
+                    "choose its parent folder.")
+            else:
+                self._log_issue(
+                    f"[batch] {p} has no Project subdirectories — nothing "
+                    "to batch.")
+
+    def _batch_root(self):
+        """The selected Batch, or None when the selection is not one. The
+        selection names exactly one working container — a Batch or a Project
+        (ADR-0009)."""
+        from .. import batch as batch_mod
+
+        if not self._project_dir:
+            return None
+        return (Path(self._project_dir)
+                if batch_mod.is_batch_dir(self._project_dir) else None)
+
+    def _refresh_batch_view(self) -> None:
+        from .. import batch as batch_mod
+        from ..script_editor.project_actions import (
+            REPORT_PIPELINE,
+            STANDARD_PIPELINE,
+        )
+
+        card = self._cards.get("batch")
+        if card is None:
+            return
+        root = self._batch_root()
+        live = root is not None
+        self._batch_empty.setVisible(not live)
+        for w in (self._batch_table, self._batch_script_combo,
+                  self._btn_run_batch):
+            w.setEnabled(live)
+        if not live:
+            self._batch_table.setRowCount(0)
+            self._batch_script_combo.blockSignals(True)
+            self._batch_script_combo.clear()
+            self._batch_script_combo.blockSignals(False)
+            return
+
+        names = batch_mod.batch_project_names(root)
+        meta = batch_mod.load_batch_file(root)
+
+        ## Rebuilding must not silently re-check a Project the user
+        ## unchecked; new rows default to checked (all-on, ADR-0009).
+        prev: dict[str, Qt.CheckState] = {}
+        for row in range(self._batch_table.rowCount()):
+            item = self._batch_table.item(row, 0)
+            if item is not None:
+                prev[item.text()] = item.checkState()
+        self._batch_table.setRowCount(0)
+        for name in names:
+            row = self._batch_table.rowCount()
+            self._batch_table.insertRow(row)
+            item = QTableWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(prev.get(name, Qt.CheckState.Checked))
+            self._batch_table.setItem(row, 0, item)
+            project_dir = Path(root) / name
+            ## Cheap sources only — a directory scan, never a Project load:
+            ## a Batch may hold many Projects and this runs on every refresh.
+            try:
+                reps = sum(1 for d in project_dir.iterdir()
+                           if d.is_dir()
+                           and (d / _CANONICAL_CONFIG).is_file())
+            except OSError:
+                reps = 0
+            report = "yes" if any(project_dir.glob("*_report.pdf")) else "no"
+            self._batch_table.setItem(row, 1, QTableWidgetItem(str(reps)))
+            self._batch_table.setItem(row, 2, QTableWidgetItem(report))
+
+        ## Picker: built-ins plus batch.yaml's central Project Scripts. The
+        ## designation may also name a script each project.yaml defines, so
+        ## an unlisted designation gets an entry rather than vanishing.
+        combo = self._batch_script_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Report pipeline (built-in)", ("builtin", "report"))
+        combo.addItem("Standard pipeline (built-in)", ("builtin", "standard"))
+        for script in meta["project_scripts"]:
+            script_name = str(script.get("name"))
+            combo.addItem(f"{script_name} (batch.yaml)",
+                          ("name", script_name))
+        want = meta["script"]
+        index = 0
+        if want == STANDARD_PIPELINE["name"]:
+            index = 1
+        elif want and want != REPORT_PIPELINE["name"]:
+            index = next((i for i in range(combo.count())
+                          if combo.itemData(i) == ("name", want)), -1)
+            if index < 0:
+                combo.addItem(f"{want} (from each project)", ("name", want))
+                index = combo.count() - 1
+        combo.setCurrentIndex(index)
+        combo.blockSignals(False)
+
+    def _batch_checked_names(self) -> list[str]:
+        names = []
+        for row in range(self._batch_table.rowCount()):
+            item = self._batch_table.item(row, 0)
+            if item is not None \
+                    and item.checkState() == Qt.CheckState.Checked:
+                names.append(item.text())
+        return names
+
+    def _on_batch_script_changed(self, _index: int) -> None:
+        from .. import batch as batch_mod
+        from ..script_editor.project_actions import STANDARD_PIPELINE
+
+        root = self._batch_root()
+        if root is None:
+            return
+        data = self._batch_script_combo.currentData()
+        if data is None:
+            return
+        ## The default (Report pipeline) is stored as "no designation": it
+        ## never creates batch.yaml — the lazy-marker rule (ADR-0009).
+        if data == ("builtin", "report"):
+            name = None
+        elif data == ("builtin", "standard"):
+            name = STANDARD_PIPELINE["name"]
+        else:
+            name = data[1]
+        try:
+            batch_mod.save_batch_designation(root, name)
+        except Exception as err:  # noqa: BLE001
+            self._log_issue(f"[batch] could not save the designation: {err}")
+
+    def _open_selected_batch_project(self, item) -> None:
+        """An ordinary selection change down to that Project (ADR-0009): the
+        selection still does exactly one job, so there is no drill-in state
+        and no 'up to batch' button — reaching the Batch again is picking
+        its folder."""
+        root = self._batch_root()
+        name_item = self._batch_table.item(item.row(), 0)
+        if root is None or name_item is None:
+            return
+        self._close_panel()
+        self._set_project_dir(Path(root) / name_item.text())
+
+    def _run_batch(self) -> None:
+        from .. import batch as batch_mod
+        from ..script_editor.project_actions import STANDARD_PIPELINE
+
+        root = self._batch_root()
+        if root is None:
+            return
+        checked = self._batch_checked_names()
+        if not checked:
+            self._warn("No Projects checked — check at least one row.")
+            return
+        data = self._batch_script_combo.currentData()
+        if data == ("builtin", "standard"):
+            name = STANDARD_PIPELINE["name"]
+        elif data is None or data == ("builtin", "report"):
+            name = None
+        else:
+            name = data[1]
+        ## A Batch Run rewrites every replicate's analysis in every Project —
+        ## a loaded experiment would survive as a stale copy of results that
+        ## no longer exist (ADR-0008's rule, one level up).
+        self._unload_experiment()
+
+        def _do() -> str:
+            results = batch_mod.run_batch(str(root), script_name=name,
+                                          project_names=checked, log=print)
+            ok = sum(1 for v in results.values() if v == "ok")
+            failed = [f"{n}: {v.splitlines()[0] if v else '<no message>'}"
+                      for n, v in results.items() if v != "ok"]
+            msg = (f"Batch Run complete: {ok}/{len(results)} Project(s) "
+                   "succeeded.")
+            if failed:
+                raise RuntimeError(
+                    msg + "\nFailed:\n  - " + "\n  - ".join(failed))
+            return msg
+
+        self._spawn_task("Batch Run", _do)
 
     # ==================================================================
     # Behaviour — project dir / config
@@ -1195,11 +1512,38 @@ class HubWindow(QMainWindow):
         self._status_panel.set_rows(rows)
 
     def _refresh_tiles_inner(self) -> None:
+        from .. import batch as batch_mod
         from .. import project as prj
 
         tiles = getattr(self, "_tiles", None)
         if not tiles:
             return
+
+        ## Batch state, computed once: the Batch tile and the Project tile's
+        ## batch branch both read it (cheap directory scans, no Project load).
+        batch_root = self._batch_root()
+        batch_names: list[str] = []
+        designated = "Report pipeline"
+        if batch_root is not None:
+            batch_names = batch_mod.batch_project_names(batch_root)
+            meta = batch_mod.load_batch_file(batch_root)
+            designated = meta["script"] or "Report pipeline"
+
+        # Batch tile: the containment level above Project (ADR-0009).
+        tile = tiles.get("batch")
+        if tile is not None:
+            if batch_root is not None:
+                tile.set_summary([f"{len(batch_names)} project(s)",
+                                  designated])
+                tile.set_dimmed(False)
+            elif self._project_root() is not None:
+                tile.set_summary(["selection is a project",
+                                  "load its parent to batch"])
+                tile.set_dimmed(True)
+            else:
+                tile.set_summary(["no batch",
+                                  "load a folder of projects"])
+                tile.set_dimmed(True)
 
         # Project tile: the effective project (enclosing one when a
         # replicate is loaded). With the Experiment tile gone (ADR-0008) its
@@ -1235,6 +1579,19 @@ class HubWindow(QMainWindow):
                 tile.set_dimmed(False)
                 self._status_panel.set_rows(
                     [("Project", str(root)), ("Error", str(err))])
+        elif batch_root is not None:
+            ## A Batch offers Projects, not experiments: the Project tile's
+            ## fix is choosing one in the Batch panel's table (ADR-0009).
+            tile.set_summary([Path(batch_root).name,
+                              "double-click a project"])
+            tile.set_dimmed(True)
+            self._status_panel.set_rows([
+                ("Batch", f"{Path(batch_root).name} — "
+                          f"{len(batch_names)} Project(s)"),
+                ("Path", str(batch_root)),
+                ("Script", designated),
+                ("Experiment", "none loaded"),
+            ])
         elif self._project_dir is not None:
             ## Only a Project offers experiments to load (ADR-0008), so a bare
             ## directory's hint is the Project it still needs.
@@ -1303,7 +1660,7 @@ class HubWindow(QMainWindow):
 
         # Tools tile.
         tile = tiles["tools"]
-        tile.set_summary(["folders & YAML", "batch cleanup"])
+        tile.set_summary(["folders & YAML"])
         tile.set_dimmed(False)
 
     def _pick_project_dir(self) -> None:
@@ -1343,10 +1700,13 @@ class HubWindow(QMainWindow):
         self._project_edit.setText(p.name or str(p))
         self._project_edit.setToolTip(str(p))
         ui_settings.add_recent_project(p)
-        self._log.append_line(f"Project: {p}")
+        from .. import batch as batch_mod
+        kind = "Batch" if batch_mod.is_batch_dir(p) else "Project"
+        self._log.append_line(f"{kind}: {p}")
         self._refresh_project_config_button()
         self._refresh_scripts()
         self._refresh_project_view()
+        self._refresh_batch_view()
         self._refresh_tiles()
 
     def _project_config_root(self) -> Path | None:
@@ -1954,8 +2314,10 @@ class HubWindow(QMainWindow):
         ## Any finished task may have changed replicate artifacts (a Run
         ## Analysis on the loaded experiment included), so the project view's
         ## status table refreshes here — the one GUI-thread point every task
-        ## passes through.
+        ## passes through. A Batch Run changes every Project, so the batch
+        ## table refreshes for the same reason.
         self._refresh_project_view()
+        self._refresh_batch_view()
         self._refresh_tiles()
 
     def _set_busy(self, busy: bool) -> None:
@@ -1972,9 +2334,10 @@ class HubWindow(QMainWindow):
         self._btn_ai_summary.setEnabled(
             (not busy) and self._exp is not None and self._ai_available
         )
-        # Plot rendering and script runs are workloads too; leaving their cards
-        # live during a task let a second one start behind the first.
-        for key in ("plots", "scripts"):
+        # Plot rendering, script runs, and Batch Runs are workloads too;
+        # leaving their cards live during a task let a second one start
+        # behind the first.
+        for key in ("plots", "scripts", "batch"):
             card = self._cards.get(key)
             if card is None:
                 continue
@@ -2799,6 +3162,7 @@ class ExperimentConfigsDialog(QDialog):
         self.setMinimumWidth(560)
 
         outer = QVBoxLayout(self)
+        header_row = QHBoxLayout()
         intro = QLabel(
             f"Each experiment directory in <b>{project.name}</b> carries its "
             f"own {_CANONICAL_CONFIG} — region treatments and rig are "
@@ -2808,7 +3172,12 @@ class ExperimentConfigsDialog(QDialog):
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.TextFormat.RichText)
-        outer.addWidget(intro)
+        header_row.addWidget(intro, 1)
+        header_row.addWidget(
+            HelpButton("config_overview",
+                       tooltip="What belongs in a replicate "
+                               "tracking_config.yaml"))
+        outer.addLayout(header_row)
 
         self._table = QTableWidget(0, 3)
         self._table.setHorizontalHeaderLabels(

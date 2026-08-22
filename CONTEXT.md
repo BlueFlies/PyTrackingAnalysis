@@ -65,12 +65,13 @@ statistics tables, a per-replicate summary table, and an opt-in AI-written
 narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
-The main app (`pytrack`): a left rail, a horizontal **tile strip** across the
-top (Batch · Project · Analyze · Plots · Scripts · AI — each tile shows only
-live status, with a **status readout** filling the strip to their right: the
-loaded project and experiment in words), and a full-width output/plots area
-below. All controls live in a
-tile's **anchored panel** (one open at a time; launching a task closes it).
+The main app (`pytrack`): a horizontal **tile strip** across the
+top (Batch · Project · Analyze · Plots · Scripts · AI · Tools — each tile
+shows only live status, with a **status readout** filling the strip to their
+right: the loaded project and experiment in words), and a full-width
+output/plots area below. All controls live in a
+tile's **anchored panel** (one open at a time; a running task greys the
+cards in place rather than closing the panel).
 Tiles never move or hide — an inapplicable tile dims and its panel holds the
 fix. The **selection names the working container — a Batch or a Project** —
 and does only that one job: selecting a Batch lights the Batch tile and dims

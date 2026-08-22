@@ -16,7 +16,7 @@
    - [QC Viewer](#54-qc-viewer-pytrack-qc)
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
-8. [Projects: replicates, combined analysis, and batch runs](#8-projects-replicates-combined-analysis-and-batch-runs)
+8. [Projects: replicates and combined analysis](#8-projects-replicates-and-combined-analysis)
 9. [Quick reference](#9-quick-reference)
 
 > Scripts (saved analysis recipes) and the visual Script Editor have their own
@@ -204,7 +204,8 @@ uv run pytrack-qc /path/to/Trial1    # QC Viewer
 
 > **Headless / SSH note:** PyQt6 requires an X11 or Wayland display.  If running
 > over SSH, forward the display with `ssh -X` or use a VNC/RDP session.  For fully
-> headless batch processing, use the Python API (§6) instead.
+> headless processing, use the Python API (§6) instead — its legacy
+> `batch_analyze` helper covers many folders at once.
 
 ---
 
@@ -301,7 +302,8 @@ data, and statistics: the Combined Analysis stacks each replicate's
 *filtered* summaries with an `Experiment` column, and its statistics show the
 pooled per-fly Welch/Tukey tests beside a **linear mixed model** (treatment
 fixed, experiment random intercept) that accounts for between-replicate
-variation. An old batch parent becomes a Project by writing a `project.yaml`
+variation. A parent folder from the retired batch-over-experiments mode
+becomes a Project by writing a `project.yaml`
 into it (the Hub's **Create project** button does exactly that).
 
 `project.yaml` may also hold two script sections (see §8.3): `scripts:` —
@@ -326,11 +328,12 @@ There are three equally valid ways to create one:
    forms for every section, bulk region generation, and a live YAML preview,
    so the file is valid by construction.
 2. **Copy an existing config** — copy a working `tracking_config.yaml` into
-   the new experiment directory and edit it.  The Hub's **Batch tools → Copy
-   YAML** can push one file into every sub-directory of a parent; inside a
-   Project, **Experiment configs…** scaffolds a design-conformant config for
-   every experiment directory that lacks one (and **Add experiment…** does it
-   for a directory that does not exist yet).
+   the new experiment directory and edit it.  (The Hub's **Batch tools →
+   Copy YAML** dialog, which pushed one file into every sub-directory of a
+   parent, is temporarily disabled from the Batch panel pending a rework.)
+   Inside a Project, **Experiment configs…** scaffolds a design-conformant
+   config for every experiment directory that lacks one (and **Add
+   experiment…** does it for a directory that does not exist yet).
 3. **Write it by hand** — any text editor works; the file is plain YAML.
 
 Rules that make a file *valid*:
@@ -744,8 +747,9 @@ AI provider/model — are tracked there too.
 
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
-The Hub's layout (see `docs/adr/0007`) is a **tile strip** across the top —
-six compact live-status tiles: **Project · Analyze · Plots · Scripts · AI · Tools**
+The Hub's layout (see `docs/adr/0007` and `docs/adr/0009`) is a **tile
+strip** across the top — seven compact live-status tiles:
+**Batch · Project · Analyze · Plots · Scripts · AI · Tools**
 — with the **output area at full width** underneath. A tile
 shows only status (the project's name and replicate health, the loaded
 experiment's fly counts, whether analysis is faceted, …); **clicking it
@@ -767,6 +771,15 @@ analysis counts, and the loaded experiment (design factors in its tooltip).
 
 The panels:
 
+- **Batch** — lights when the selected folder's immediate subdirectories are
+  Projects (the selection names a Batch *or* a Project — still exactly one
+  working container).  A checkable **projects table** lists every Project,
+  all checked by default in name order; **double-click a row to select that
+  Project** — an ordinary selection change, so there is no "up to batch"
+  button.  A **Script** picker names the **designated Project Script**
+  (default: the built-in **Report pipeline**), and **Run batch** runs it in
+  every checked Project (§8.5).  The old **Batch tools** button is parked
+  here, disabled pending a rework for the Project structure.
 - **Project** — two cards, **Create/Load** and **Analysis** (the panel itself is
   already titled Project, so neither card repeats it).
   **Create/Load** picks the folder (an experiment directory *or* a Project; the
@@ -793,8 +806,8 @@ The panels:
   and it runs QC as it loads), plus **Experiment configs…** and
   **Add experiment…** (below), the project-level actions — **Create report** or
   **Update report**, **Plot editor…**, **AI narrative…** — and a **Script** picker with
-  **Run script** / **Edit scripts…** (§8.3; the built-in **Standard
-  pipeline** is always available).  Subdirectories that hold no
+  **Run script** / **Edit scripts…** (§8.3; the built-in **Report
+  pipeline** and **Standard pipeline** are always available).  Subdirectories that hold no
   `tracking_config.yaml` are listed too, in italics with **Config: missing**
   — they are not replicates until they have one.
 - **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** for
@@ -821,9 +834,7 @@ The panels:
   regenerate it afterwards if wanted.  A failed call shows an error and never
   blocks the report.
 - **Tools** — validate YAML, open the `analysis/` or `qc/` folder in the system
-  file browser, open the **Batch tools** dialog (convert sub-directory layouts,
-  bulk-rename sub-directories, copy a YAML into every sub-directory, combine
-  summary CSVs across sub-directories), and clear the matplotlib cache.
+  file browser, and clear the matplotlib cache.
 
 #### The output area (below the strip)
 
@@ -1071,7 +1082,7 @@ replicates disagree on experiment type or design factors/levels).
 `build_combined_analysis()` deletes any saved AI narrative — like
 `run_analysis()`, the narrative describes a single build.
 
-### Batch processing from a script
+### Legacy batch processing from a script
 
 ```python
 results = batch_analyze("./Data/")
@@ -1083,10 +1094,12 @@ for path, status in results.items():
         print(f"       {status}")
 ```
 
-`batch_analyze` scans every immediate sub-directory of the supplied path,
+`batch_analyze` — the legacy Python batch helper, experiment-level and
+pre-Project — scans every immediate sub-directory of the supplied path,
 identifies valid experiment directories, runs `exp.run_analysis()` and
 `exp.create_report()` on each, and returns a `{path: "ok" | error_message}`
-dictionary.
+dictionary.  It is unrelated to the Hub's **Batch Runs** (§8.5), which run a
+designated Project Script across many Projects.
 
 ---
 
@@ -1128,11 +1141,11 @@ outputs to the Project root — see the last table below).
 
 ---
 
-## 8. Projects: replicates, combined analysis, and batch runs
+## 8. Projects: replicates and combined analysis
 
 A **Project** groups replicate experiment directories of one design under a
 parent directory marked by a `project.yaml` (layout and design rules in §3;
-`docs/adr/0005`).  It replaces the old "batch mode": the Hub's Project view
+`docs/adr/0005`).  It replaces the retired batch-over-experiments mode: the Hub's Project view
 runs every replicate, pools their results into a Combined Analysis, renders
 project-level publication figures, and builds a Project Report.
 
@@ -1144,7 +1157,7 @@ project-level publication figures, and builds a Project Report.
   is seeded from the Experiment Type's defaults.  An empty Project is valid —
   add replicates with **Add experiment…**, which scaffolds each new
   `tracking_config.yaml` *from the design*.
-- **Existing replicates / old batch parent** — run **Create project** on the
+- **Existing replicates / retired batch-over-experiments parent** — run **Create project** on the
   parent: the dialog infers the design from the first replicate and writes
   `project.yaml`; nothing inside the replicate directories changes.
 - **Existing folders without configs** — the subdirectories are listed in the
@@ -1208,10 +1221,22 @@ batch parent therefore still works: `run_in_experiments(script: batch)` runs
 the old per-folder `batch` scripts unchanged.  Execution is
 replicate-by-replicate with per-replicate log prefixes and continue-on-error.
 
-The Project view's **Script** picker always includes the built-in **Standard
-pipeline** (validate design → run all analyses → build combined analysis →
-render publication figures → project report) — zero authoring gets a
-complete run.  **Edit scripts…** opens the Script Editor on `project.yaml`
+`run_in_experiments` also takes an optional **`only:`** parameter — a list
+of replicate directory names; blank means every replicate.  The Script
+Editor renders `only:` as a checkable replicate list when editing a
+`project.yaml`.  A name matching no replicate is logged and counted in the
+failure summary while the run continues; the Hub additionally **pre-checks**
+scripts before running, so unknown `only:` names or a script name that
+resolves nowhere abort with a message before anything runs.
+
+The Project view's **Script** picker always includes two built-ins — zero
+authoring gets a complete run.  The **Standard pipeline** runs validate
+design → run all analyses → build combined analysis → render publication
+figures → project report.  The **Report pipeline** runs run all analyses →
+build combined analysis → render publication figures *only when the Project
+has a `plot_specs.yaml`* → project report — the **Create report** button
+plus curated figures, and the default designated script for Batch Runs
+(§8.5).  **Edit scripts…** opens the Script Editor on `project.yaml`
 with the level switcher (§5.3).
 
 ### 8.4 Fixed pipeline from Python
@@ -1222,24 +1247,67 @@ from pytrackinganalysis.Experiment import batch_analyze
 results = batch_analyze("./ParentFolder/")   # {path: 'ok' | error message}
 ```
 
-`batch_analyze` runs `run_analysis()` + `create_report()` on every immediate
+The legacy `batch_analyze` helper runs `run_analysis()` + `create_report()` on every immediate
 sub-directory that contains a `tracking_config.yaml` and a `data/` folder with
 at least one `.xlsx`; other directories are skipped.  Optional arguments:
 `cutoffs` (override every experiment's facet cutoffs), `qc_cutoff` (default
 0.9), and `force_preprocessing`.  It needs no `project.yaml` and builds
 nothing at the parent level — for the pooled Combined Analysis and Project
-Report, use the `Project` API (§6) or the Hub's Project view.
+Report, use the `Project` API (§6) or the Hub's Project view; to run many
+*Projects* at once, use a Batch Run (§8.5).
 
-**Preparing many folders at once:** the Hub's **Tools → Batch tools** dialog
-can copy one master YAML into every sub-directory, bulk-rename
-sub-directories, convert flat layouts into the `data/` structure, and combine
-summary CSVs across sub-folders.
+**Preparing many folders at once:** the Hub's **Batch tools** dialog (copy
+one master YAML into every sub-directory, bulk-rename sub-directories,
+convert flat layouts into the `data/` structure, combine summary CSVs) now
+sits in the Batch panel and is temporarily disabled, pending a rework for
+the Project structure.
+
+### 8.5 Batch Runs: many Projects at once
+
+A **Batch** is structural: a directory whose immediate subdirectories are
+Projects (`docs/adr/0009`) — the Project↔experiment rule one level up.
+Nothing marks it, and it is a processing convenience only: a Batch never
+pools results across Projects (each keeps its own design and outputs), and
+its only artifact of its own is an optional `batch.yaml`.
+
+Selecting such a folder in the Hub lights the leftmost **Batch** tile
+(§5.2).  Its panel lists the Projects in a checkable table, a **Script**
+picker names the **designated Project Script**, and **Run batch** executes
+that script in every checked Project — sequentially in name order,
+continue-on-error, with per-Project log prefixes and a per-Project summary
+at the end (the `run_in_experiments` semantics one level up).  The run
+unloads the loaded experiment first, because it rewrites every replicate's
+analysis.  Sub-directories without a `project.yaml` are skipped with a log
+line — a Batch Run **never creates or upgrades** a `project.yaml`.  There
+is no third script level: the thing a Batch Run runs *is* a Project Script.
+
+The designation resolves per Project, in order:
+
+1. `batch.yaml`'s `project_scripts:` section — Project Scripts held
+   centrally at the Batch root so one recipe serves every Project (the
+   `experiment_scripts:` idea one level up);
+2. the Project's own `scripts:` section;
+3. the built-ins (**Report pipeline**, **Standard pipeline**).
+
+A name that resolves nowhere fails that Project; the run continues and the
+summary says so.
+
+The default designation is the built-in **Report pipeline** (§8.3): run all
+analyses → build combined analysis → render publication figures *only when
+the Project has a `plot_specs.yaml`* → project report.  Zero authoring
+therefore makes a Batch Run mean "press **Create report** on every
+Project", without rendering uncurated default-spec figures unattended.
+`batch.yaml` is lazy — it is written only when the designation is changed
+away from that default (a `script:` key) or a `project_scripts:` section is
+authored by hand; leaving the default selected never creates the file.
 
 ### Results
 
 Per-replicate results always land in each experiment's own `analysis/` and
 `qc/` folders; the pooled artifacts land at the Project root (§7) — the two
-levels never mix outputs.
+levels never mix outputs.  A Batch Run writes only into each Project the
+same way: the Batch folder itself gains at most a `batch.yaml`, and no
+batch-level analysis outputs exist.
 
 ---
 

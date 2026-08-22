@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..ai import available_providers, model_catalog
+from ..help import HelpButton
 from ..ui import ActionButton, Category, icon
 from ..ui import settings as ui_settings
 from .common import TaskWorker, shutdown_worker
@@ -40,6 +41,7 @@ class AiSummaryDialog(QDialog):
 
         lay = QVBoxLayout(self)
 
+        header_row = QHBoxLayout()
         intro = QLabel(
             "Sends this experiment's report content — figures, statistics, "
             "and summary tables — to the chosen provider, which writes a "
@@ -48,7 +50,9 @@ class AiSummaryDialog(QDialog):
             "PDF is rebuilt automatically."
         )
         intro.setWordWrap(True)
-        lay.addWidget(intro)
+        header_row.addWidget(intro, 1)
+        header_row.addWidget(HelpButton("ai_summary", tooltip="AI summary"))
+        lay.addLayout(header_row)
 
         form = QFormLayout()
         self._provider_combo = QComboBox(self)

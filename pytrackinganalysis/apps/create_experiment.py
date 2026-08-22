@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import experiment_types as _et
+from ..help import HelpButton
 from ..io_utils import atomic_write_text
 from ._config_tabs import TRACKING_RIGS, TRACKING_TYPES, _find_data
 
@@ -91,6 +92,13 @@ class ConfigureExperimentDialog(QDialog):
         self._created_path: Path | None = None
 
         outer = QVBoxLayout(self)
+        help_row = QHBoxLayout()
+        help_row.addStretch(1)
+        help_row.addWidget(
+            HelpButton("config_global",
+                       tooltip="Experiment type, tracking type, rig, and "
+                               "facet settings"))
+        outer.addLayout(help_row)
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 

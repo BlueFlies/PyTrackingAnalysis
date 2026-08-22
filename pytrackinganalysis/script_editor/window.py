@@ -305,6 +305,20 @@ class ScriptEditorWindow(QMainWindow):
             inherited["cutoffs"] = ", ".join(str(c) for c in cutoffs)
         self._inspector.set_inherited(inherited)
 
+        # Live options for multilist params: run_in_experiments' `only` picks
+        # from the replicate directory names — the project.yaml's sibling
+        # directories holding a tracking_config.yaml, no Project load needed.
+        choices: dict[str, list[str]] = {}
+        if self._config_path.name == "project.yaml":
+            root = self._config_path.parent
+            try:
+                choices["only"] = sorted(
+                    d.name for d in root.iterdir()
+                    if d.is_dir() and (d / "tracking_config.yaml").is_file())
+            except OSError:
+                pass
+        self._inspector.set_choices(choices)
+
         # The canvas warning triangles were painted before the tracking type
         # was known; repaint them so they agree with the inspector banner and
         # the save gate.

@@ -37,11 +37,16 @@ The provider receives report-ready content: cover metadata, figures as images, s
 3. The narrative is saved to `analysis/<project>_AI_Summary.txt`.
 4. The Project report is rebuilt immediately so the PDF and text file agree.
 
+## In scripts
+
+Project Scripts have a **Generate AI narrative** action (provider choice; it soft-fails by default so a provider error never kills a pipeline). The built-in pipelines do not include it - building Combined Analysis deletes a saved narrative, so add it as a final step of a custom Project Script when you want the narrative refreshed automatically.
+
 ## Lifecycle
 
 - The saved text file is the opt-in. Reports embed AI prose only while the corresponding `*_AI_Summary.txt` exists.
 - Re-running an experiment analysis deletes its experiment AI Summary.
 - Rebuilding a Project Combined Analysis deletes its Project AI narrative. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh when you want AI prose in the PDF.
+- A Batch Run's default Report pipeline rebuilds each Project's Combined Analysis, so it deletes any saved narrative in every Project it touches. Regenerate afterwards, or designate a custom Project Script that ends with **Generate AI narrative** (see the **Batch runs** help topic).
 - Regenerating replaces the saved text.
 
 Always review AI prose before using it. It is a language-model summary of pipeline outputs, not an independent scientific conclusion.

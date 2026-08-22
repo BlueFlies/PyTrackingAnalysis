@@ -29,10 +29,20 @@ experiment_scripts: []
 - **`notes`** are optional and appear near the top of the Project report.
 - **`design.global`** is the shared global design: experiment type, design factors and levels, facets, phase names, and type-specific quality criteria.
 - **`design.counting_regions`** fixes the treatment-region names and their order. Aliases stay per replicate.
-- **`scripts`** holds Project Scripts.
-- **`experiment_scripts`** holds centrally managed Experiment Scripts that can run in every replicate.
+- **`scripts`** and **`experiment_scripts`** hold the two script levels - see **Scripts sections** below.
 
 Advanced hand-edited keys placed under `design.global` are enforced too. Use that deliberately: if you put a key there, every replicate must resolve to the same value.
+
+## Scripts sections
+
+Two-level scripting lives in `project.yaml`:
+
+- **`scripts`** holds Project Scripts: named step lists of project-level actions (`run_all_analyses`, `build_combined_analysis`, `render_publication_figures`, `project_report`, `generate_ai_narrative`, `validate_design`, `run_in_experiments`). Run them from the Project panel's **Script** picker, where the built-in **Standard pipeline** and **Report pipeline** are always listed; built-ins are never written to the file.
+- **`experiment_scripts`** holds centrally managed Experiment Scripts: one recipe serving every replicate without being copied into their configs. They run only through a Project Script's `run_in_experiments` step - in every replicate, or just the ones its `only:` list names. The Hub's Scripts tile lists solely the loaded experiment's own scripts, not these.
+
+Both sections are optional; **Edit scripts...** (the Script Editor) writes them, and other keys in the file are preserved. See the **Scripts and Script Editor** and **Project actions** help topics.
+
+One level up, a Batch has the analogous lazy file: `batch.yaml`, holding the designated Project Script (`script:`) and centrally held Project Scripts (`project_scripts:`). Unlike `project.yaml` it never marks the folder - a Batch is structural, and the file appears only once batch-level scripting is authored. See the **Batch runs** help topic.
 
 ## What stays out
 
