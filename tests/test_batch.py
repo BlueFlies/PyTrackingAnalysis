@@ -105,24 +105,57 @@ def test_resolution_order_central_then_own_then_builtin(tmp_path):
     assert script is None
 
 
-def test_default_is_report_pipeline_with_conditional_figures(tmp_path):
+def test_no_designation_runs_each_projects_own_script(tmp_path):
+    """No designation means each Project's OWN default script — every
+    project.yaml is created with one, so nothing is silently substituted
+    (ADR-0009 amendment)."""
     _make_batch(tmp_path, names=("P1",))
     project = prj.Project(str(tmp_path / "P1"))
-    # No plot_specs.yaml: the figure step is dropped, with a note — an
-    # unattended run must not invent default-spec figures.
     script, source, note = batch_mod.resolve_designated_script(
         None, [], project)
+    assert source == "project.yaml scripts"
+    assert script["name"] == pa.DEFAULT_PROJECT_SCRIPT_NAME
+    assert script is project.scripts[0]
+    assert note is None
+    # The figure step stays in the script and skips itself at run time when
+    # the Project has no plot_specs.yaml (the guard is in the action now).
+    assert "render_publication_figures" in [s["action"] for s in
+                                            script["steps"]]
+
+    # A renamed default still runs: the first authored script is used.
+    project.scripts = [{"name": "Nightly", "steps": []}]
+    script, source, _ = batch_mod.resolve_designated_script(None, [], project)
+    assert script["name"] == "Nightly" and source == "project.yaml scripts"
+
+
+def test_no_script_at_all_fails_that_project(tmp_path):
+    """The replacement for the old built-in fallback: a Project with no
+    Project Script does not run, and says why."""
+    _make_batch(tmp_path, names=("P1",))
+    project = prj.Project(str(tmp_path / "P1"))
+    project.scripts = []
+    script, source, _ = batch_mod.resolve_designated_script(None, [], project)
+    assert script is None and source == ""
+
+
+def test_builtin_report_pipeline_still_drops_figures_without_specs(tmp_path):
+    """Designating the built-in by name remains available, conditional
+    figure step and all."""
+    _make_batch(tmp_path, names=("P1",))
+    project = prj.Project(str(tmp_path / "P1"))
+    project.scripts = []            # so the name falls through to built-ins
+    script, source, note = batch_mod.resolve_designated_script(
+        "Report pipeline", [], project)
     assert source == "built-in"
     assert "render_publication_figures" not in [
         s["action"] for s in script["steps"]]
     assert "plot_specs.yaml" in note
-    # With curated specs the full pipeline runs, no note.
     (tmp_path / "P1" / "plot_specs.yaml").write_text("plots: {}\n",
                                                      encoding="utf-8")
-    script, _, note = batch_mod.resolve_designated_script(None, [], project)
+    script, _, note = batch_mod.resolve_designated_script(
+        "Report pipeline", [], project)
     assert [s["action"] for s in script["steps"]] == [
-        "run_all_analyses", "build_combined_analysis",
-        "render_publication_figures", "project_report"]
+        "project_report", "render_publication_figures"]
     assert note is None
 
 

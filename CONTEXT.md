@@ -94,8 +94,8 @@ _Avoid_: recipe, macro
 
 **Project Script**:
 A saved step list of project-level actions (`run_in_experiments`,
-`run_all_analyses`, `build_combined_analysis`, `render_publication_figures`,
-`project_report`, `generate_ai_narrative`, `validate_design`) in
+`project_report`, `render_publication_figures`,
+`generate_ai_narrative`, `validate_design`) in
 `project.yaml` `scripts:`. Same shape and visual editor as an Experiment
 Script, but a separate action registry — levels cannot mix; the only bridge
 is `run_in_experiments`, which runs a named Experiment Script in every
@@ -108,21 +108,30 @@ validation when a Project is in hand.
 
 **Standard Pipeline**:
 A built-in Project Script every Project can run without authoring anything:
-validate design → run all analyses → build combined analysis → render
-publication figures → project report. Never written to `project.yaml`, so it
-tracks the shipped default.
+validate design → project report → render publication figures. Never written
+to `project.yaml`, so it tracks the shipped default.
 
 **Report Pipeline**:
 The built-in Project Script matching the Hub's Create report button plus
-curated figures: run all analyses → build combined analysis → render
-publication figures (skipped when the Project has no `plot_specs.yaml`) →
-project report. The default designation for a Batch Run — preferred there
-over the Standard Pipeline because it neither gates on `validate_design`
-(which would fail Projects mid-migration) nor renders uncurated default-spec
-figures on an unattended run. Code-defined like every built-in; the
-conditional figure step never appears in yaml. Listed beside the Standard
-Pipeline in every script picker, Project and Batch alike.
+curated figures: project report → render publication figures (skipped when
+the Project has no `plot_specs.yaml`). Preferred over the Standard Pipeline
+for an unattended run because it does not gate on `validate_design` (which
+would fail Projects mid-migration). Also the name of the **default Project
+Script written into every new `project.yaml`** — that copy, not the built-in,
+is what a Batch Run executes by default. Listed beside the Standard Pipeline
+in every script picker, Project and Batch alike.
 _Avoid_: default batch, batch pipeline
+
+**Absorbed Action**:
+A project action retired into the one that already does its work —
+`run_all_analyses` and `build_combined_analysis` into `project_report`, when
+that action became the whole Create-report button. A script action mirrors a
+Project-card button, and neither retired action had one. Saved scripts naming
+them still run: `absorb_legacy_steps` drops the step (or promotes it to the
+replacement, if the script has no `project_report` of its own) and moves the
+replacement to the absorbed step's position, so later steps still find
+analyzed replicates. The Script Editor flags them for cleanup.
+_Avoid_: deprecated action, legacy step
 
 **Experiment Type**:
 A named bundle (e.g. Valence) that selects one Tracking Type and constrains the

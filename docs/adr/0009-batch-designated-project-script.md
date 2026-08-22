@@ -66,6 +66,63 @@ five-tile strip whose selection invariantly names a Project.
   Batch panel's projects table is checkable (all rows on by default), so
   re-running one failed Project is two clicks, not a directory reshuffle.
 
+## Amendment (2026-08-22): every project.yaml ships a default Project Script
+
+The built-in default was invisible. A user reading their `project.yaml` saw no
+`scripts:` block and had no way to learn what a Batch Run would do to their
+Project, let alone adjust it — the Report Pipeline existed only in code.
+
+- **`create_project_file` seeds `scripts:` with the default Project Script**
+  (the Report Pipeline's steps, named `Report pipeline`, carrying a `notes:`
+  line saying where it came from). It is written into the file, so it is
+  visible in the Script Editor, editable, and renameable. A `project.yaml`
+  whose block is absent is seeded on the next write; an authored block is
+  left untouched.
+- **No designation now means "each Project's own script", and there is no
+  implicit fallback.** `resolve_designated_script(None, …)` takes the
+  Project's script named `Report pipeline`, else its first authored script.
+  A Project whose `scripts:` is empty **does not run**: it fails that Project
+  with a message naming the Script Editor, and the Batch Run continues. The
+  built-ins remain resolvable *by name* — an explicit designation is a user
+  choice, not a silent substitution — and stay in both Hub pickers.
+- **The conditional figure step moves into the action.**
+  `render_publication_figures` now skips itself (with a log line) when the
+  Project has no `plot_specs.yaml`, so the materialized default script is as
+  safe for an unattended run as the code-defined built-in was.
+  `report_pipeline_for` still pre-drops the step for the built-in path, which
+  is what produces the up-front note.
+- The Project card's picker lists the Project's own scripts **first** and
+  opens on one; the Batch panel's picker gains a leading "Each project's own
+  script (default)" entry, which stores no designation (the lazy-marker rule
+  is unchanged).
+
+### A script action mirrors a button
+
+Writing the default script into `project.yaml` exposed a mismatch it had been
+possible to ignore while the default lived in code: the script registry
+offered `run_all_analyses` and `build_combined_analysis` as separate steps,
+but the Project card has no Run-all and no Build-combined button. The
+Create-report button (`hub._project_report`) has always run all three calls —
+`run_all()`, `build_combined_analysis()`, `create_report()` — so a user
+reading the seeded script saw three steps for what is one click.
+
+- **`project_report` becomes the whole button**, same three calls in the same
+  order, with the button's own defaults (`reports=True`,
+  `skip_analyzed=False`) exposed as params. Like the button, a replicate
+  failure stops it before pooling.
+- **`run_all_analyses` and `build_combined_analysis` are removed** from the
+  registry. The rule going forward: a project action mirrors a Project-card
+  button, so the script language cannot drift from the UI.
+- **Saved scripts naming them still run.** `absorb_legacy_steps` drops the
+  retired step when the script already has a `project_report`, and promotes
+  it to `project_report` when it does not — absorbing must never turn a
+  script into a no-op. The replacement inherits the *position* of the first
+  step it absorbs, so a later `render_publication_figures` still finds
+  analyzed replicates. The Script Editor flags the steps for cleanup rather
+  than calling them unknown.
+- The built-in pipelines lose those steps and put figures **after** the
+  report, for the same ordering reason.
+
 ## Consequences
 
 - Selection normalization (`_set_project_dir`) must stop at a Batch root

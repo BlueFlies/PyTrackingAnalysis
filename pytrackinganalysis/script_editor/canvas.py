@@ -73,7 +73,7 @@ class _StepCard(QFrame):
         self._num_lbl = QLabel(f"{index + 1}.")
         self._num_lbl.setFixedWidth(28)
         self._num_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._num_lbl.setStyleSheet("color: palette(mid);")
+        self._num_lbl.setObjectName("PtrackStepNum")
         outer.addWidget(self._num_lbl)
 
         ico = QLabel()
@@ -85,7 +85,7 @@ class _StepCard(QFrame):
         self._title_lbl = QLabel(action.title)
         self._title_lbl.setStyleSheet("font-weight: 600;")
         self._chip_lbl = QLabel(self._format_params(params))
-        self._chip_lbl.setStyleSheet("color: palette(mid); font-size: 9pt;")
+        self._chip_lbl.setObjectName("PtrackStepChip")
         self._chip_lbl.setWordWrap(False)
         text_col.addWidget(self._title_lbl)
         text_col.addWidget(self._chip_lbl)
@@ -131,14 +131,18 @@ class _StepCard(QFrame):
         super().mousePressEvent(event)
 
     def _update_style(self) -> None:
+        # Unselected background comes from the app-wide theme QSS
+        # (ui/theme.py) so it tracks light/dark; the translucent selection
+        # tint blends over either theme.
         col = category_color(self._action.category)
-        sel_bg = "rgba(100, 140, 220, 35)" if self._is_selected else "palette(base)"
+        sel = ("  background: rgba(100, 140, 220, 35);"
+               if self._is_selected else "")
         self.setStyleSheet(
             f"QFrame#PtrackStepCard {{"
             f"  border-left: 4px solid {col};"
             f"  border-radius: 6px;"
-            f"  background: {sel_bg};"
             f"  padding: 2px;"
+            f"{sel}"
             f"}}"
         )
 
@@ -185,7 +189,7 @@ class Canvas(QWidget):
         self._empty_lbl = QLabel(
             "Double-click an action in the palette on the left to add it here."
         )
-        self._empty_lbl.setStyleSheet("color: palette(mid); font-style: italic;")
+        self._empty_lbl.setObjectName("PtrackScriptHint")
         self._empty_lbl.setWordWrap(True)
         outer.addWidget(self._empty_lbl)
 

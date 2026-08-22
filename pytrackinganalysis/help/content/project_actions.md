@@ -36,25 +36,17 @@ Rebuilding Combined Analysis deletes any saved Project AI narrative because the 
 
 ## Project scripts
 
-The Project **Script** picker runs Project Scripts from `project.yaml`. Two built-ins are always available.
+The Project **Script** picker runs Project Scripts from `project.yaml`, listing that file's own scripts first. Every Project is created with one already written there, named **Report pipeline**, so you can open the Script Editor and read exactly what the default run does.
 
-**Standard pipeline (built-in)** runs:
+Each script action mirrors a button on this card. **Create / update project report** is therefore the whole **Create report** sequence in one step - analyze every replicate, pool the results, build the PDF - and nothing needs to run before it. (There is no Run-all or Build-combined button, so there is no such action either; both were folded into the report step. Scripts saved before that still run, and the Script Editor flags the old steps so you can delete them.)
 
-1. validate design
-2. run all analyses
-3. build combined analysis
-4. render publication figures
-5. create Project report
+**Report pipeline** runs:
 
-**Report pipeline (built-in)** runs:
+1. create / update project report
+2. render publication figures - skipped when the Project has no `plot_specs.yaml`
 
-1. run all analyses
-2. build combined analysis
-3. render publication figures - only when the Project has a `plot_specs.yaml`
-4. create Project report
+**Standard pipeline (built-in)** is the same, with a `validate design` gate first. Both built-ins appear in the Project and Batch script pickers, below your own scripts.
 
-Report pipeline is the **Create report** button plus curated figures. It appears in both the Project and Batch script pickers and is the default designated script for Batch runs.
-
-Use **Edit scripts...** to author custom Project Scripts or centrally held Experiment Scripts. If you need something more specific than the Hub's full report refresh, use a Project Script: scripts still expose lower-level run, combined-analysis, figure-rendering, report, AI, and `run_in_experiments` steps for custom automation. `run_in_experiments` takes an optional `only:` list of replicate directory names; blank means all replicates, and the Script Editor shows `only:` as a checkable list of the Project's replicates. Before starting a script, the Hub pre-checks it and aborts on a mistyped replicate name or an experiment-script name that resolves nowhere; during a run, a name that matches no replicate is logged, counted in the failure summary, and the remaining replicates still run.
+Use **Edit scripts...** to author custom Project Scripts or centrally held Experiment Scripts. If you need something more specific than the Hub's full report refresh, use a Project Script: scripts still expose figure-rendering, report, AI, design-validation, and `run_in_experiments` steps for custom automation. `run_in_experiments` takes an optional `only:` list of replicate directory names; blank means all replicates, and the Script Editor shows `only:` as a checkable list of the Project's replicates. Before starting a script, the Hub pre-checks it and aborts on a mistyped replicate name or an experiment-script name that resolves nowhere; during a run, a name that matches no replicate is logged, counted in the failure summary, and the remaining replicates still run.
 
 To run one script across many sibling Projects unattended, see the **Batch runs** help topic.

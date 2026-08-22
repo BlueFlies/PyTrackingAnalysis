@@ -22,16 +22,18 @@ from test_project import _make_project, qapp  # noqa: F401  (fixture reuse)
 class _FakeProject:
     """Duck-typed Project recording which methods a script invoked."""
 
-    def __init__(self):
+    def __init__(self, project_directory="/nowhere"):
         self.calls: list = []
-        self.project_directory = "/nowhere"
+        self.project_directory = str(project_directory)
+        #: What run_all() reports back, so a partial run can be exercised.
+        self.run_all_failures: list = []
         self.experiment_names = ["Rep1", "Rep2"]
         self.scripts = []
         self.experiment_scripts = []
 
     def run_all(self, make_reports=True, skip_analyzed=False, log=print):
         self.calls.append(("run_all", make_reports, skip_analyzed))
-        return []
+        return list(self.run_all_failures)
 
     def build_combined_analysis(self):
         self.calls.append(("combined",))
@@ -60,31 +62,157 @@ class _FakeProject:
 # ---- registry & runner -----------------------------------------------------
 
 def test_registry_roster_and_standard_pipeline():
+    """A script action mirrors a Project-card button. There is no Run-all or
+    Build-combined button, so there is no such action either — both are part
+    of 'Create / update project report'."""
     assert sorted(pa.PROJECT_ACTIONS) == [
-        "build_combined_analysis", "generate_ai_narrative", "project_report",
-        "render_publication_figures", "run_all_analyses",
-        "run_in_experiments", "validate_design"]
+        "generate_ai_narrative", "project_report",
+        "render_publication_figures", "run_in_experiments", "validate_design"]
     assert pa.project_validation_issues(pa.STANDARD_PIPELINE["steps"]) == []
+    assert pa.project_validation_issues(pa.REPORT_PIPELINE["steps"]) == []
     # Unknown / invalid steps are caught before any side-effect.
     issues = pa.project_validation_issues(
         [{"action": "load_experiment", "params": {}}])
     assert issues and "Unknown project action" in issues[0][1]
 
 
-def test_runner_executes_project_steps_in_order():
-    fake = _FakeProject()
-    script = {"name": "s", "steps": [
-        {"action": "run_all_analyses",
+def _figure_script() -> dict:
+    return {"name": "s", "steps": [
+        {"action": "project_report",
          "params": {"reports": False, "skip_analyzed": True}},
-        {"action": "build_combined_analysis", "params": {}},
         {"action": "render_publication_figures", "params": {"format": "both"}},
-        {"action": "project_report", "params": {}},
     ]}
+
+
+def test_project_report_step_is_the_whole_create_report_button(tmp_path):
+    """The step makes the same three calls, in the same order, as the Hub's
+    Create-report button: analyze every replicate, pool, then render."""
+    (tmp_path / "plot_specs.yaml").write_text("plots: {}\n", encoding="utf-8")
+    fake = _FakeProject(tmp_path)
     logs: list[str] = []
-    pa.run_project_script(script, fake, log_cb=logs.append)
+    pa.run_project_script(_figure_script(), fake, log_cb=logs.append)
     assert fake.calls == [("run_all", False, True), ("combined",),
-                          ("figures", ("svg", "pdf")), ("report",)]
+                          ("report",), ("figures", ("svg", "pdf"))]
     assert any("complete" in line for line in logs)
+
+
+def test_project_report_step_defaults_match_the_button(tmp_path):
+    fake = _FakeProject(tmp_path)
+    pa.run_project_script(
+        {"name": "s", "steps": [{"action": "project_report", "params": {}}]},
+        fake, log_cb=lambda _m: None)
+    # make_reports=True, skip_analyzed=False — exactly hub._project_report.
+    assert fake.calls == [("run_all", True, False), ("combined",), ("report",)]
+
+
+def test_project_report_step_refuses_to_pool_a_partial_run(tmp_path):
+    """Like the button, a replicate failure stops the step before pooling —
+    a report over half-regenerated replicates is worse than none."""
+    fake = _FakeProject(tmp_path)
+    fake.run_all_failures = ["Rep2: boom"]
+    with pytest.raises(pa.ProjectScriptError, match="Rep2: boom"):
+        pa.run_project_script(
+            {"name": "s",
+             "steps": [{"action": "project_report", "params": {}}]},
+            fake, log_cb=lambda _m: None)
+    assert fake.calls == [("run_all", True, False)]     # no pool, no report
+
+
+def test_figure_step_skips_itself_without_curated_specs(tmp_path):
+    """The 'no plot_specs.yaml' condition lives in the ACTION, not only in
+    the built-in pipeline (ADR-0009 amendment): the default script every
+    project.yaml carries must not invent default-spec figures either."""
+    fake = _FakeProject(tmp_path)          # no plot_specs.yaml
+    logs: list[str] = []
+    pa.run_project_script(_figure_script(), fake, log_cb=logs.append)
+    assert ("figures", ("svg", "pdf")) not in fake.calls
+    assert fake.calls == [("run_all", False, True), ("combined",), ("report",)]
+    assert any("plot_specs.yaml" in line and "skipped" in line
+               for line in logs)
+
+
+# ---- retired actions -------------------------------------------------------
+
+def test_a_saved_script_naming_a_retired_action_still_runs(tmp_path):
+    """run_all_analyses / build_combined_analysis were folded into
+    project_report. Scripts saved before that must not fail as 'unknown'."""
+    fake = _FakeProject(tmp_path)
+    logs: list[str] = []
+    pa.run_project_script(
+        {"name": "old", "steps": [
+            {"action": "run_all_analyses", "params": {}},
+            {"action": "build_combined_analysis", "params": {}},
+            {"action": "project_report", "params": {}},
+        ]}, fake, log_cb=logs.append)
+    # The work happens once, not three times: both retired steps are dropped
+    # because project_report already does what they did.
+    assert fake.calls == [("run_all", True, False), ("combined",), ("report",)]
+    assert sum("is now part of" in line for line in logs) == 2
+
+
+def test_absorbing_never_turns_a_script_into_a_no_op(tmp_path):
+    """An old 'just analyze everything' script has no project_report step —
+    dropping its only step would silently do nothing, so the retired step
+    becomes its replacement instead."""
+    fake = _FakeProject(tmp_path)
+    logs: list[str] = []
+    pa.run_project_script(
+        {"name": "old", "steps": [
+            {"action": "run_all_analyses", "params": {}}]},
+        fake, log_cb=logs.append)
+    assert fake.calls == [("run_all", True, False), ("combined",), ("report",)]
+    assert any("has been replaced by" in line for line in logs)
+
+
+def test_absorbing_keeps_the_replacement_where_the_work_used_to_happen(
+        tmp_path):
+    """The old default ran analyses, pooled, rendered figures, then reported.
+    Absorbing must not leave the figure step ahead of project_report — it
+    would render from replicates nothing had analyzed yet."""
+    (tmp_path / "plot_specs.yaml").write_text("plots: {}\n", encoding="utf-8")
+    fake = _FakeProject(tmp_path)
+    logs: list[str] = []
+    pa.run_project_script(
+        {"name": "old", "steps": [
+            {"action": "run_all_analyses", "params": {}},
+            {"action": "build_combined_analysis", "params": {}},
+            {"action": "render_publication_figures", "params": {}},
+            {"action": "project_report", "params": {}},
+        ]}, fake, log_cb=logs.append)
+    assert fake.calls == [("run_all", True, False), ("combined",),
+                          ("report",), ("figures", ("svg",))]
+    assert any("moved to step 1" in line for line in logs)
+
+    steps, _ = pa.absorb_legacy_steps([
+        {"action": "run_all_analyses", "params": {}},
+        {"action": "render_publication_figures", "params": {}},
+        {"action": "project_report", "params": {}},
+    ])
+    assert [s["action"] for s in steps] == [
+        "project_report", "render_publication_figures"]
+
+
+def test_absorbing_leaves_a_correctly_ordered_script_alone():
+    """No gratuitous reordering: a script that already reports before it
+    renders keeps its order."""
+    steps, notes = pa.absorb_legacy_steps([
+        {"action": "run_all_analyses", "params": {}},
+        {"action": "project_report", "params": {}},
+        {"action": "render_publication_figures", "params": {}},
+    ])
+    assert [s["action"] for s in steps] == [
+        "project_report", "render_publication_figures"]
+    assert not any("moved to step" in n for n in notes)
+
+
+def test_the_editor_flags_a_retired_action_for_cleanup():
+    """Not an 'unknown action' error — a named replacement the user can act
+    on, while the run itself still absorbs the step."""
+    issues = pa.project_validation_issues(
+        [{"action": "build_combined_analysis", "params": {}}])
+    assert len(issues) == 1
+    assert "replaced by" in issues[0][1]
+    assert "Create / update project report" in issues[0][1]
 
 
 def test_ai_narrative_soft_fails_but_can_hard_fail():
@@ -250,24 +378,25 @@ def test_hub_script_picker_and_run(qapp, tmp_path, monkeypatch):  # noqa: F811
     _make_project(tmp_path)
     save_scripts(str(tmp_path / "project.yaml"),
                  [{"name": "mine",
-                   "steps": [{"action": "build_combined_analysis",
+                   "steps": [{"action": "validate_design",
                               "params": {}}]}], key="scripts")
     win = hub_mod.HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
     combo = win._project_script_combo
     items = [(combo.itemText(i), combo.itemData(i))
              for i in range(combo.count())]
-    # Both built-ins, keyed sentinels (ADR-0009: the Report pipeline appears
-    # in the Project picker too, beside the Standard pipeline).
-    assert items[0] == ("Standard pipeline (built-in)",
-                        ("builtin", "standard"))
-    assert items[1] == ("Report pipeline (built-in)", ("builtin", "report"))
-    assert ("mine", "mine") in items
+    # The project's OWN scripts come first and one is preselected (ADR-0009
+    # amendment: every project.yaml carries a default script, so the picker
+    # opens on a run the user can read in the Script Editor). The built-ins
+    # stay below as explicit choices.
+    assert items[0] == ("mine", "mine")
+    assert combo.currentIndex() == 0
+    assert ("Standard pipeline (built-in)", ("builtin", "standard")) in items
+    assert ("Report pipeline (built-in)", ("builtin", "report")) in items
 
     ran: list = []
     monkeypatch.setattr(hub_mod.HubWindow, "_spawn_task",
                         lambda self, name, fn: ran.append((name, fn)))
-    combo.setCurrentIndex(2)                 # 'mine'
     win._project_run_script()
     assert ran and "mine" in ran[0][0]
     win.close()
@@ -291,17 +420,63 @@ def test_hub_runs_report_pipeline_with_conditional_figures(
         lambda script, project, log_cb, figure_cb=None:
         seen.append([s["action"] for s in script["steps"]]))
 
-    win._project_script_combo.setCurrentIndex(1)   # Report pipeline
+    combo = win._project_script_combo
+    builtin = next(i for i in range(combo.count())
+                   if combo.itemData(i) == ("builtin", "report"))
+    combo.setCurrentIndex(builtin)
     win._project_run_script()
     assert spawned[0][0] == "Project script: Report pipeline"
-    assert seen == [["run_all_analyses", "build_combined_analysis",
-                     "project_report"]]            # no plot_specs.yaml
+    assert seen == [["project_report"]]            # no plot_specs.yaml
 
     (tmp_path / "plot_specs.yaml").write_text("plots: {}\n", encoding="utf-8")
     seen.clear()
     win._project_run_script()
-    assert seen == [["run_all_analyses", "build_combined_analysis",
-                     "render_publication_figures", "project_report"]]
+    # Figures come after the report: project_report is what analyzes the
+    # replicates the figure step then reads.
+    assert seen == [["project_report", "render_publication_figures"]]
+    win.close()
+
+
+def test_new_project_yaml_carries_a_default_script(tmp_path, qapp,  # noqa: F811
+                                                   monkeypatch):
+    """Every project.yaml is created with a visible, editable default script
+    (ADR-0009 amendment) — that is what replaces the built-in fallback."""
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    _make_project(tmp_path)
+    meta = yaml.safe_load((tmp_path / "project.yaml").read_text())
+    script = meta["scripts"][0]
+    assert script["name"] == pa.DEFAULT_PROJECT_SCRIPT_NAME
+    assert [s["action"] for s in script["steps"]] == [
+        "project_report", "render_publication_figures"]
+    assert pa.project_validation_issues(script["steps"]) == []
+    assert script["notes"]          # says where it came from and how to edit
+
+    # An authored block is left alone — re-saving project info must not add
+    # a second copy of the default or reorder what the user wrote.
+    save_scripts(str(tmp_path / "project.yaml"),
+                 [{"name": "mine", "steps": []}], key="scripts")
+    prj.create_project_file(str(tmp_path), "Proj")
+    meta = yaml.safe_load((tmp_path / "project.yaml").read_text())
+    assert [s["name"] for s in meta["scripts"]] == ["mine"]
+
+    # Emptying the block removes it (save_scripts drops an empty list), so
+    # the next write seeds the default again — a project.yaml is never left
+    # without a runnable script.
+    save_scripts(str(tmp_path / "project.yaml"), [], key="scripts")
+    assert "scripts" not in yaml.safe_load(
+        (tmp_path / "project.yaml").read_text())
+    prj.create_project_file(str(tmp_path), "Proj")
+    meta = yaml.safe_load((tmp_path / "project.yaml").read_text())
+    assert [s["name"] for s in meta["scripts"]] == [
+        pa.DEFAULT_PROJECT_SCRIPT_NAME]
+
+    # The Project card opens on that default, so the user sees it exists.
+    win = hub_mod.HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+    combo = win._project_script_combo
+    assert combo.itemText(0) == pa.DEFAULT_PROJECT_SCRIPT_NAME
+    assert combo.currentIndex() == 0
     win.close()
 
 

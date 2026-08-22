@@ -1,4 +1,4 @@
-# PyTrackingAnalysis — Scripts & the Script Editor
+\# PyTrackingAnalysis — Scripts & the Script Editor
 
 Scripts are saved, re-runnable analysis recipes. Instead of clicking the same
 sequence of Hub buttons for every experiment, you record the sequence once —
@@ -258,10 +258,8 @@ exactly one place, the `run_in_experiments` bridge.
 |--------|--------------|
 | `validate_design` | Re-checks every replicate against the project design; fails the script on any mismatch. A cheap guard for the top of a pipeline. |
 | `run_in_experiments` | Runs a named **Experiment Script** in every replicate (see below). |
-| `run_all_analyses` | Full analysis (and report) for every replicate — the Project card's Run-all as a step. Options: create reports, skip already-analyzed. |
-| `build_combined_analysis` | Stacks the replicates' filtered summaries into the project `analysis/` with pooled + mixed-model statistics. |
-| `render_publication_figures` | Writes the pooled publication figures to `figures/` from `plot_specs.yaml` (SVG, PDF, or both) — the Plot Editor's saves, headless. |
-| `project_report` | Builds `<project>_report.pdf`. |
+| `render_publication_figures` | Writes the pooled publication figures to `figures/` from `plot_specs.yaml` (SVG, PDF, or both) — the Plot Editor's saves, headless. Skips itself when the project has no `plot_specs.yaml`. |
+| `project_report` | **The whole Create-report button in one step**: analyzes every replicate (with its own report), pools the results into `analysis/`, then builds `<project>_report.pdf`. Nothing needs to run before it. Options: create per-replicate reports, skip already-analyzed. |
 | `generate_ai_narrative` | Asks an AI provider to write the project narrative. **Soft-fails by default** — a provider error is logged and the script continues. |
 
 ### The `run_in_experiments` bridge
@@ -291,13 +289,20 @@ The Project card's script picker always offers **Standard pipeline
 shipped default:
 
 1. `validate_design`
-2. `run_all_analyses`
-3. `build_combined_analysis`
-4. `render_publication_figures` (SVG)
-5. `project_report`
+2. `project_report`
+3. `render_publication_figures` (SVG)
 
 Zero authoring gets a complete project run; your own scripts appear alongside
 it in the picker.
+
+> **Retired actions.** `run_all_analyses` and `build_combined_analysis` used
+> to be separate steps. A script action mirrors a Project-card button, and
+> there is no Run-all or Build-combined button — both are part of what
+> **Create report** does — so both actions were folded into `project_report`.
+> Scripts you saved before that still run: the retired steps are absorbed
+> automatically (and `project_report` takes the position of the first one, so
+> a later figure step still finds analyzed replicates). The Script Editor
+> flags them so you can delete them.
 
 ### Central experiment scripts
 
@@ -324,12 +329,10 @@ scripts:
     params: {}
   - action: run_in_experiments
     params: {script: nightly}
-  - action: build_combined_analysis
+  - action: project_report
     params: {}
   - action: render_publication_figures
     params: {format: both}
-  - action: project_report
-    params: {}
 ```
 
 ---

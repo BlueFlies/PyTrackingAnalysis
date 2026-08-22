@@ -167,6 +167,15 @@ def test_tile_summary_lines_are_hard_capped(hub):
     assert len(text.splitlines()) == 2
 
 
+def test_strip_has_no_divider_and_uniform_spacing(hub):
+    """The strip is one flat row: no divider widget, no extra spacer — the
+    grouping cue lives in the tiles' own dim/lit states."""
+    lay = hub._strip.layout()
+    items = [lay.itemAt(i) for i in range(lay.count())]
+    assert all(it.widget() is not None for it in items)
+    assert not hasattr(hub, "_strip_divider")
+
+
 def test_status_panel_fills_the_strip_right_of_the_last_tile(hub):
     lay = hub._strip.layout()
     assert lay.itemAt(lay.count() - 1).widget() is hub._status_panel
@@ -550,8 +559,11 @@ def test_batch_double_click_is_an_ordinary_selection_change(
     assert hub._tiles["batch"].is_dimmed()
 
 
-def test_batch_picker_defaults_to_report_pipeline_and_persists(
+def test_batch_picker_defaults_to_each_projects_own_script(
         hub, qapp, tmp_path):  # noqa: F811
+    """The default designation is now 'each project's own script' (ADR-0009
+    amendment) — the built-ins below it are explicit choices, not the silent
+    fallback they used to be."""
     import yaml
 
     _make_batch(tmp_path)
@@ -560,17 +572,28 @@ def test_batch_picker_defaults_to_report_pipeline_and_persists(
     combo = hub._batch_script_combo
     items = [(combo.itemText(i), combo.itemData(i))
              for i in range(combo.count())]
-    assert items[0] == ("Report pipeline (built-in)", ("builtin", "report"))
-    assert items[1] == ("Standard pipeline (built-in)",
+    assert items[0] == ("Each project's own script (default)",
+                        ("default", None))
+    assert items[1] == ("Report pipeline (built-in)", ("builtin", "report"))
+    assert items[2] == ("Standard pipeline (built-in)",
                         ("builtin", "standard"))
     assert combo.currentIndex() == 0
     # The default never creates batch.yaml — the lazy-marker rule.
     assert not (tmp_path / "batch.yaml").exists()
 
-    combo.setCurrentIndex(1)                  # the user designates Standard
+    combo.setCurrentIndex(2)                  # the user designates Standard
     qapp.processEvents()
     data = yaml.safe_load((tmp_path / "batch.yaml").read_text())
     assert data["script"] == "Standard pipeline"
+
+    # Designating the Report pipeline built-in is now an explicit name, not
+    # the absence of one — it must round-trip through batch.yaml.
+    combo.setCurrentIndex(1)
+    qapp.processEvents()
+    data = yaml.safe_load((tmp_path / "batch.yaml").read_text())
+    assert data["script"] == "Report pipeline"
+    hub._refresh_batch_view()
+    assert hub._batch_script_combo.currentIndex() == 1
 
     combo.setCurrentIndex(0)                  # back to the default
     qapp.processEvents()

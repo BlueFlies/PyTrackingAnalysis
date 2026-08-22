@@ -140,8 +140,43 @@ def _additional_qss() -> str:
         font-weight: 600;
         color: {c["text"]};
     }}
+    /* Script-editor palette tiles (script_editor/palette.py): surface and
+       description text must track the theme, not palette(base)/palette(mid),
+       which stay at light values under qdarktheme. */
+    QFrame#PtrackScriptTile {{
+        background: {c["base"]};
+    }}
+    QFrame#PtrackScriptTile:hover {{
+        background: {c["hover"]};
+    }}
+    QLabel#PtrackScriptTileDesc {{
+        color: {c["text"]};
+        font-size: 9pt;
+    }}
+    QFrame#PtrackStepCard {{
+        background: {c["base"]};
+    }}
+    QLabel#PtrackStepNum {{
+        color: {c["muted"]};
+    }}
+    QLabel#PtrackStepChip {{
+        color: {c["text"]};
+        font-size: 9pt;
+    }}
+    QWidget#PtrackInspectorHeader {{
+        background: {c["band"]};
+    }}
+    QLabel#PtrackInspectorDesc {{
+        color: {c["text"]};
+        font-size: 9pt;
+    }}
+    QLabel#PtrackScriptHint {{
+        color: {c["muted"]};
+        font-style: italic;
+    }}
+    /* Proportional by default — tabular log lines carry their own
+       monospace spans (ui/textformat.py). */
     QPlainTextEdit#PtrackLog {{
-        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
         font-size: 10pt;
     }}
     /* Make dropdowns embedded in tables blend with the table cell background

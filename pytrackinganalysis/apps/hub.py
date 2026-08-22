@@ -212,12 +212,17 @@ class HubWindow(QMainWindow):
         self._strip.setObjectName("TileStrip")
         strip_lay = QHBoxLayout(self._strip)
         strip_lay.setContentsMargins(10, 8, 10, 8)
-        strip_lay.setSpacing(8)
+        ## Distinct chips with a hairline seam (user feedback 2026-08-22):
+        ## flush tiles merged into one unreadable bar, wide gaps read as
+        ## dead space — 2px is the middle ground.
+        strip_lay.setSpacing(2)
         self._tiles: dict[str, StatusTile] = {}
         ## Leftmost: the containment hierarchy reads left-to-right — a Batch
         ## holds Projects, a Project holds experiments (ADR-0009).
         for key, title, icon_name, cat in (
-            ("batch", "Batch", "batch", Category.NEUTRAL),
+            ## LOAD, not NEUTRAL: the batch glyph tints LOAD-blue, and the
+            ## title matches its icon (user feedback 2026-08-22).
+            ("batch", "Batch", "batch", Category.LOAD),
             ("project", "Project", "project", Category.NEUTRAL),
             ("analyze", "Analyze", "basic", Category.ANALYZE),
             ("plots", "Plots", "plots", Category.PLOTS),
@@ -304,9 +309,12 @@ class HubWindow(QMainWindow):
         """Skin the strip, tiles, and panels for the CURRENT theme — palette
         roles cannot be trusted under qdarktheme (see chrome_colors)."""
         chrome = chrome_colors()
+        ## No band (user feedback 2026-08-22): the strip is transparent and
+        ## the tiles float on the window background — their chip color is
+        ## offset from the window (see StatusTile._restyle) so they stay
+        ## legible without any surrounding surface.
         self._strip.setStyleSheet(
-            f"QFrame#TileStrip {{ background: {chrome['band']}; "
-            f"border-bottom: 1px solid {chrome['border']}; }}")
+            "QFrame#TileStrip { background: transparent; border: none; }")
         for tile in self._tiles.values():
             tile.restyle()
         self._status_panel.restyle()
@@ -672,11 +680,13 @@ class HubWindow(QMainWindow):
         btn_run_script = ActionButton("Run script", Category.SCRIPTS,
                                       icon_name="scripts")
         btn_run_script.setToolTip(
-            "Run the selected Project Script. Built-ins: 'Standard pipeline' "
-            "(validate design → run all analyses → combined analysis → "
-            "publication figures → project report) and 'Report pipeline' "
-            "(the Create-report sequence; figures only when plot_specs.yaml "
-            "exists).")
+            "Run the selected Project Script — this project's own scripts "
+            "first (every project.yaml is created with a default one), then "
+            "the built-ins: 'Standard pipeline' (validate design → project "
+            "report → publication figures) and 'Report pipeline' (the same, "
+            "ungated). The report step is this card's Create-report button, "
+            "so it analyzes and pools before building the PDF; the figure "
+            "step is skipped when there is no plot_specs.yaml.")
         btn_run_script.clicked.connect(self._project_run_script)
         btn_edit_scripts = ActionButton("Edit scripts…", Category.SCRIPTS,
                                         icon_name="config")
@@ -796,18 +806,20 @@ class HubWindow(QMainWindow):
                 item.setFont(font)
                 self._exp_table.setItem(row, col, item)
 
-        # Script picker: the built-in pipelines plus authored scripts.
-        # Built-ins carry a ("builtin", key) sentinel; authored scripts their
-        # name (ADR-0009: the Report pipeline appears in both pickers).
+        # Script picker: the Project's OWN scripts first — every project.yaml
+        # is created with a default one, so the first entry is the run the
+        # user can open and read in the Script Editor. The built-ins stay
+        # available below as explicit choices (ADR-0009 amendment).
         self._project_script_combo.blockSignals(True)
         self._project_script_combo.clear()
+        for script in project.scripts:
+            self._project_script_combo.addItem(
+                str(script.get("name", "Untitled")), script.get("name"))
         self._project_script_combo.addItem("Standard pipeline (built-in)",
                                            ("builtin", "standard"))
         self._project_script_combo.addItem("Report pipeline (built-in)",
                                            ("builtin", "report"))
-        for script in project.scripts:
-            self._project_script_combo.addItem(
-                str(script.get("name", "Untitled")), script.get("name"))
+        self._project_script_combo.setCurrentIndex(0)
         self._project_script_combo.blockSignals(False)
         card.setVisible(True)
 
@@ -1165,7 +1177,10 @@ class HubWindow(QMainWindow):
         self._batch_script_combo.setToolTip(
             "The designated Project Script — resolved per Project from "
             "batch.yaml project_scripts, then the project's own scripts, "
-            "then the built-ins. Changing it is remembered in batch.yaml.")
+            "then the built-ins. The default runs each project's own "
+            "script (every project.yaml is created with one; a project "
+            "with none is reported and skipped). Changing it is remembered "
+            "in batch.yaml.")
         self._batch_script_combo.currentIndexChanged.connect(
             self._on_batch_script_changed)
         script_row.addWidget(self._batch_script_combo, 1)
@@ -1292,6 +1307,10 @@ class HubWindow(QMainWindow):
         combo = self._batch_script_combo
         combo.blockSignals(True)
         combo.clear()
+        ## No designation now means "each Project's own default script"
+        ## (ADR-0009 amendment) — the built-ins below are explicit choices,
+        ## not the silent fallback they used to be.
+        combo.addItem("Each project's own script (default)", ("default", None))
         combo.addItem("Report pipeline (built-in)", ("builtin", "report"))
         combo.addItem("Standard pipeline (built-in)", ("builtin", "standard"))
         for script in meta["project_scripts"]:
@@ -1300,9 +1319,11 @@ class HubWindow(QMainWindow):
                           ("name", script_name))
         want = meta["script"]
         index = 0
-        if want == STANDARD_PIPELINE["name"]:
+        if want == REPORT_PIPELINE["name"]:
             index = 1
-        elif want and want != REPORT_PIPELINE["name"]:
+        elif want == STANDARD_PIPELINE["name"]:
+            index = 2
+        elif want:
             index = next((i for i in range(combo.count())
                           if combo.itemData(i) == ("name", want)), -1)
             if index < 0:
@@ -1322,7 +1343,10 @@ class HubWindow(QMainWindow):
 
     def _on_batch_script_changed(self, _index: int) -> None:
         from .. import batch as batch_mod
-        from ..script_editor.project_actions import STANDARD_PIPELINE
+        from ..script_editor.project_actions import (
+            REPORT_PIPELINE,
+            STANDARD_PIPELINE,
+        )
 
         root = self._batch_root()
         if root is None:
@@ -1330,10 +1354,12 @@ class HubWindow(QMainWindow):
         data = self._batch_script_combo.currentData()
         if data is None:
             return
-        ## The default (Report pipeline) is stored as "no designation": it
-        ## never creates batch.yaml — the lazy-marker rule (ADR-0009).
-        if data == ("builtin", "report"):
+        ## The default ("each project's own script") is stored as "no
+        ## designation": it never creates batch.yaml — the lazy-marker rule.
+        if data == ("default", None):
             name = None
+        elif data == ("builtin", "report"):
+            name = REPORT_PIPELINE["name"]
         elif data == ("builtin", "standard"):
             name = STANDARD_PIPELINE["name"]
         else:
@@ -1357,7 +1383,10 @@ class HubWindow(QMainWindow):
 
     def _run_batch(self) -> None:
         from .. import batch as batch_mod
-        from ..script_editor.project_actions import STANDARD_PIPELINE
+        from ..script_editor.project_actions import (
+            REPORT_PIPELINE,
+            STANDARD_PIPELINE,
+        )
 
         root = self._batch_root()
         if root is None:
@@ -1369,7 +1398,9 @@ class HubWindow(QMainWindow):
         data = self._batch_script_combo.currentData()
         if data == ("builtin", "standard"):
             name = STANDARD_PIPELINE["name"]
-        elif data is None or data == ("builtin", "report"):
+        elif data == ("builtin", "report"):
+            name = REPORT_PIPELINE["name"]
+        elif data is None or data == ("default", None):
             name = None
         else:
             name = data[1]

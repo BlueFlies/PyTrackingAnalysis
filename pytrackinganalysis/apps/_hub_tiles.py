@@ -33,7 +33,7 @@ def chrome_colors() -> dict:
 
     c = surface_colors()
     return {"band": c["band"], "chip": c["base"], "border": c["border"],
-            "text": c["text"], "muted": c["muted"]}
+            "hover": c["hover"], "text": c["text"], "muted": c["muted"]}
 
 
 class StatusTile(QFrame):
@@ -56,6 +56,9 @@ class StatusTile(QFrame):
         self._category = category
         self._dimmed = False
         self._active = False
+        #: (left, right) corner radii. With hairline seams between chips a
+        #: gentle radius keeps the seams from flaring near the corners.
+        self._radii = (5, 5)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         ## A width RANGE, not a fixed size: six fixed 196px tiles forced a
         ## 1416px minimum window that no 1366x768 laptop could show.
@@ -118,6 +121,12 @@ class StatusTile(QFrame):
             self._active = active
             self._restyle()
 
+    def set_rounding(self, left: int, right: int) -> None:
+        """Round only these corners (px) — the strip's outer ends keep the
+        radius; interior edges sit flush."""
+        self._radii = (left, right)
+        self._restyle()
+
     def restyle(self) -> None:
         """Public re-skin hook — the Hub calls it on theme toggles."""
         self._restyle()
@@ -125,19 +134,30 @@ class StatusTile(QFrame):
     def _restyle(self) -> None:
         chrome = chrome_colors()
         color = category_color(self._category)
+        ## Chips with a hairline seam and a thin outline (user feedback
+        ## 2026-08-22); the open panel's tile upgrades it to its category
+        ## color.
         border = f"2px solid {color}" if self._active \
             else f"1px solid {chrome['border']}"
-        text = chrome["muted"] if self._dimmed else chrome["text"]
+        left, right = self._radii
+        ## Uniform, high-contrast subtext: pure white/black by theme — the
+        ## dim state lives in the title color alone.
+        pop = "#ffffff" if resolved_mode() == "dark" else "#000000"
         self.setStyleSheet(
-            f"StatusTile {{ background: {chrome['chip']}; "
-            f"border: {border}; border-radius: 8px; }} "
-            f"QLabel {{ color: {text}; background: transparent; "
+            f"StatusTile {{ background: {chrome['hover']}; "
+            f"border: {border}; "
+            f"border-top-left-radius: {left}px; "
+            f"border-bottom-left-radius: {left}px; "
+            f"border-top-right-radius: {right}px; "
+            f"border-bottom-right-radius: {right}px; }} "
+            f"QLabel {{ color: {pop}; background: transparent; "
             "border: none; }")
-        # The title keeps its category color even when dimmed-ish.
+        # Titles always wear their category color, matching the icon (user
+        # feedback 2026-08-22); a tile's applicability is said in its
+        # summary words rather than shown by a muted title.
         self._title_lbl.setStyleSheet(
             f"color: {color}; font-weight: 700; font-size: 9pt; "
-            "letter-spacing: 0.06em;"
-            + ("opacity: 0.5;" if self._dimmed else ""))
+            "letter-spacing: 0.06em;")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -201,10 +221,13 @@ class StatusPanel(QFrame):
 
     def restyle(self) -> None:
         chrome = chrome_colors()
+        ## A chip like the tiles: same radius, same thin outline, same
+        ## high-contrast value text.
+        pop = "#ffffff" if resolved_mode() == "dark" else "#000000"
         self.setStyleSheet(
-            f"QFrame#StatusPanel {{ background: {chrome['chip']}; "
-            f"border: 1px solid {chrome['border']}; border-radius: 8px; }} "
-            f"QLabel {{ color: {chrome['text']}; background: transparent; "
+            f"QFrame#StatusPanel {{ background: {chrome['hover']}; "
+            f"border: 1px solid {chrome['border']}; border-radius: 5px; }} "
+            f"QLabel {{ color: {pop}; background: transparent; "
             "border: none; font-size: 9pt; }")
 
 

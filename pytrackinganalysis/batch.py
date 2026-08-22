@@ -11,7 +11,9 @@ never pools results across Projects.
 There is no third script level: the thing a Batch Run runs IS a Project
 Script, resolved per Project as batch.yaml ``project_scripts:`` → the
 Project's own ``scripts:`` → the built-ins (Report Pipeline, Standard
-Pipeline).
+Pipeline). With no designation at all each Project runs its OWN default
+script — every ``project.yaml`` is created with one, so nothing is
+silently substituted for a Project that has none.
 """
 
 from __future__ import annotations
@@ -114,20 +116,31 @@ def resolve_designated_script(name: str | None, central_scripts: list[dict],
     """Resolve the designated Project Script *name* for *project*.
 
     Order (ADR-0009): the Batch's central ``project_scripts:``, then the
-    Project's own ``scripts:``, then the built-ins. ``None`` means the
-    default — the Report Pipeline. Returns ``(script, source, note)`` where
-    *note* explains a conditionally dropped step; ``(None, "", None)`` when
-    the name resolves nowhere.
+    Project's own ``scripts:``, then the built-ins. Returns
+    ``(script, source, note)`` where *note* explains a conditionally dropped
+    step; ``(None, "", None)`` when the name resolves nowhere.
+
+    ``None`` means "no designation": each Project runs its OWN default
+    script (ADR-0009 amendment). Every ``project.yaml`` is created with one,
+    so there is no built-in fallback here — a Project whose ``scripts:`` is
+    empty does not run, and says so.
     """
     from .script_editor.project_actions import (
+        DEFAULT_PROJECT_SCRIPT_NAME,
         REPORT_PIPELINE,
         STANDARD_PIPELINE,
         report_pipeline_for,
     )
 
     if not name:
-        script, note = report_pipeline_for(project)
-        return script, "built-in", note
+        ## The seeded default by name, else the first authored script — a
+        ## Project whose default was renamed still runs its own pipeline.
+        own = project.find_script(DEFAULT_PROJECT_SCRIPT_NAME)
+        if own is None:
+            own = project.scripts[0] if project.scripts else None
+        if own is None:
+            return None, "", None
+        return own, "project.yaml scripts", None
     for script in central_scripts:
         if str(script.get("name", "")).strip() == name:
             return script, "batch.yaml project_scripts", None
@@ -151,8 +164,9 @@ def run_batch(batch_dir, script_name: str | None = None,
     Returns ``{project_name: 'ok' | error message}``. A Batch Run never
     creates or upgrades a ``project.yaml``; children that are not Projects
     are skipped with a log line. *script_name* ``None`` falls back to the
-    ``batch.yaml`` designation, then to the Report Pipeline.
-    *project_names* restricts the run to that (checked) subset.
+    ``batch.yaml`` designation, and with no designation each Project runs
+    its own default script. *project_names* restricts the run to that
+    (checked) subset.
     """
     from .script_editor.project_actions import run_project_script
 
@@ -209,7 +223,11 @@ def run_batch(batch_dir, script_name: str | None = None,
         if script is None:
             results[name] = (
                 f"no Project Script named '{script_name}' (batch.yaml "
-                f"project_scripts, project.yaml scripts, or built-ins)")
+                f"project_scripts, project.yaml scripts, or built-ins)"
+                if script_name else
+                "project.yaml defines no Project Script — add one in the "
+                "Script Editor (new Projects are created with a default "
+                "one)")
             plog(f"SKIPPED — {results[name]}")
             continue
         if note:

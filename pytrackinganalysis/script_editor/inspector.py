@@ -59,7 +59,7 @@ class Inspector(QWidget):
         self._header_title = QLabel("")
         self._header_title.setStyleSheet("font-weight: 600;")
         self._header_desc = QLabel("")
-        self._header_desc.setStyleSheet("color: palette(mid); font-size: 9pt;")
+        self._header_desc.setObjectName("PtrackInspectorDesc")
         self._header_desc.setWordWrap(True)
         text_col = QVBoxLayout()
         text_col.addWidget(self._header_title)
@@ -155,11 +155,12 @@ class Inspector(QWidget):
         self._current_index = index
         self._current_action = action
 
+        # Background comes from the app-wide theme QSS (ui/theme.py); only
+        # the per-category accent is set here.
         self._header.setStyleSheet(
             f"QWidget#PtrackInspectorHeader {{"
             f"  border-left: 4px solid {category_color(action.category)};"
             f"  border-radius: 6px;"
-            f"  background: palette(alternate-base);"
             f"}}"
         )
         self._header_icon.setPixmap(
@@ -204,7 +205,8 @@ class Inspector(QWidget):
             "Select a step on the left to edit its parameters."
         )
         empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty.setStyleSheet("color: palette(mid); font-style: italic; padding: 24px;")
+        empty.setObjectName("PtrackScriptHint")
+        empty.setStyleSheet("padding: 24px;")
         self._form.addRow(empty)
 
     def _clear_form(self) -> None:

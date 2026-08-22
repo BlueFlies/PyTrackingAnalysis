@@ -18,14 +18,19 @@ Projects — each Project keeps its own design and its own outputs.
   Project**: the strip switches to it, exactly as if you had loaded its
   folder. There is no "up to batch" button — to return, load the Batch
   folder again.
-- The **Script** picker holds the designated Project Script. **Report
-  pipeline (built-in)** is the default: run all analyses → build combined
-  analysis → render publication figures (only when the Project has a
-  `plot_specs.yaml`) → project report — the Create-report button, as a
-  script. **Standard pipeline (built-in)** and any scripts in `batch.yaml`'s
-  `project_scripts:` section are also listed; a saved designation naming a
-  script the Projects define in their own `project.yaml`s stays listed too,
-  shown as "(from each project)".
+- The **Script** picker holds the designated Project Script. **Each
+  project's own script (default)** runs the script each Project carries in
+  its own `project.yaml` — every Project is created with one, named **Report
+  pipeline**: create / update the project report (the Create-report button in
+  one step — analyze every replicate, pool, build the PDF) → render
+  publication figures (skipped when the Project has no `plot_specs.yaml`).
+  Because it
+  lives in the file you can open it in the Script Editor, read exactly what
+  a batch run will do, and change it per Project. **Report pipeline
+  (built-in)**, **Standard pipeline (built-in)**, and any scripts in
+  `batch.yaml`'s `project_scripts:` section are also listed as explicit
+  choices; a saved designation naming a script the Projects define
+  themselves stays listed too, shown as "(from each project)".
 - **Run batch** runs the designated script in every checked Project — one
   at a time, in name order — continue-on-error with `[project]`-prefixed
   log lines and a summary at the end. It unloads the loaded experiment
@@ -38,6 +43,12 @@ Projects — each Project keeps its own design and its own outputs.
 2. The Project's own `scripts:` section.
 3. The built-ins (Report pipeline, Standard pipeline).
 
+With no designation (the default) a Project runs its own script — the one
+named **Report pipeline**, or its first script if that one was renamed. A
+Project whose `project.yaml` has no `scripts:` section **does not run**: it
+is reported and skipped, and the run continues. There is no invisible
+fallback — add a script in the Script Editor, or designate one above.
+
 A name that resolves nowhere fails that Project; the run continues and the
 summary says so. A Project that fails to load at all (say, a design
 mismatch) is likewise recorded as that Project's failure, never the run's.
@@ -47,7 +58,7 @@ A Batch Run never creates or upgrades a `project.yaml`.
 
 Optional, created only when needed: changing the Script picker away from the
 default writes the designation (`script:`) there, and a `project_scripts:`
-list can be added by hand. Leaving the default (Report pipeline) selected
+list can be added by hand. Leaving **Each project's own script** selected
 never creates the file.
 
 ## Batch tools

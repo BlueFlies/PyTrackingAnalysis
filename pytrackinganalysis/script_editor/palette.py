@@ -37,14 +37,15 @@ class _ActionTile(QFrame):
         self.setMinimumHeight(56)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         col = category_color(action.category)
+        # Background/hover/description colors come from the app-wide theme
+        # QSS (ui/theme.py) so they track light/dark toggles; only the
+        # per-category accent is set here.
         self.setStyleSheet(
             f"QFrame#PtrackScriptTile {{"
             f"  border-left: 3px solid {col};"
             f"  border-radius: 6px;"
             f"  padding: 2px;"
-            f"  background: palette(base);"
             f"}}"
-            f"QFrame#PtrackScriptTile:hover {{ background: palette(midlight); }}"
         )
 
         lay = QHBoxLayout(self)
@@ -62,11 +63,23 @@ class _ActionTile(QFrame):
         title.setStyleSheet("font-weight: 600;")
         title.setWordWrap(True)
         desc = QLabel(action.description)
-        desc.setStyleSheet("color: palette(mid); font-size: 9pt;")
+        desc.setObjectName("PtrackScriptTileDesc")
         desc.setWordWrap(True)
         text_col.addWidget(title)
         text_col.addWidget(desc)
         lay.addLayout(text_col, 1)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        # Height-for-width does not propagate reliably through the nested
+        # layouts here (the wrapped description was clipped top and bottom),
+        # so each tile pins its own height to what its content needs at the
+        # current width.
+        super().resizeEvent(event)
+        lay = self.layout()
+        if lay is not None and self.width() > 0:
+            h = max(56, lay.totalHeightForWidth(self.width()))
+            if h != self.height():
+                self.setFixedHeight(h)
 
     def mouseDoubleClickEvent(self, _event) -> None:  # noqa: N802
         self.activated.emit(self._action.key)
@@ -160,6 +173,7 @@ class Palette(QWidget):
             for action in group:
                 tile = _ActionTile(action)
                 tile.activated.connect(self.actionActivated.emit)
+                # Vertical size is pinned by the tile's resizeEvent.
                 tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
                 self._list_layout.addWidget(tile)
                 self._tiles.append(tile)

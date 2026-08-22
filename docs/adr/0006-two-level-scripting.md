@@ -37,6 +37,10 @@ AI narrative).
   pooled data), `project_report`, `generate_ai_narrative` (soft-fail: a
   provider error logs and continues rather than killing a pipeline). No
   shell escape hatch — scripts stay safe to run on sight.
+  *(Amended by ADR-0009, 2026-08-22: `run_all_analyses` and
+  `build_combined_analysis` were folded into `project_report`, which is now
+  the whole Create-report button. A script action mirrors a Project-card
+  button, and neither had one.)*
 - **Authoring and running.** The existing Script Editor opens `project.yaml`
   with a level switcher: the project `scripts:` (project palette) and the
   central `experiment_scripts:` (the familiar experiment palette). The Hub's

@@ -53,7 +53,15 @@ def create_project_file(project_dir, name: str | None = None,
     """Write (or update) ``project.yaml`` — upgrading e.g. an old batch
     parent. An existing file's unknown keys are preserved; name/notes are
     (re)written, and *design* (when given) replaces the ``design:`` section —
-    the authoritative shared parameters every replicate must match."""
+    the authoritative shared parameters every replicate must match.
+
+    A file with no ``scripts:`` key at all is seeded with the default Project
+    Script (ADR-0009 amendment) so every Project ships a visible, editable
+    default run. An existing block is never touched — an empty list is a
+    deliberate deletion, and re-seeding it would undo the user's edit.
+    """
+    from .script_editor.project_actions import default_project_script
+
     path = os.path.join(str(project_dir), PROJECT_FILENAME)
     payload: dict = {}
     if os.path.isfile(path):
@@ -67,6 +75,8 @@ def create_project_file(project_dir, name: str | None = None,
         payload.pop("notes")
     if design is not None:
         payload["design"] = design
+    if "scripts" not in payload:
+        payload["scripts"] = [default_project_script()]
     with open(path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=True)
     return path

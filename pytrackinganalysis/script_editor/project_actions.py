@@ -132,31 +132,45 @@ def _exec_run_in_experiments(params: dict, ctx: ProjectRunContext) -> None:
     ctx.failures.extend(failures)
 
 
-def _exec_run_all_analyses(params: dict, ctx: ProjectRunContext) -> None:
-    failures = ctx.project.run_all(
-        make_reports=bool(params.get("reports", True)),
-        skip_analyzed=bool(params.get("skip_analyzed", False)),
-        log=ctx.log,
-    )
-    ctx.failures.extend(failures)
-
-
-def _exec_build_combined(_params: dict, ctx: ProjectRunContext) -> None:
-    result = ctx.project.build_combined_analysis()
-    ctx.log(f"Combined analysis written ({len(result['written'])} files).")
-    if result["missing"]:
-        ctx.log("Not yet analyzed (omitted): "
-                + ", ".join(result["missing"]))
-
-
 def _exec_render_figures(params: dict, ctx: ProjectRunContext) -> None:
+    ## Without curated specs render_figures() invents default-spec figures
+    ## nobody asked for — wrong for an unattended run (ADR-0009). The guard
+    ## lives in the action, so it protects the default Project Script every
+    ## project.yaml carries as well as the built-in pipelines.
+    import os
+
+    from ..pubfigures import SPECS_FILENAME
+
+    specs = os.path.join(str(ctx.project.project_directory), SPECS_FILENAME)
+    if not os.path.isfile(specs):
+        ctx.log(f"No {SPECS_FILENAME} — skipped (curate figures in the "
+                "Plot Editor first).")
+        return
     choice = str(params.get("format", "svg"))
     formats = ("svg", "pdf") if choice == "both" else (choice,)
     written = ctx.project.render_figures(formats=formats)
     ctx.log(f"Wrote {len(written)} publication figure file(s) to figures/.")
 
 
-def _exec_project_report(_params: dict, ctx: ProjectRunContext) -> None:
+def _exec_project_report(params: dict, ctx: ProjectRunContext) -> None:
+    """The Hub's Create-report button, as a step — the same three calls in
+    the same order (hub ``_project_report``): analyze every replicate, pool
+    the results, then render the PDF. A script action mirrors a button, so
+    there are no separate run-all / build-combined actions to forget."""
+    failures = ctx.project.run_all(
+        make_reports=bool(params.get("reports", True)),
+        skip_analyzed=bool(params.get("skip_analyzed", False)),
+        log=ctx.log,
+    )
+    if failures:
+        ## The button refuses to pool a partial run, and so does this: a
+        ## report built over half-regenerated replicates is worse than none.
+        raise ProjectScriptError(
+            f"{len(failures)} replicate(s) failed: " + "; ".join(failures))
+    result = ctx.project.build_combined_analysis()
+    ctx.log(f"Combined analysis written ({len(result['written'])} files).")
+    if result["missing"]:
+        ctx.log("Not yet analyzed (omitted): " + ", ".join(result["missing"]))
     path = ctx.project.create_report()
     ctx.log(f"Project report: {path}")
 
@@ -222,31 +236,6 @@ def _build_project_actions() -> dict[str, Action]:
             execute_fn=_exec_run_in_experiments,
         ),
         Action(
-            key="run_all_analyses",
-            title="Run all analyses",
-            description="Full analysis (and report) for every replicate — "
-                        "the Project card's Run-all as a step.",
-            category=Category.ANALYZE,
-            icon_name="basic",
-            params=(
-                ParamSpec("reports", "bool", "Create per-replicate reports",
-                          default=True),
-                ParamSpec("skip_analyzed", "bool", "Skip analyzed replicates",
-                          default=False),
-            ),
-            execute_fn=_exec_run_all_analyses,
-        ),
-        Action(
-            key="build_combined_analysis",
-            title="Build combined analysis",
-            description="Stack the replicates' filtered summaries into the "
-                        "project analysis/ with pooled + mixed statistics.",
-            category=Category.ANALYZE,
-            icon_name="csv",
-            params=(),
-            execute_fn=_exec_build_combined,
-        ),
-        Action(
             key="render_publication_figures",
             title="Render publication figures",
             description="Write the pooled publication figures to figures/ "
@@ -262,13 +251,23 @@ def _build_project_actions() -> dict[str, Action]:
         ),
         Action(
             key="project_report",
-            title="Project report",
-            description="Build <project>_report.pdf: pooled figures, pooled "
-                        "+ mixed statistics, replicate table, and any saved "
-                        "AI narrative.",
+            title="Create / update project report",
+            description="The whole Create-report button in one step: analyze "
+                        "every replicate (with its own report), pool the "
+                        "results into analysis/, then build "
+                        "<project>_report.pdf — pooled figures, pooled + "
+                        "mixed statistics, replicate table, and any saved AI "
+                        "narrative. Nothing else needs to run before it.",
             category=Category.ANALYZE,
             icon_name="report",
-            params=(),
+            params=(
+                ParamSpec("reports", "bool", "Create per-replicate reports",
+                          default=True),
+                ParamSpec("skip_analyzed", "bool", "Skip analyzed replicates",
+                          default=False,
+                          help="Leave off to match the Create-report button, "
+                               "which always re-analyzes every replicate."),
+            ),
             execute_fn=_exec_project_report,
         ),
         Action(
@@ -300,10 +299,8 @@ STANDARD_PIPELINE: dict = {
     "name": "Standard pipeline",
     "steps": [
         {"action": "validate_design", "params": {}},
-        {"action": "run_all_analyses", "params": {}},
-        {"action": "build_combined_analysis", "params": {}},
-        {"action": "render_publication_figures", "params": {"format": "svg"}},
         {"action": "project_report", "params": {}},
+        {"action": "render_publication_figures", "params": {"format": "svg"}},
     ],
 }
 
@@ -312,15 +309,97 @@ STANDARD_PIPELINE: dict = {
 #: mid-migration), and the publication-figure step runs only from curated
 #: specs: :func:`report_pipeline_for` applies that condition per Project, so
 #: the conditionality never appears in yaml.
+## Figures come AFTER the report: project_report is the one that analyzes
+## the replicates, and render_publication_figures reads their saved
+## summaries — the other order fails on a Project nobody has analyzed yet.
 REPORT_PIPELINE: dict = {
     "name": "Report pipeline",
     "steps": [
-        {"action": "run_all_analyses", "params": {}},
-        {"action": "build_combined_analysis", "params": {}},
-        {"action": "render_publication_figures", "params": {"format": "svg"}},
         {"action": "project_report", "params": {}},
+        {"action": "render_publication_figures", "params": {"format": "svg"}},
     ],
 }
+
+#: Actions folded into ``project_report`` when it became the whole
+#: Create-report button. Scripts saved before that still name them, so they
+#: are absorbed at run time rather than failing validation as unknown.
+ABSORBED_ACTIONS: dict[str, str] = {
+    "run_all_analyses": "project_report",
+    "build_combined_analysis": "project_report",
+}
+
+
+def absorb_legacy_steps(steps: list[dict]) -> tuple[list[dict], list[str]]:
+    """*steps* with retired actions folded into their replacement.
+
+    Returns ``(steps, notes)``. A step whose work the script already does
+    elsewhere is dropped; when it does NOT — an old "just analyze
+    everything" script with no ``project_report`` — the first such step
+    becomes the replacement instead, so absorbing never turns a script into
+    a no-op.
+
+    The replacement also inherits the POSITION of the first step it absorbs.
+    The retired steps marked where a script did its analysis work, and later
+    steps were written expecting that work to be done: leaving
+    ``project_report`` at the end would run
+    ``render_publication_figures`` against replicates nothing had analyzed
+    yet. *notes* says what happened, for the run log.
+    """
+    present = {s.get("action") for s in steps if isinstance(s, dict)}
+    out: list[dict] = []
+    notes: list[str] = []
+    #: Where the first absorbed step stood, per replacement action.
+    slot: dict[str, int] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            out.append(step)
+            continue
+        key = step.get("action")
+        target = ABSORBED_ACTIONS.get(key)
+        if target is None:
+            out.append(step)
+            continue
+        slot.setdefault(target, len(out))
+        if target in present:
+            notes.append(f"'{key}' is now part of "
+                         f"'{PROJECT_ACTIONS[target].title}' — step skipped.")
+            continue
+        notes.append(f"'{key}' has been replaced by "
+                     f"'{PROJECT_ACTIONS[target].title}' — running that.")
+        out.insert(slot[target], {"action": target, "params": {}})
+        present.add(target)
+
+    for target, index in slot.items():
+        at = next((i for i, s in enumerate(out)
+                   if isinstance(s, dict) and s.get("action") == target), None)
+        if at is None or at <= index:
+            continue
+        out.insert(index, out.pop(at))
+        notes.append(f"'{PROJECT_ACTIONS[target].title}' moved to step "
+                     f"{index + 1}, where the steps it absorbed ran.")
+    return out, notes
+
+
+#: The Project Script every ``project.yaml`` is created with. It is written
+#: into the file (unlike the built-ins) so the user can SEE the default run
+#: and edit it in the Script Editor — which is why a Batch Run needs no
+#: built-in fallback: a Project with no Project Script simply does not run.
+DEFAULT_PROJECT_SCRIPT_NAME = REPORT_PIPELINE["name"]
+
+
+def default_project_script() -> dict:
+    """A fresh copy of the default Project Script, for seeding a new
+    ``project.yaml``. A copy, not the module constant: the caller writes it
+    into a file the user then edits."""
+    return {
+        "name": DEFAULT_PROJECT_SCRIPT_NAME,
+        "notes": "Created with the project. Runs every replicate's analysis, "
+                 "pools it, and builds the project report. Edit or replace "
+                 "it in the Script Editor — a project with no script here "
+                 "cannot be run from the Project card or a Batch Run.",
+        "steps": [{"action": s["action"], "params": dict(s["params"])}
+                  for s in REPORT_PIPELINE["steps"]],
+    }
 
 
 def report_pipeline_for(project) -> tuple[dict, str | None]:
@@ -352,6 +431,13 @@ def project_validation_issues(steps: list[dict],
     issues: list[tuple[int, str]] = []
     for i, step in enumerate(steps):
         key = step.get("action", "")
+        if key in ABSORBED_ACTIONS:
+            ## Not an error: a script saved before the action was folded into
+            ## its replacement still runs (absorb_legacy_steps rewrites it).
+            issues.append((i, f"'{key}' has been replaced by "
+                              f"'{PROJECT_ACTIONS[ABSORBED_ACTIONS[key]].title}'"
+                              " — delete this step; the run absorbs it."))
+            continue
         action = PROJECT_ACTIONS.get(key)
         if action is None:
             issues.append((i, f"Unknown project action '{key}'"))
@@ -440,6 +526,12 @@ def run_project_script(script: dict, project,
     steps = script.get("steps", [])
     if not steps:
         raise ProjectScriptError("Script has no steps")
+    ## Retired actions are rewritten BEFORE validation — a script saved when
+    ## run_all_analyses was its own action must still run, not fail as
+    ## "unknown". The editor still flags them, so they get cleaned up.
+    steps, absorbed = absorb_legacy_steps(steps)
+    for note in absorbed:
+        log_cb(f"Note: {note}")
     issues = project_validation_issues(steps)
     if issues:
         lines = [f"Step {i + 1}: {err}" for i, err in issues]

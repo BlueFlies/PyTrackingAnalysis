@@ -12,12 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QScrollArea,
+    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -153,10 +153,14 @@ class ZoomableImageView(QWidget):
 
 
 class ZoomableTextView(QWidget):
-    """Read-only monospaced text view with +/−/100% font-size buttons.
+    """Read-only rich-text view with +/−/100% font-size buttons.
 
-    The mouse wheel is left to the underlying ``QPlainTextEdit`` so it scrolls
-    the text the way users expect; use the toolbar buttons to change size.
+    Content renders through :mod:`..ui.textformat`: CSVs become real tables,
+    prose gets the proportional font with headings, and monospace appears
+    only on tabular blocks. All generated sizes are relative, so scaling the
+    default font zooms everything together. The mouse wheel is left to the
+    underlying editor so it scrolls the text the way users expect; use the
+    toolbar buttons to change size.
     """
 
     _ZOOM_STEP = 1.15
@@ -184,17 +188,19 @@ class ZoomableTextView(QWidget):
         toolbar.addStretch(1)
         outer.addLayout(toolbar)
 
-        self._editor = QPlainTextEdit()
+        self._editor = QTextEdit()
         self._editor.setReadOnly(True)
-        font = QFont("Menlo")
-        font.setStyleHint(QFont.StyleHint.Monospace)
+        font = self._editor.font()
         font.setPointSizeF(10.0)
         self._editor.setFont(font)
         self._default_pt = font.pointSizeF()
         outer.addWidget(self._editor, 1)
 
+        from .textformat import file_to_html
+
         try:
-            self._editor.setPlainText(self._path.read_text(encoding="utf-8", errors="replace"))
+            raw = self._path.read_text(encoding="utf-8", errors="replace")
+            self._editor.setHtml(file_to_html(self._path, raw))
         except Exception as err:  # noqa: BLE001
             self._editor.setPlainText(f"(could not read {self._path}: {err})")
         self._update_label()

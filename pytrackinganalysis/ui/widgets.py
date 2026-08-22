@@ -302,7 +302,11 @@ class ActionButton(QPushButton):
 # ---------------------------------------------------------------------------
 
 class OutputLog(QPlainTextEdit):
-    """Read-only log panel with a capped scrollback."""
+    """Read-only log panel with a capped scrollback.
+
+    Lines render as rich text — proportional prose with muted ``[prefix]``
+    tags, accents for failures/warnings, and the monospace font only when a
+    line's spacing is tabular (see :mod:`..ui.textformat`)."""
 
     line_appended = pyqtSignal(str)
 
@@ -313,7 +317,13 @@ class OutputLog(QPlainTextEdit):
         self.setMaximumBlockCount(max_lines)
 
     def append_line(self, text: str) -> None:
-        self.appendPlainText(text.rstrip())
+        from .textformat import log_line_to_html
+
+        stripped = text.rstrip()
+        if stripped:
+            self.appendHtml(log_line_to_html(stripped))
+        else:
+            self.appendPlainText("")
         self.moveCursor(QTextCursor.MoveOperation.End)
         self.ensureCursorVisible()
         self.line_appended.emit(text)

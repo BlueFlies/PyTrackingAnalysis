@@ -4,7 +4,7 @@ The Hub is the main day-to-day surface. It is Project-first: open a Project, man
 
 ## Layout
 
-Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
+Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. The first two tiles work on containers (a Batch or a Project); the tiles after them act on the loaded experiment. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
 
 Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
 

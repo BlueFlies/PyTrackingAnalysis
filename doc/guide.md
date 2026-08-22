@@ -750,7 +750,9 @@ AI provider/model — are tracked there too.
 The Hub's layout (see `docs/adr/0007` and `docs/adr/0009`) is a **tile
 strip** across the top — seven compact live-status tiles:
 **Batch · Project · Analyze · Plots · Scripts · AI · Tools**
-— with the **output area at full width** underneath. A tile
+— with the **output area at full width** underneath. The first two tiles
+work on containers (a Batch or a Project); the tiles after them act on the
+loaded experiment. A tile
 shows only status (the project's name and replicate health, the loaded
 experiment's fly counts, whether analysis is faceted, …); **clicking it
 drops an anchored panel** holding all of that area's controls. One panel is
@@ -1208,9 +1210,14 @@ into the main Hub.
 Projects have their own saved scripts (`docs/adr/0006`) — same
 `{name, steps}` shape and the same visual editor as experiment scripts, but a
 separate **project-action** palette: `validate_design`, `run_in_experiments`,
-`run_all_analyses`, `build_combined_analysis`, `render_publication_figures`,
-`project_report`, and `generate_ai_narrative` (soft-fail).  They live under
-`scripts:` in `project.yaml`; the levels cannot mix.
+`project_report`, `render_publication_figures`, and
+`generate_ai_narrative` (soft-fail).  They live under `scripts:` in
+`project.yaml`; the levels cannot mix.  Each action mirrors a Project-card
+button, which is why `project_report` is the whole **Create report**
+sequence — analyze every replicate, pool, then render the PDF — rather than
+three separate steps.  Scripts saved when `run_all_analyses` and
+`build_combined_analysis` were their own actions still run: both are
+absorbed into `project_report` at load.
 
 The one bridge to experiment level is **`run_in_experiments(script: NAME)`**:
 it runs the named *experiment-level* script in every replicate — resolved
