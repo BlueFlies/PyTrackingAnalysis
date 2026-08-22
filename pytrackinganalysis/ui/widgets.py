@@ -315,18 +315,56 @@ class OutputLog(QPlainTextEdit):
         self.setObjectName("PtrackLog")
         self.setReadOnly(True)
         self.setMaximumBlockCount(max_lines)
+        #: Text written without a closing newline, waiting for the rest of
+        #: its line. It is displayed immediately (as its own block) and that
+        #: block is rewritten when the remainder arrives.
+        self._pending = ""
+        self._pending_shown = False
 
     def append_line(self, text: str) -> None:
+        """Append *text*, which may be one line, many, or a partial chunk.
+
+        Writes arrive straight from a redirected ``stdout``, so one call can
+        carry a whole multi-line table, a bare newline, or the front half of
+        a line. ``appendHtml`` renders its argument as a single HTML
+        fragment, where newlines are just whitespace — passing a multi-line
+        chunk to it ran every row of a table together on one line. Split
+        here so each line becomes its own block.
+        """
+        if not text:
+            return
+        # Re-attach anything held back from the previous chunk, then peel off
+        # the new trailing fragment (empty when the chunk ends in a newline).
+        lines = (self._pending + text).split("\n")
+        self._pending = lines.pop()
+        if self._pending_shown:
+            self._drop_last_block()
+            self._pending_shown = False
+        for line in lines:
+            self._append_one(line)
+        if self._pending:
+            self._append_one(self._pending)
+            self._pending_shown = True
+        self.moveCursor(QTextCursor.MoveOperation.End)
+        self.ensureCursorVisible()
+        self.line_appended.emit(text)
+
+    def _append_one(self, line: str) -> None:
         from .textformat import log_line_to_html
 
-        stripped = text.rstrip()
+        stripped = line.rstrip()
         if stripped:
             self.appendHtml(log_line_to_html(stripped))
         else:
             self.appendPlainText("")
-        self.moveCursor(QTextCursor.MoveOperation.End)
-        self.ensureCursorVisible()
-        self.line_appended.emit(text)
+
+    def _drop_last_block(self) -> None:
+        """Remove the block holding the partial line, so the completed line
+        replaces it rather than appearing twice."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+        cursor.removeSelectedText()
 
 
 # ---------------------------------------------------------------------------

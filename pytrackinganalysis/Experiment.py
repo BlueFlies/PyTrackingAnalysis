@@ -1441,8 +1441,14 @@ class Experiment:
         return None, text
 
     def write_ai_summary(self, text: str, provider: str, model: str) -> str:
-        """Persist *text* with a provenance first line; returns the path."""
+        """Persist *text* with a provenance first line; returns the path.
+
+        Also writes the fixed-name ``ai_narrative.md`` companion beside it,
+        so the prose is greppable across a tree without knowing this
+        replicate's name."""
         from datetime import datetime as _dt
+
+        from .ai.narrative import write_narrative_md
 
         stamp = _dt.now().strftime("%Y-%m-%d %H:%M")
         path = self._ai_summary_path()
@@ -1450,15 +1456,26 @@ class Experiment:
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(f"{self._AI_SUMMARY_MARKER}{provider} {model}, "
                          f"{stamp}\n\n{text.strip()}\n")
+        write_narrative_md(
+            self.analysis_path, title=self.arena.experiment_name,
+            level="Experiment (one replicate)", provider=provider,
+            model=model, stamp=stamp, text=text,
+            context=[("Experiment type",
+                      getattr(self.experiment_type, "display_name", "")),
+                     ("Directory", str(self.project_directory))],
+        )
         return path
 
     def delete_ai_summary(self) -> None:
         """Remove the saved AI Summary, if any (ADR-0004: it is a derivative
         of a single analysis run and must not outlive it)."""
+        from .ai.narrative import delete_narrative_md
+
         try:
             os.remove(self._ai_summary_path())
         except FileNotFoundError:
             pass
+        delete_narrative_md(self.analysis_path)
 
     def generate_ai_summary(self, provider: str, model: str | None = None) -> str:
         """Ask *provider* for an AI Summary of the current analysis outputs.

@@ -27,10 +27,15 @@ The Hub's **Scripts** tile lists scripts from the loaded replicate's own `tracki
 
 ## Running Project scripts
 
-The Project panel's **Script** picker runs Project Scripts from `project.yaml`, listing that file's own scripts first. Every Project is created with one already written there, named **Report pipeline**: create / update the Project report, then render publication figures. The report step is the whole **Create report** button - it analyzes every replicate and pools the results before building the PDF - which is why it comes first and why nothing else needs to precede it. The figure step skips itself when the Project has no `plot_specs.yaml`, so an unattended run never invents figures nobody curated. Because it lives in the file, you can open it in the Script Editor to see exactly what the default run does, and edit it. This is also what a Batch run executes by default (see the **Batch runs** help topic).
+The Project panel's **Script** picker runs Project Scripts from `project.yaml`, listing that file's own scripts first. Every Project is created with one already written there, named **`batch`** - the name says what it is for: it is the script a Batch run executes in this Project. It runs: create / update the Project report, then render publication figures. The report step is the whole **Create report** button - it analyzes every replicate and pools the results before building the PDF - which is why it comes first and why nothing else needs to precede it. The figure step skips itself when the Project has no `plot_specs.yaml`, so an unattended run never invents figures nobody curated. Because it lives in the file, you can open it in the Script Editor to see exactly what the default run does, and edit it. This is also what a Batch run executes by default (see the **Batch runs** help topic).
 
 Two built-ins are listed below your own scripts as explicit choices. **Standard pipeline**: validate design, create the Project report, render publication figures. **Report pipeline**: the same, minus the `validate_design` gate.
 
-## Legacy batch scripts
+## Two different scripts named `batch`
 
-A script named `batch` comes from the retired batch-over-experiments mode and is unrelated to the Hub's **Batch** tile, which runs a designated Project Script across many Projects (see the **Batch runs** help topic). The old script is still useful for migration: create a Project around the old parent folder, then run a Project Script with `run_in_experiments` and `script: batch`. The action first looks in `project.yaml`'s `experiment_scripts:`, then falls back to each replicate's own `tracking_config.yaml`.
+The name appears at both levels, and the level tells them apart:
+
+- A **Project Script** named `batch`, in `project.yaml` under `scripts:`, is the default every Project is created with - what a Batch run executes in that Project.
+- An **Experiment Script** named `batch`, in a replicate's `tracking_config.yaml` under `scripts:` (or centrally under `experiment_scripts:`), is the legacy name from the retired batch-over-experiments mode.
+
+They never collide: each level reads its own section, and the levels do not mix. The legacy script is still useful for migration - create a Project around the old parent folder, then run a Project Script with `run_in_experiments` and `script: batch`. That action first looks in `project.yaml`'s `experiment_scripts:`, then falls back to each replicate's own `tracking_config.yaml`.

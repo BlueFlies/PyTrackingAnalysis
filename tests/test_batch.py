@@ -193,7 +193,9 @@ def test_run_batch_continue_on_error_and_skips(tmp_path, monkeypatch):
     assert results["Broken"].startswith("ValueError")
     assert results["P1"] == "ok"
     assert "boom" in results["P2"]
-    assert ran == [("P1", "Report pipeline"), ("P2", "Report pipeline")]
+    # Each Project ran its own seeded default, named "batch".
+    assert ran == [("P1", pa.DEFAULT_PROJECT_SCRIPT_NAME),
+                   ("P2", pa.DEFAULT_PROJECT_SCRIPT_NAME)]
     # Non-Project children are skipped with a log line, and a Batch Run
     # never creates or upgrades a project.yaml.
     assert any("notes" in line and "skipped" in line for line in logs)

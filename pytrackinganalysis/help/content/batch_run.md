@@ -44,7 +44,7 @@ Projects — each Project keeps its own design and its own outputs.
 3. The built-ins (Report pipeline, Standard pipeline).
 
 With no designation (the default) a Project runs its own script — the one
-named **Report pipeline**, or its first script if that one was renamed. A
+named **`batch`**, or its first script if that one was renamed. A
 Project whose `project.yaml` has no `scripts:` section **does not run**: it
 is reported and skipped, and the run continues. There is no invisible
 fallback — add a script in the Script Editor, or designate one above.

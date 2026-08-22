@@ -36,7 +36,7 @@ Rebuilding Combined Analysis deletes any saved Project AI narrative because the 
 
 ## Project scripts
 
-The Project **Script** picker runs Project Scripts from `project.yaml`, listing that file's own scripts first. Every Project is created with one already written there, named **Report pipeline**, so you can open the Script Editor and read exactly what the default run does.
+The Project **Script** picker runs Project Scripts from `project.yaml`, listing that file's own scripts first. Every Project is created with one already written there, named **`batch`** - the script a Batch run executes in this Project - so you can open the Script Editor and read exactly what the default run does.
 
 Each script action mirrors a button on this card. **Create / update project report** is therefore the whole **Create report** sequence in one step - analyze every replicate, pool the results, build the PDF - and nothing needs to run before it. (There is no Run-all or Build-combined button, so there is no such action either; both were folded into the report step. Scripts saved before that still run, and the Script Editor flags the old steps so you can delete them.)
 

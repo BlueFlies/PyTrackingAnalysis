@@ -12,7 +12,7 @@ from collections import defaultdict
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
@@ -48,38 +48,80 @@ class _ActionTile(QFrame):
             f"}}"
         )
 
-        lay = QHBoxLayout(self)
+        ## A GRID, not an HBox wrapping a nested VBox. A QBoxLayout sizes a
+        ## nested layout on its CROSS axis from that layout's sizeHint and
+        ## centres it, ignoring height-for-width however the labels are
+        ## configured — which clipped the wrapped description top and bottom.
+        ## A grid gives each row the height its own cell actually needs.
+        lay = QGridLayout(self)
         lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(10)
+        lay.setHorizontalSpacing(10)
+        lay.setVerticalSpacing(2)
 
         ico = QLabel()
         ico.setPixmap(icon(action.icon_name, category=action.category).pixmap(22, 22))
         ico.setAlignment(Qt.AlignmentFlag.AlignTop)
-        lay.addWidget(ico)
+        lay.addWidget(ico, 0, 0, 2, 1, Qt.AlignmentFlag.AlignTop)
 
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
         title = QLabel(action.title)
         title.setStyleSheet("font-weight: 600;")
         title.setWordWrap(True)
         desc = QLabel(action.description)
         desc.setObjectName("PtrackScriptTileDesc")
         desc.setWordWrap(True)
-        text_col.addWidget(title)
-        text_col.addWidget(desc)
-        lay.addLayout(text_col, 1)
+        for label in (title, desc):
+            ## A word-wrapped QLabel implements heightForWidth, but its
+            ## DEFAULT size policy leaves the flag off, so enclosing layouts
+            ## never ask — they lay it out at a one-line-ish sizeHint and the
+            ## wrapped text is clipped.
+            policy = label.sizePolicy()
+            policy.setHeightForWidth(True)
+            label.setSizePolicy(policy)
+        lay.addWidget(title, 0, 1)
+        lay.addWidget(desc, 1, 1)
+        lay.setColumnStretch(1, 1)
+        self._title_lbl = title
+        self._desc_lbl = desc
 
     def resizeEvent(self, event) -> None:  # noqa: N802
-        # Height-for-width does not propagate reliably through the nested
-        # layouts here (the wrapped description was clipped top and bottom),
-        # so each tile pins its own height to what its content needs at the
-        # current width.
         super().resizeEvent(event)
+        self._fit_to_contents()
+
+    def _fit_to_contents(self) -> None:
+        """Give each label the height its wrapped text needs, then make the
+        tile tall enough to hold both.
+
+        Qt will not do this for us. A word-wrapped QLabel knows its
+        ``heightForWidth``, but neither a QBoxLayout (which sizes a nested
+        layout from its cross-axis sizeHint and centres it) nor a QGridLayout
+        row reliably applies that when assigning geometry — the description
+        was laid out at a one-line-ish sizeHint and clipped top and bottom.
+        Measuring each label at the width it actually got, and pinning both
+        it and the tile, sidesteps the layout's opinion entirely.
+        """
         lay = self.layout()
-        if lay is not None and self.width() > 0:
-            h = max(56, lay.totalHeightForWidth(self.width()))
-            if h != self.height():
-                self.setFixedHeight(h)
+        if lay is None:
+            return
+        lay.activate()                       # so the widths below are current
+        if self.contentsRect().width() <= 0:
+            return
+        for label in (self._title_lbl, self._desc_lbl):
+            width = label.width()
+            if width <= 0:
+                continue
+            need = label.heightForWidth(width)
+            if need > 0 and label.height() != need:
+                label.setFixedHeight(need)
+        margins = lay.contentsMargins()
+        # The QSS border and padding live outside contentsRect, so the layout
+        # gets less room than the tile is tall; carry that difference over.
+        overhead = self.height() - self.contentsRect().height()
+        needed = (margins.top() + margins.bottom() + lay.verticalSpacing()
+                  + self._title_lbl.height() + self._desc_lbl.height()
+                  + overhead)
+        height = max(56, needed)
+        if height != self.height():
+            self.setFixedHeight(height)
 
     def mouseDoubleClickEvent(self, _event) -> None:  # noqa: N802
         self.activated.emit(self._action.key)

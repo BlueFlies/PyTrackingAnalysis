@@ -380,11 +380,14 @@ def absorb_legacy_steps(steps: list[dict]) -> tuple[list[dict], list[str]]:
     return out, notes
 
 
-#: The Project Script every ``project.yaml`` is created with. It is written
-#: into the file (unlike the built-ins) so the user can SEE the default run
-#: and edit it in the Script Editor — which is why a Batch Run needs no
-#: built-in fallback: a Project with no Project Script simply does not run.
-DEFAULT_PROJECT_SCRIPT_NAME = REPORT_PIPELINE["name"]
+#: The Project Script every ``project.yaml`` is created with, and the one a
+#: Batch Run executes when nothing else is designated — hence the name. It is
+#: written into the file (unlike the built-ins) so the user can SEE the
+#: default run and edit it, which is why a Batch Run needs no built-in
+#: fallback: a Project with no Project Script simply does not run.
+## Not the built-in's name: "Report pipeline" is a code-defined script the
+## user may also pick explicitly, and the two must stay distinguishable.
+DEFAULT_PROJECT_SCRIPT_NAME = "batch"
 
 
 def default_project_script() -> dict:
@@ -393,10 +396,12 @@ def default_project_script() -> dict:
     into a file the user then edits."""
     return {
         "name": DEFAULT_PROJECT_SCRIPT_NAME,
-        "notes": "Created with the project. Runs every replicate's analysis, "
-                 "pools it, and builds the project report. Edit or replace "
-                 "it in the Script Editor — a project with no script here "
-                 "cannot be run from the Project card or a Batch Run.",
+        "notes": "Created with the project, and what a Batch Run runs here "
+                 "unless another script is designated. Analyzes every "
+                 "replicate, pools the results, builds the project report, "
+                 "then renders curated figures. Edit or replace it in the "
+                 "Script Editor — a project with no script here cannot be "
+                 "run from the Project card or a Batch Run.",
         "steps": [{"action": s["action"], "params": dict(s["params"])}
                   for s in REPORT_PIPELINE["steps"]],
     }

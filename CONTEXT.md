@@ -116,11 +116,20 @@ The built-in Project Script matching the Hub's Create report button plus
 curated figures: project report → render publication figures (skipped when
 the Project has no `plot_specs.yaml`). Preferred over the Standard Pipeline
 for an unattended run because it does not gate on `validate_design` (which
-would fail Projects mid-migration). Also the name of the **default Project
-Script written into every new `project.yaml`** — that copy, not the built-in,
-is what a Batch Run executes by default. Listed beside the Standard Pipeline
-in every script picker, Project and Batch alike.
+would fail Projects mid-migration). Its steps are what every new
+`project.yaml` is seeded with, under the name `batch`. Listed beside the
+Standard Pipeline in every script picker, Project and Batch alike.
 _Avoid_: default batch, batch pipeline
+
+**batch (Project Script)**:
+The Project Script named `batch` written into every new `project.yaml` — the
+Project's own copy of the Report Pipeline's steps, and what a Batch Run
+executes there when nothing else is designated. Named for the job rather than
+the built-in it was seeded from, so a reader of the yaml can see what a batch
+run will do. Distinct from the legacy `batch` **Experiment** Script
+(ADR-0006), which lives under a replicate's `scripts:` or a Project's
+`experiment_scripts:` — different level, different key, no collision.
+_Avoid_: batch script (ambiguous across the two levels)
 
 **Absorbed Action**:
 A project action retired into the one that already does its work —

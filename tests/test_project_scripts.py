@@ -446,7 +446,12 @@ def test_new_project_yaml_carries_a_default_script(tmp_path, qapp,  # noqa: F811
     _make_project(tmp_path)
     meta = yaml.safe_load((tmp_path / "project.yaml").read_text())
     script = meta["scripts"][0]
-    assert script["name"] == pa.DEFAULT_PROJECT_SCRIPT_NAME
+    # Named for the job it does, not the built-in it was seeded from: this
+    # is the script a Batch Run executes in this Project.
+    assert pa.DEFAULT_PROJECT_SCRIPT_NAME == "batch"
+    assert script["name"] == "batch"
+    # ...and distinct from the built-in, which stays separately resolvable.
+    assert pa.REPORT_PIPELINE["name"] != pa.DEFAULT_PROJECT_SCRIPT_NAME
     assert [s["action"] for s in script["steps"]] == [
         "project_report", "render_publication_figures"]
     assert pa.project_validation_issues(script["steps"]) == []

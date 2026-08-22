@@ -361,3 +361,66 @@ def test_filter_by_region_still_matches_the_conventional_prefix(tmp_path):
         tmp_path,
     )
     assert list(kept) == ["T_0_1"]
+
+
+# ---- palette tile sizing ---------------------------------------------------
+
+def _clipped_labels(palette):
+    """Tiles whose wrapped text does not fit the height it was given.
+
+    ``QLabel.heightForWidth`` is the authoritative figure: a label narrower
+    than its text needs wraps to more lines, and anything shorter than that
+    is cut off — at the top and bottom, since the label is centred.
+    """
+    return [(tile._action.key, label.height(), label.heightForWidth(label.width()))
+            for tile in palette._tiles
+            for label in (tile._title_lbl, tile._desc_lbl)
+            if label.height() < label.heightForWidth(label.width())]
+
+
+@pytest.mark.parametrize("width", [160, 240, 320, 500])
+def test_palette_tiles_show_their_whole_description(qapp, width):
+    """Neither a QBoxLayout nor a QGridLayout applies a word-wrapped label's
+    heightForWidth when assigning geometry, so the tile measures and pins the
+    labels itself. Without that the descriptions were clipped top and bottom
+    — worse the narrower the pane, because narrower means more wrapped lines.
+    """
+    from pytrackinganalysis.script_editor.palette import Palette
+    from pytrackinganalysis.script_editor.project_actions import PROJECT_ACTIONS
+
+    palette = Palette()
+    palette.set_actions(PROJECT_ACTIONS)
+    palette.show()
+    palette.resize(width, 900)
+    for _ in range(4):
+        qapp.processEvents()
+
+    assert palette._tiles
+    assert _clipped_labels(palette) == []
+    # Each tile is tall enough to hold both labels plus its margins.
+    for tile in palette._tiles:
+        assert tile.height() >= tile._title_lbl.height() + tile._desc_lbl.height()
+    palette.close()
+
+
+def test_palette_tiles_regrow_when_the_pane_narrows(qapp):
+    """Narrowing rewraps the text onto more lines; the tile must follow."""
+    from pytrackinganalysis.script_editor.palette import Palette
+    from pytrackinganalysis.script_editor.project_actions import PROJECT_ACTIONS
+
+    palette = Palette()
+    palette.set_actions(PROJECT_ACTIONS)
+    palette.show()
+    palette.resize(460, 900)
+    for _ in range(4):
+        qapp.processEvents()
+    wide = [t.height() for t in palette._tiles]
+
+    palette.resize(170, 900)
+    for _ in range(4):
+        qapp.processEvents()
+    narrow = [t.height() for t in palette._tiles]
+
+    assert _clipped_labels(palette) == []
+    assert any(n > w for n, w in zip(narrow, wide)), (wide, narrow)
+    palette.close()

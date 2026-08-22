@@ -73,14 +73,15 @@ The built-in default was invisible. A user reading their `project.yaml` saw no
 Project, let alone adjust it — the Report Pipeline existed only in code.
 
 - **`create_project_file` seeds `scripts:` with the default Project Script**
-  (the Report Pipeline's steps, named `Report pipeline`, carrying a `notes:`
+  (the Report Pipeline's steps, named **`batch`** — it is the script a Batch
+  Run executes here, and naming it after the built-in hid that — carrying a `notes:`
   line saying where it came from). It is written into the file, so it is
   visible in the Script Editor, editable, and renameable. A `project.yaml`
   whose block is absent is seeded on the next write; an authored block is
   left untouched.
 - **No designation now means "each Project's own script", and there is no
   implicit fallback.** `resolve_designated_script(None, …)` takes the
-  Project's script named `Report pipeline`, else its first authored script.
+  Project's script named `batch`, else its first authored script.
   A Project whose `scripts:` is empty **does not run**: it fails that Project
   with a message naming the Script Editor, and the Batch Run continues. The
   built-ins remain resolvable *by name* — an explicit designation is a user
@@ -93,8 +94,11 @@ Project, let alone adjust it — the Report Pipeline existed only in code.
   is what produces the up-front note.
 - The Project card's picker lists the Project's own scripts **first** and
   opens on one; the Batch panel's picker gains a leading "Each project's own
-  script (default)" entry, which stores no designation (the lazy-marker rule
-  is unchanged).
+  'batch' script (default)" entry, which stores no designation (the
+  lazy-marker rule is unchanged). The seeded script is named `batch`, not
+  after the built-in: it is the script a Batch Run executes, and the name
+  says so. The legacy `batch` EXPERIMENT script (ADR-0006) is a different
+  level reading a different yaml key, so the names cannot collide.
 
 ### A script action mirrors a button
 

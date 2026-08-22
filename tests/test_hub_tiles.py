@@ -208,12 +208,16 @@ def test_status_panel_reports_the_project_and_loaded_experiment(hub, qapp, tmp_p
 def test_project_actions_use_three_columns(hub):
     grid = hub._project_actions_grid
     assert grid.columnCount() == 3
-    # Five focused actions over three columns — no button spans the whole card.
-    assert grid.count() == 5
+    # Six focused actions over three columns — no button spans the whole card.
+    assert grid.count() == 6
+    # "View reports" sits directly under the Create/Update report button.
+    report_at = grid.getItemPosition(grid.indexOf(hub._btn_project_report))
+    view_at = grid.getItemPosition(grid.indexOf(hub._btn_view_reports))
+    assert view_at[1] == report_at[1] and view_at[0] == report_at[0] + 1
     labels = [grid.itemAt(i).widget().text() for i in range(grid.count())]
     assert labels == [
         "Experiment configs…", "Add experiment…", "Create report",
-        "Plot editor…", "AI narrative…",
+        "Plot editor…", "AI narrative…", "View reports",
     ]
 
 
@@ -514,7 +518,9 @@ def test_batch_selection_lights_the_batch_tile_and_dims_project(
     text = hub._status_panel.status_text()
     assert "Batch" in text
     assert "2 Project" in text
-    assert "Report pipeline" in text          # the default designation
+    # No designation runs each Project's own 'batch' script, so that is what
+    # the readout names — not a built-in the run would never reach.
+    assert "batch" in text
 
 
 def test_project_selection_dims_the_batch_tile(hub, qapp, tmp_path):  # noqa: F811
@@ -572,7 +578,7 @@ def test_batch_picker_defaults_to_each_projects_own_script(
     combo = hub._batch_script_combo
     items = [(combo.itemText(i), combo.itemData(i))
              for i in range(combo.count())]
-    assert items[0] == ("Each project's own script (default)",
+    assert items[0] == ("Each project's own 'batch' script (default)",
                         ("default", None))
     assert items[1] == ("Report pipeline (built-in)", ("builtin", "report"))
     assert items[2] == ("Standard pipeline (built-in)",
@@ -754,3 +760,86 @@ def test_batch_picker_lists_an_unlisted_designation(hub, qapp, tmp_path):  # noq
     assert ("per-project (from each project)",
             ("name", "per-project")) in items
     assert combo.currentData() == ("name", "per-project")
+
+
+# ---- View reports ----------------------------------------------------------
+
+def test_view_reports_needs_both_kinds_of_report(hub, qapp, tmp_path):  # noqa: F811
+    """The button lays the pooled report beside the replicates it pools, so
+    it stays disabled until both exist — opening one half alone is what the
+    replicate table already does."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    btn = hub._btn_view_reports
+    assert not btn.isEnabled()
+    assert "No reports yet" in btn.toolTip()
+
+    (tmp_path / "Rep1" / "Rep1_report.pdf").write_bytes(b"%PDF-1.4\n")
+    hub._refresh_project_view()
+    qapp.processEvents()
+    assert not btn.isEnabled()                      # no Project report yet
+    assert "No Project report yet" in btn.toolTip()
+
+    (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-1.4\n")
+    hub._refresh_project_view()
+    qapp.processEvents()
+    assert btn.isEnabled()
+    assert "1 replicate report(s)" in btn.toolTip()
+
+
+def test_view_reports_opens_every_report(hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-1.4\n")
+    for rep in ("Rep1", "Rep2"):
+        (tmp_path / rep / f"{rep}_report.pdf").write_bytes(b"%PDF-1.4\n")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    opened: list = []
+    hub._open_pdf = lambda path: (opened.append(path.name), True)[1]
+    hub._project_view_reports()
+    # The Project report first, then each replicate in table order.
+    assert opened == ["Proj_report.pdf", "Rep1_report.pdf", "Rep2_report.pdf"]
+
+
+def test_view_reports_skips_a_replicate_report_deleted_since_the_refresh(
+        hub, qapp, tmp_path):  # noqa: F811
+    """Replicate paths are re-checked at click time, so a vanished one is
+    simply not opened — no error, no missing path handed to the OS."""
+    _make_project(tmp_path)
+    (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-1.4\n")
+    for rep in ("Rep1", "Rep2"):
+        (tmp_path / rep / f"{rep}_report.pdf").write_bytes(b"%PDF-1.4\n")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    (tmp_path / "Rep1" / "Rep1_report.pdf").unlink()
+    opened: list = []
+    hub._open_pdf = lambda path: (opened.append(path.name), True)[1]
+    hub._project_view_reports()
+    assert opened == ["Proj_report.pdf", "Rep2_report.pdf"]
+
+
+def test_view_reports_reports_a_project_report_deleted_since_the_refresh(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """The button was enabled by a refresh; the pooled report can vanish
+    before the click. Say so, and still open what remains."""
+    _make_project(tmp_path)
+    (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-1.4\n")
+    (tmp_path / "Rep1" / "Rep1_report.pdf").write_bytes(b"%PDF-1.4\n")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    (tmp_path / "Proj_report.pdf").unlink()
+    warned: list = []
+    monkeypatch.setattr(type(hub), "_warn",
+                        lambda self, msg: warned.append(msg))
+    opened: list = []
+    hub._open_pdf = lambda path: (opened.append(path.name), True)[1]
+    hub._project_view_reports()
+
+    assert opened == ["Rep1_report.pdf"]
+    assert warned and "Proj_report.pdf" in warned[0]
+    # The stale enable is corrected on the way out.
+    assert not hub._btn_view_reports.isEnabled()

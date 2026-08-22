@@ -123,3 +123,55 @@ def test_text_view_renders_csv_as_table(qapp, tmp_path):  # noqa: F811
     view.zoom_by(view._ZOOM_STEP)
     assert view._editor.font().pointSizeF() > before
     view.deleteLater()
+
+
+def test_output_log_splits_a_multi_line_chunk(qapp):  # noqa: F811
+    """Writes arrive straight from a redirected stdout, so one call can carry
+    a whole table. appendHtml treats its argument as one HTML fragment, where
+    newlines are whitespace — passing the chunk through whole ran every row
+    together on a single line."""
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_line("=== Experiment: MaxIRSetup ===\n"
+                    "Project : /tmp/p\n"
+                    "Data    : /tmp/d\n")
+    assert log.toPlainText().splitlines() == [
+        "=== Experiment: MaxIRSetup ===",
+        "Project : /tmp/p",
+        "Data    : /tmp/d",
+    ]
+    assert log.document().blockCount() == 3
+
+
+def test_output_log_keeps_blank_lines(qapp):  # noqa: F811
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_line("a\n\nb\n")
+    assert log.toPlainText() == "a\n\nb"
+
+
+def test_output_log_joins_a_line_split_across_chunks(qapp):  # noqa: F811
+    """print() writes its text and its terminator separately, and a chunk can
+    end mid-line. The fragment shows immediately, then the completed line
+    replaces it — it must not appear twice."""
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_line("Saved: /tmp/out")
+    assert log.toPlainText() == "Saved: /tmp/out"      # visible right away
+    log.append_line(".pdf\n")
+    assert log.toPlainText() == "Saved: /tmp/out.pdf"  # joined, not doubled
+
+
+def test_output_log_formats_each_line_of_a_chunk_on_its_own(qapp):  # noqa: F811
+    """Per-line classification survives chunking: the tabular row gets the
+    monospace span, the prose line does not."""
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_line("Project: /tmp/somewhere\nT_0    0.987654    0.000123\n")
+    html = log.document().toHtml()
+    assert "JetBrains Mono" in html
+    assert "0.9877" in html and "0.987654" not in html

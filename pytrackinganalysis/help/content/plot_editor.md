@@ -51,4 +51,4 @@ The Project Script action is **Render publication figures**.
 
 ## Batch runs
 
-Saving here is how a Project opts into figures during unattended runs: the **Report pipeline** (the default script of a Batch Run) renders a Project's publication figures only when its `plot_specs.yaml` exists. A Project you never curated skips that step rather than inventing default-spec figures. See the **Batch runs** help topic.
+Saving here is how a Project opts into figures during unattended runs: each project's **`batch`** script (the default script of a Batch Run) renders a Project's publication figures only when its `plot_specs.yaml` exists. A Project you never curated skips that step rather than inventing default-spec figures. See the **Batch runs** help topic.

@@ -750,20 +750,40 @@ class Project:
         return None, text
 
     def write_ai_summary(self, text: str, provider: str, model: str) -> str:
+        """Persist *text* with a provenance first line; returns the path.
+
+        Also writes the fixed-name ``ai_narrative.md`` companion beside it,
+        so the prose is greppable across a tree of projects without knowing
+        any of their names."""
         from datetime import datetime as _dt
+
+        from .ai.narrative import write_narrative_md
+
         stamp = _dt.now().strftime("%Y-%m-%d %H:%M")
         path = self._ai_summary_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(f"{self._AI_SUMMARY_MARKER}{provider} {model}, "
                          f"{stamp}\n\n{text.strip()}\n")
+        write_narrative_md(
+            self.analysis_path, title=self.name,
+            level=f"Project ({len(self.experiment_names)} replicates pooled)",
+            provider=provider, model=model, stamp=stamp, text=text,
+            context=[("Experiment type",
+                      getattr(self.experiment_type, "display_name", "")),
+                     ("Replicates", ", ".join(self.experiment_names)),
+                     ("Directory", str(self.project_directory))],
+        )
         return path
 
     def delete_ai_summary(self) -> None:
+        from .ai.narrative import delete_narrative_md
+
         try:
             os.remove(self._ai_summary_path())
         except FileNotFoundError:
             pass
+        delete_narrative_md(self.analysis_path)
 
     def ai_prompt(self) -> str:
         return self.experiment_type.ai_summary_prompt() + (

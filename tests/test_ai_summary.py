@@ -9,6 +9,7 @@ a fake subclass and monkeypatched environments.
 from __future__ import annotations
 
 import os
+import pathlib
 
 import numpy as np
 import pandas as pd
@@ -100,6 +101,57 @@ def test_ai_summary_roundtrip_with_provenance(tmp_path):
     exp.delete_ai_summary()
     assert exp.read_ai_summary() is None
     exp.delete_ai_summary()  # deleting twice is fine
+
+
+def test_writing_a_summary_also_writes_a_greppable_markdown_copy(tmp_path):
+    """A fixed filename, so a later agent can find every narrative in a tree
+    with one glob — no project or replicate name required."""
+    from pytrackinganalysis.ai.narrative import AI_NARRATIVE_FILENAME
+
+    exp = _model_exp(tmp_path)
+    exp.write_ai_summary("Chrimson flies avoided the lit side.",
+                         "Anthropic (Claude)", "claude-opus-5")
+    md = pathlib.Path(exp.analysis_path) / AI_NARRATIVE_FILENAME
+    assert md.is_file()
+    body = md.read_text(encoding="utf-8")
+    assert "Chrimson flies avoided the lit side." in body
+    # Front matter says what the prose is about and where it came from.
+    assert body.startswith("# AI narrative — E")
+    assert "Anthropic (Claude) claude-opus-5" in body
+    assert "Experiment (one replicate)" in body
+
+
+def test_the_markdown_copy_dies_with_its_summary(tmp_path):
+    """ADR-0004: a narrative is a derivative of one run. A second copy that
+    outlived the run would be exactly the stale prose that rule forbids."""
+    from pytrackinganalysis.ai.narrative import AI_NARRATIVE_FILENAME
+
+    exp = _model_exp(tmp_path)
+    exp.write_ai_summary("Old prose.", "Anthropic (Claude)", "claude-opus-5")
+    md = pathlib.Path(exp.analysis_path) / AI_NARRATIVE_FILENAME
+    assert md.is_file()
+    exp.delete_ai_summary()
+    assert not md.exists()
+    exp.delete_ai_summary()          # deleting twice is fine
+
+
+def test_project_summary_writes_its_own_markdown_copy(tmp_path):
+    from pytrackinganalysis import project as prj
+    from pytrackinganalysis.ai.narrative import AI_NARRATIVE_FILENAME
+    from test_project import _make_project
+
+    _make_project(tmp_path)
+    project = prj.Project(str(tmp_path))
+    project.write_ai_summary("Pooled PI favoured Chrimson.",
+                             "Anthropic (Claude)", "claude-opus-5")
+    md = pathlib.Path(project.analysis_path) / AI_NARRATIVE_FILENAME
+    body = md.read_text(encoding="utf-8")
+    assert "Pooled PI favoured Chrimson." in body
+    # Project level names its replicates, so the file stands on its own.
+    assert "Project (2 replicates pooled)" in body
+    assert "Rep1, Rep2" in body
+    project.delete_ai_summary()
+    assert not md.exists()
 
 
 def test_hand_written_summary_file_has_no_provenance(tmp_path):

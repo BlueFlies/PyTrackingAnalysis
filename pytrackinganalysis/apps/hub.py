@@ -647,6 +647,10 @@ class HubWindow(QMainWindow):
                                   icon_name="report", primary=True)
         btn_report.clicked.connect(self._project_report)
         self._btn_project_report = btn_report
+        btn_view_reports = ActionButton("View reports", Category.ANALYZE,
+                                        icon_name="report")
+        btn_view_reports.clicked.connect(self._project_view_reports)
+        self._btn_view_reports = btn_view_reports
         btn_ai = ActionButton("AI narrative…", Category.AI, icon_name="ai")
         btn_ai.setToolTip(
             "Have an AI provider write the project narrative from the "
@@ -658,8 +662,10 @@ class HubWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
+        ## Six across two rows of three. The order puts "View reports"
+        ## directly under the Create/Update report button it follows from.
         for i, btn in enumerate((btn_configs, btn_add, btn_report,
-                                 btn_plots, btn_ai)):
+                                 btn_plots, btn_ai, btn_view_reports)):
             grid.addWidget(btn, i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
@@ -829,6 +835,21 @@ class HubWindow(QMainWindow):
     def _project_report_exists(self, project) -> bool:
         return self._project_report_path(project).is_file()
 
+    def _replicate_report_paths(self, project) -> list[Path]:
+        """Every per-replicate report that exists on disk, in table order.
+
+        A replicate's report is named for its DIRECTORY, not the recording
+        inside it (``Experiment.create_report`` writes the project's front
+        page), which is the same rule ``Project.experiment_status`` uses.
+        """
+        paths = []
+        for name in project.experiment_names:
+            candidate = (Path(project.experiment_dir(name))
+                         / f"{name}_report.pdf")
+            if candidate.is_file():
+                paths.append(candidate)
+        return paths
+
     def _refresh_project_report_button(self, project) -> None:
         btn = getattr(self, "_btn_project_report", None)
         if btn is None:
@@ -842,6 +863,30 @@ class HubWindow(QMainWindow):
             "Analyze all experiments, build Combined Analysis, and create the "
             "Project report."
         )
+
+        view = getattr(self, "_btn_view_reports", None)
+        if view is None:
+            return
+        replicates = self._replicate_report_paths(project)
+        ## Both kinds must exist: the button's job is to lay the pooled
+        ## report beside the replicates it pools, and opening one of those
+        ## halves alone is what the existing per-replicate table already does.
+        ready = exists and bool(replicates)
+        view.setEnabled(ready)
+        if ready:
+            view.setToolTip(
+                f"Open the Project report and {len(replicates)} replicate "
+                "report(s), each in its own PDF viewer window.")
+        elif not exists and not replicates:
+            view.setToolTip("No reports yet — run Create report first.")
+        elif not exists:
+            view.setToolTip(
+                "No Project report yet — run Create report first "
+                f"({len(replicates)} replicate report(s) already exist).")
+        else:
+            view.setToolTip(
+                "No per-replicate reports yet. Create report writes one per "
+                "replicate unless that step was turned off.")
 
     def _enclosing_project_dir(self, path):
         """The Project *path* is a replicate of, or None when *path* is not a
@@ -942,6 +987,51 @@ class HubWindow(QMainWindow):
             )
 
         self._spawn_task(task_name, _do)
+
+    def _open_pdf(self, path: Path) -> bool:
+        """Hand *path* to the desktop's PDF viewer. True when it was handed
+        over; the viewer itself decides window vs tab.
+
+        ``QDesktopServices`` covers all three desktops (ShellExecute, Launch
+        Services, xdg-open). It can still fail on a Linux box with no
+        xdg-utils and no registered handler, so each platform's own opener is
+        tried before giving up.
+        """
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            return True
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # noqa: S606 — the OS picks the app
+            elif sys.platform == "darwin":
+                ## -n: a new instance, so several files cannot collapse into
+                ## one reused window.
+                subprocess.Popen(["open", "-n", str(path)], close_fds=True)
+            else:
+                subprocess.Popen(["xdg-open", str(path)], close_fds=True)
+        except Exception as err:  # noqa: BLE001
+            self._log_issue(f"[reports] could not open {path.name}: {err}")
+            return False
+        return True
+
+    def _project_view_reports(self) -> None:
+        """Open the Project report and every per-replicate report at once."""
+        project = self._current_project()
+        if project is None:
+            return
+        targets = [self._project_report_path(project)]
+        targets += self._replicate_report_paths(project)
+        missing = [p for p in targets if not p.is_file()]
+        if missing:
+            ## Reports can be deleted between the refresh that enabled the
+            ## button and the click on it.
+            self._warn("These reports are no longer on disk:\n"
+                       + "\n".join(str(p) for p in missing))
+            targets = [p for p in targets if p.is_file()]
+            self._refresh_project_view()
+        opened = sum(1 for path in targets if self._open_pdf(path))
+        if opened:
+            self._log.append_line(
+                f"[reports] opened {opened} report(s) in your PDF viewer.")
 
     def _project_ai_narrative(self) -> None:
         from ..ai import available_providers
@@ -1178,9 +1268,9 @@ class HubWindow(QMainWindow):
             "The designated Project Script — resolved per Project from "
             "batch.yaml project_scripts, then the project's own scripts, "
             "then the built-ins. The default runs each project's own "
-            "script (every project.yaml is created with one; a project "
-            "with none is reported and skipped). Changing it is remembered "
-            "in batch.yaml.")
+            "'batch' script — every project.yaml is created with one; a "
+            "project with none is reported and skipped. Changing it is "
+            "remembered in batch.yaml.")
         self._batch_script_combo.currentIndexChanged.connect(
             self._on_batch_script_changed)
         script_row.addWidget(self._batch_script_combo, 1)
@@ -1310,7 +1400,8 @@ class HubWindow(QMainWindow):
         ## No designation now means "each Project's own default script"
         ## (ADR-0009 amendment) — the built-ins below are explicit choices,
         ## not the silent fallback they used to be.
-        combo.addItem("Each project's own script (default)", ("default", None))
+        combo.addItem("Each project's own 'batch' script (default)",
+                      ("default", None))
         combo.addItem("Report pipeline (built-in)", ("builtin", "report"))
         combo.addItem("Standard pipeline (built-in)", ("builtin", "standard"))
         for script in meta["project_scripts"]:
@@ -1545,6 +1636,7 @@ class HubWindow(QMainWindow):
     def _refresh_tiles_inner(self) -> None:
         from .. import batch as batch_mod
         from .. import project as prj
+        from ..script_editor.project_actions import DEFAULT_PROJECT_SCRIPT_NAME
 
         tiles = getattr(self, "_tiles", None)
         if not tiles:
@@ -1554,11 +1646,14 @@ class HubWindow(QMainWindow):
         ## batch branch both read it (cheap directory scans, no Project load).
         batch_root = self._batch_root()
         batch_names: list[str] = []
-        designated = "Report pipeline"
+        ## No designation runs each Project's own default script, so the
+        ## readout names that script rather than a built-in (ADR-0009).
+        default_designation = f"each project's '{DEFAULT_PROJECT_SCRIPT_NAME}'"
+        designated = default_designation
         if batch_root is not None:
             batch_names = batch_mod.batch_project_names(batch_root)
             meta = batch_mod.load_batch_file(batch_root)
-            designated = meta["script"] or "Report pipeline"
+            designated = meta["script"] or default_designation
 
         # Batch tile: the containment level above Project (ADR-0009).
         tile = tiles.get("batch")
