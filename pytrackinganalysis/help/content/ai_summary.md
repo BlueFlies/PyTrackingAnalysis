@@ -25,7 +25,7 @@ The app checks only that a key exists before enabling the action. Bad keys, offl
 1. Load a replicate by double-clicking it in the Project table.
 2. Run analysis so the report content, figures, stats, and summary CSVs exist.
 3. Open **AI -> AI summary...**, choose provider and model, and click **Generate**.
-4. The summary is saved to `analysis/<experiment>_AI_Summary.txt`.
+4. The summary is saved to `analysis/<experiment>_AI_Summary.txt`, plus a Markdown copy at `analysis/ai_narrative.md`.
 5. The experiment report is rebuilt automatically so the PDF and text file agree.
 
 The provider receives report-ready content: cover metadata, figures as images, statistics, and per-fly summaries. It is not sent raw tracking files.
@@ -34,7 +34,7 @@ The provider receives report-ready content: cover metadata, figures as images, s
 
 1. Run **Create report** or **Update report** for the Project so Combined Analysis is current.
 2. Click **AI narrative...** in the Project panel and choose a provider.
-3. The narrative is saved to `analysis/<project>_AI_Summary.txt`.
+3. The narrative is saved to `analysis/<project>_AI_Summary.txt`, plus a Markdown copy at `analysis/ai_narrative.md`.
 4. The Project report is rebuilt immediately so the PDF and text file agree.
 
 ## In scripts
@@ -44,6 +44,7 @@ Project Scripts have a **Generate AI narrative** action (provider choice; it sof
 ## Lifecycle
 
 - The saved text file is the opt-in. Reports embed AI prose only while the corresponding `*_AI_Summary.txt` exists.
+- Every narrative is also written as `analysis/ai_narrative.md`. The filename is fixed rather than named for the project or replicate, so one glob (`**/ai_narrative.md`) finds every narrative in a tree - useful when a later AI agent, or a plain `grep -r`, needs to read what was concluded. It carries front matter naming the level, the model, the timestamp, and the replicates, and it is deleted whenever its `.txt` is, so a stale narrative can never sit beside fresh numbers.
 - Re-running an experiment analysis deletes its experiment AI Summary.
 - Rebuilding a Project Combined Analysis deletes its Project AI narrative. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh when you want AI prose in the PDF.
 - A Batch Run's default Report pipeline rebuilds each Project's Combined Analysis, so it deletes any saved narrative in every Project it touches. Regenerate afterwards, or designate a custom Project Script that ends with **Generate AI narrative** (see the **Batch runs** help topic).

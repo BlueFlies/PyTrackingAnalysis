@@ -131,6 +131,17 @@ run will do. Distinct from the legacy `batch` **Experiment** Script
 `experiment_scripts:` — different level, different key, no collision.
 _Avoid_: batch script (ambiguous across the two levels)
 
+**Batch AI Narrative**:
+`batch_ai_narrative.md` at the Batch root: an AI synthesis of the Projects'
+own `ai_narrative.md` files — results across the batch, compromised designs,
+and Projects that lost many flies — deliberately skipping the per-Project
+detail that lives one level down. Opt-in per Batch Run. It is a synthesis,
+not a pooling: a Batch never combines data across Projects. Because the
+default `batch` script rebuilds each Combined Analysis (which deletes that
+Project's narrative), Projects without one get a narrative generated first.
+The front matter names which Projects the prose actually covers.
+_Avoid_: batch summary, combined narrative (nothing is pooled)
+
 **Absorbed Action**:
 A project action retired into the one that already does its work —
 `run_all_analyses` and `build_combined_analysis` into `project_report`, when
@@ -210,7 +221,10 @@ only when a provider API key is configured in `.env`. A failed generation never
 blocks the report; the user gets an error message instead. The AI *summarizes*
 the pipeline's analysis; it does not perform its own. An AI Summary is a
 derivative of a single analysis run: re-running the analysis deletes it, and
-the report embeds it only while the saved file exists.
+the report embeds it only while the saved file exists. It is saved twice: as
+`<name>_AI_Summary.txt` (what the report reads) and as `ai_narrative.md`
+beside it — a fixed, name-independent filename so every narrative in a tree
+is findable with one glob. Both die together.
 _Avoid_: AI analysis, AI interpretation
 
 **Excluded Fly**:

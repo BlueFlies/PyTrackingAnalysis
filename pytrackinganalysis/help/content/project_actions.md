@@ -30,7 +30,8 @@ Both labels run the same sequence: unload any currently loaded replicate, analyz
 Use the other Project actions around that full refresh:
 
 - **Plot editor...** - open the Project-level publication figure editor after a report refresh has created combined faceted data. Save plot specs, then click **Update report** to rebuild the PDF with those specs.
-- **AI narrative...** - write a Project AI narrative from the current Combined Analysis and rebuild the Project report so the narrative is embedded.
+- **AI narrative...** - write a Project AI narrative from the current Combined Analysis and rebuild the Project report so the narrative is embedded. The prose is also saved as `analysis/ai_narrative.md` for later searching.
+- **View reports** - open the Project report and every per-replicate report at once, each handed to your desktop's PDF viewer. Enabled only when both kinds exist; the tooltip says which half is missing when it does not.
 
 Rebuilding Combined Analysis deletes any saved Project AI narrative because the narrative describes one specific combined result. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh if you want AI prose in the PDF.
 

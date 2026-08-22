@@ -28,6 +28,39 @@ from . import project as prj
 #: Project Scripts (the ``experiment_scripts:`` idea one level up).
 BATCH_FILENAME = "batch.yaml"
 
+#: The Batch AI narrative, written at the Batch root. Named distinctly from a
+#: Project's ``ai_narrative.md`` so a recursive glob can tell the levels apart.
+BATCH_NARRATIVE_FILENAME = "batch_ai_narrative.md"
+
+#: What the batch-level agent is asked for. It reads the Projects' own
+#: narratives, so it must synthesize across them rather than restate each:
+#: the per-Project detail is already one file down.
+BATCH_NARRATIVE_PROMPT = """\
+You are given the AI narratives of several independent Projects from one
+batch of insect-tracking experiments. Each Project is its own design with its
+own replicates; results are NOT pooled across Projects.
+
+Write one synthesis for a researcher reviewing the whole batch:
+
+1. **Results across the batch, in reasonable detail.** What each Project
+   found, and — more importantly — where the Projects agree, where they
+   disagree, and what the batch shows taken together. Give effect directions
+   and magnitudes where the narratives state them.
+2. **Experimental design problems.** Call out specific Projects whose design
+   looks compromised: too few replicates, unbalanced or missing treatment
+   groups, inconsistent factors or counting regions between replicates,
+   replicates that were never analyzed.
+3. **Heavy fly loss.** Name any Project or replicate where a large share of
+   flies was excluded or flagged (low movement, quality cutoffs), give the
+   numbers the narratives report, and say what it implies for trusting that
+   Project's result.
+
+Do not itemize minor per-Project or per-experiment detail — that lives in the
+Project narratives themselves. Prefer plain prose over bullet soup. Where the
+source narratives are silent on something, say so rather than inferring it.
+Do not perform new analysis: you are summarizing what the pipeline already
+computed."""
+
 
 def batch_project_names(path) -> list[str]:
     """Immediate subdirectories of *path* that are Projects, sorted by name —
@@ -153,6 +186,142 @@ def resolve_designated_script(name: str | None, central_scripts: list[dict],
     if name == STANDARD_PIPELINE["name"]:
         return STANDARD_PIPELINE, "built-in", None
     return None, "", None
+
+
+def project_narrative_path(batch_dir, name: str) -> str:
+    """Where Project *name*'s own AI narrative lives, if it has one."""
+    from .ai.narrative import AI_NARRATIVE_FILENAME
+
+    return os.path.join(str(batch_dir), name, "analysis",
+                        AI_NARRATIVE_FILENAME)
+
+
+def batch_narrative_path(batch_dir) -> str:
+    return os.path.join(str(batch_dir), BATCH_NARRATIVE_FILENAME)
+
+
+def generate_batch_narrative(batch_dir, provider: str,
+                             model: str | None = None,
+                             project_names: list[str] | None = None,
+                             ensure_projects: bool = True,
+                             log=print) -> str:
+    """Synthesize the Projects' AI narratives into one Batch narrative.
+
+    Reads each Project's ``analysis/ai_narrative.md`` and asks *provider* for
+    a batch-level summary, written to ``batch_ai_narrative.md`` at the Batch
+    root. Returns that path.
+
+    With *ensure_projects* a Project that has no narrative gets one generated
+    first. That is the normal case rather than the exception: the default
+    ``batch`` script rebuilds each Combined Analysis, and that deletes the
+    Project's narrative (ADR-0004), so straight after a Batch Run there is
+    usually nothing left to read. Each generation is an extra provider call
+    and is logged as one.
+
+    A Project that cannot produce a narrative is named and skipped — the
+    Batch narrative describes the Projects it could actually read, and says
+    which it could not.
+    """
+    from .ai.base import AISummaryError
+    from .ai.payload import SummaryPayload
+
+    root = os.path.abspath(str(batch_dir))
+    names = (list(project_names) if project_names is not None
+             else batch_project_names(root))
+    pieces: list[tuple[str, str]] = []
+    generated: list[str] = []
+    failed: list[str] = []
+
+    for name in names:
+        path = project_narrative_path(root, name)
+        if not os.path.isfile(path) and ensure_projects:
+            log(f"[{name}] no narrative yet — generating one first…")
+            try:
+                project = prj.Project(os.path.join(root, name))
+                project.generate_ai_summary(provider, model=model)
+                generated.append(name)
+            except Exception as err:  # noqa: BLE001
+                failed.append(f"{name}: {err}")
+                log(f"[{name}] could not generate a narrative: {err}")
+                continue
+        try:
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read().strip()
+        except OSError:
+            failed.append(f"{name}: no {os.path.basename(path)}")
+            continue
+        if text:
+            pieces.append((name, text))
+
+    if not pieces:
+        raise AISummaryError(
+            "No Project narratives to summarize"
+            + (f" ({'; '.join(failed)})" if failed else "")
+            + ". Generate a narrative in at least one Project first.")
+
+    body = "\n\n".join(
+        f"===== PROJECT: {name} =====\n{text}" for name, text in pieces)
+    if failed:
+        body += ("\n\n===== PROJECTS WITHOUT A NARRATIVE =====\n"
+                 + "\n".join(failed))
+
+    from .ai import get_summarizer
+
+    summarizer = get_summarizer(provider, model=model)
+    log(f"Requesting the batch narrative from {summarizer.display_name} "
+        f"({summarizer.model}) over {len(pieces)} Project narrative(s)…")
+    text = summarizer.summarize(SummaryPayload(text=body),
+                                BATCH_NARRATIVE_PROMPT)
+    path = write_batch_narrative(
+        root, text, summarizer.display_name, summarizer.model,
+        included=[name for name, _ in pieces], missing=failed,
+        regenerated=generated)
+    log(f"Saved: {path}")
+    return path
+
+
+def write_batch_narrative(batch_dir, text: str, provider: str, model: str,
+                          included: list[str], missing: list[str] | None = None,
+                          regenerated: list[str] | None = None) -> str:
+    """Write the Batch narrative as Markdown; returns the path.
+
+    The front matter names which Projects the prose is actually based on: a
+    synthesis that silently skipped half the batch would read exactly like
+    one that covered it.
+    """
+    from datetime import datetime as _dt
+
+    stamp = _dt.now().strftime("%Y-%m-%d %H:%M")
+    path = batch_narrative_path(batch_dir)
+    lines = [
+        f"# Batch AI narrative — {os.path.basename(os.path.normpath(str(batch_dir)))}",
+        "",
+        "- **Level:** Batch (independent Projects, not pooled)",
+        f"- **Generated:** {stamp}",
+        f"- **Model:** {provider} {model}",
+        f"- **Projects summarized ({len(included)}):** {', '.join(included)}",
+    ]
+    if regenerated:
+        lines.append(f"- **Project narratives regenerated for this run:** "
+                     f"{', '.join(regenerated)}")
+    if missing:
+        lines.append(f"- **Projects with no narrative (excluded):** "
+                     f"{'; '.join(missing)}")
+    lines += [
+        "",
+        "> Written by an AI model from the Projects' own AI narratives. A "
+        "Batch never pools results across Projects — each keeps its own "
+        "design — so this synthesizes their separate findings rather than "
+        "combining their data.",
+        "",
+        "---",
+        "",
+        text.strip(),
+        "",
+    ]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return path
 
 
 def run_batch(batch_dir, script_name: str | None = None,

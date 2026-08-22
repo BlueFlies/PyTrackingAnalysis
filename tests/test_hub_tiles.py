@@ -843,3 +843,143 @@ def test_view_reports_reports_a_project_report_deleted_since_the_refresh(
     assert warned and "Proj_report.pdf" in warned[0]
     # The stale enable is corrected on the way out.
     assert not hub._btn_view_reports.isEnabled()
+
+
+# ---- suppressing new tabs --------------------------------------------------
+
+def test_suppress_tabs_checkbox_lives_on_the_batch_card(hub):
+    """A Batch Run touches every replicate of every Project, so it is the
+    run that would bury the Output tab under hundreds of artifact tabs."""
+    box = hub._chk_suppress_tabs
+    assert not box.isChecked()                  # opt-in
+    assert box in hub._cards["batch"].findChildren(type(box))
+
+
+def test_artifact_tabs_stop_when_suppressed(hub, qapp, tmp_path):  # noqa: F811
+    """`Saved: <path>` lines open a tab per artifact; checked, they do not.
+    The file is still written — only the tab is skipped."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    artifact = tmp_path / "one.txt"
+    artifact.write_text("hello", encoding="utf-8")
+    before = hub._plot_dock.count()
+    hub._on_worker_log(f"Saved: {artifact}\n")
+    qapp.processEvents()
+    assert hub._plot_dock.count() == before + 1
+
+    hub._chk_suppress_tabs.setChecked(True)
+    second = tmp_path / "two.txt"
+    second.write_text("hello", encoding="utf-8")
+    opened = hub._plot_dock.count()
+    hub._on_worker_log(f"Saved: {second}\n")
+    qapp.processEvents()
+    assert hub._plot_dock.count() == opened      # no new tab
+    assert second.is_file()                      # but the artifact exists
+
+
+def test_output_and_errors_keep_updating_while_suppressed(hub, qapp, tmp_path):  # noqa: F811
+    """Only tabs are suppressed — the two standing log tabs must keep
+    streaming, since they are all the user has left to watch."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    hub._chk_suppress_tabs.setChecked(True)
+    qapp.processEvents()
+
+    tabs = hub._plot_dock.count()
+    hub._on_worker_log("[P1] running analysis…\n[P1] done\n")
+    hub._log_issue("[P2] FAILED: boom")
+    qapp.processEvents()
+
+    assert hub._plot_dock.count() == tabs
+    assert "[P1] done" in hub._log.toPlainText()
+    assert "[P2] FAILED: boom" in hub._err_log.toPlainText()
+
+
+def test_suppressed_figures_are_closed_not_leaked(hub, qapp):  # noqa: F811
+    """A figure that never becomes a tab has no widget to own it; pyplot
+    would hold it for the life of the process. Over a Batch Run that is the
+    very leak the switch exists to avoid."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    hub._chk_suppress_tabs.setChecked(True)
+    figure = plt.figure()
+    assert plt.get_fignums()
+
+    assert hub._discard_figures([("Title", figure)], "plot") is True
+    assert not plt.get_fignums()                 # closed, not leaked
+    assert "not shown" in hub._log.toPlainText()
+
+    # Unchecked, the caller keeps its figures and adds them as tabs itself.
+    hub._chk_suppress_tabs.setChecked(False)
+    other = plt.figure()
+    assert hub._discard_figures([("Title", other)], "plot") is False
+    assert plt.get_fignums()
+    plt.close("all")
+
+
+# ---- Tools card ------------------------------------------------------------
+
+def test_tools_card_has_no_open_analysis_button(hub):
+    """A Project has its own analysis/ plus one per replicate, so "Open
+    analysis folder" had no single target. qc/ belongs to an experiment
+    alone, so it stays."""
+    labels = [b.text() for b in hub._cards["tools"].findChildren(
+        type(hub._btn_project_report))]
+    assert "Open analysis folder" not in labels
+    assert "Open qc folder" in labels
+    assert "Validate YAMLs" in labels          # renamed from "Validate YAML"
+
+
+def test_validate_yamls_covers_the_project_and_every_replicate(
+        hub, qapp, tmp_path):  # noqa: F811
+    """Validating only the loaded replicate left the rest of a Project
+    unchecked — which is exactly where a bad config hides."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    targets = hub._yaml_validation_targets()
+    assert [p.name for p in targets] == [
+        "project.yaml", "tracking_config.yaml", "tracking_config.yaml"]
+    assert targets[0].parent == tmp_path
+    assert {p.parent.name for p in targets[1:]} == {"Rep1", "Rep2"}
+
+    hub._validate_yaml()
+    qapp.processEvents()
+    output = hub._log.toPlainText()
+    assert "3 file(s) checked" in output
+
+
+def test_validate_yamls_reports_a_broken_replicate_config(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    (tmp_path / "Rep2" / "tracking_config.yaml").write_text(
+        "experiment_name: [oops\n", encoding="utf-8")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    hub._validate_yaml()
+    qapp.processEvents()
+    errors = hub._err_log.toPlainText()
+    assert "Rep2" in errors and "YAML syntax error" in errors
+
+
+def test_validate_yamls_flags_a_project_with_no_script(
+        hub, qapp, tmp_path):  # noqa: F811
+    """A project.yaml with no Project Script cannot be run by a Batch Run,
+    so validation is where that should surface."""
+    from pytrackinganalysis.script_editor.runner import save_scripts
+
+    _make_project(tmp_path)
+    save_scripts(str(tmp_path / "project.yaml"), [], key="scripts")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    hub._validate_yaml()
+    qapp.processEvents()
+    assert "no Project Script" in hub._err_log.toPlainText()

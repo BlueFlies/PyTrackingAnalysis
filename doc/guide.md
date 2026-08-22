@@ -348,8 +348,10 @@ Rules that make a file *valid*:
   `counting_regions` entries.
 - Every `counting_regions` entry must have an `alias` key.
 
-Check a file at any time with the Hub's **Tools → Validate YAML** button in the top tile strip —
-parse errors are reported in the Output and Errors tabs.
+Check at any time with the Hub's **Tools → Validate YAMLs** button in the top tile strip.
+With a Project selected it validates the `project.yaml` and every replicate's
+`tracking_config.yaml` in one pass; parse errors and semantic problems are
+reported per file in the Output and Errors tabs, with a total at the end.
 
 ### 4.1 `global` — required fields
 
@@ -807,7 +809,9 @@ The panels:
   row to load that replicate** — this is the only way to load an experiment,
   and it runs QC as it loads), plus **Experiment configs…** and
   **Add experiment…** (below), the project-level actions — **Create report** or
-  **Update report**, **Plot editor…**, **AI narrative…** — and a **Script** picker with
+  **Update report**, **Plot editor…**, **AI narrative…**, **View reports**
+  (opens the project report and every replicate report in the desktop's PDF
+  viewer; enabled only once both kinds exist) — and a **Script** picker with
   **Run script** / **Edit scripts…** (§8.3; the built-in **Report
   pipeline** and **Standard pipeline** are always available).  Subdirectories that hold no
   `tracking_config.yaml` are listed too, in italics with **Config: missing**
@@ -1137,6 +1141,7 @@ outputs to the Project root — see the last table below).
 | `analysis/<project>_Excluded.csv` | All replicates' excluded flies, tagged by replicate |
 | `analysis/<project>_Stats.txt` | Pooled per-fly Welch/Tukey tests beside the mixed-model p-values (treatment fixed, experiment random intercept), plus any cross-replicate warnings |
 | `analysis/<project>_AI_Summary.txt` | (Optional) The AI narrative; deleted by every `build_combined_analysis()` and recreated by **AI narrative…** |
+| `analysis/ai_narrative.md` | (Optional) The same narrative as Markdown, with front matter naming the level, model, and replicates. A fixed filename, so `**/ai_narrative.md` finds every narrative in a tree; written and deleted with its `.txt` sibling |
 | `plot_specs.yaml` | Publication-figure Plot Specs + Plot Styles (written by the Plot Editor) |
 | `figures/*.svg` / `*.pdf` | Vector publication figures rendered from the pooled data |
 | `<project>_report.pdf` | The Project Report: cover with per-replicate status → AI narrative (when present) → pooled publication figures → pooled + mixed statistics table → per-replicate summary table |

@@ -1034,19 +1034,11 @@ class HubWindow(QMainWindow):
                 f"[reports] opened {opened} report(s) in your PDF viewer.")
 
     def _project_ai_narrative(self) -> None:
-        from ..ai import available_providers
-
         project = self._current_project()
         if project is None:
             return
-        providers = [p.provider_name for p in available_providers()]
-        if not providers:
-            self._warn("No AI provider key found (.env: ANTHROPIC_API_KEY "
-                       "or OPENAI_API_KEY).")
-            return
-        choice, ok = QInputDialog.getItem(
-            self, "AI narrative", "Provider:", providers, 0, False)
-        if not ok:
+        choice = self._choose_ai_provider("AI narrative")
+        if choice is None:
             return
 
         def _do() -> str:
@@ -1165,13 +1157,16 @@ class HubWindow(QMainWindow):
             HelpButton("outputs", tooltip="Where analysis and QC outputs are written")
         )
         btn_validate = ActionButton(
-            "Validate YAML", Category.TOOLS, icon_name="lint"
+            "Validate YAMLs", Category.TOOLS, icon_name="lint"
         )
+        btn_validate.setToolTip(
+            "Check the Project's project.yaml and every replicate's "
+            "tracking_config.yaml — parse errors and semantic problems "
+            "(unknown rig, missing calibration, design mismatch) alike.")
         btn_validate.clicked.connect(self._validate_yaml)
-        btn_open_analysis = ActionButton(
-            "Open analysis folder", Category.TOOLS, icon_name="open"
-        )
-        btn_open_analysis.clicked.connect(lambda: self._open_folder("analysis"))
+        ## "Open analysis folder" removed: a Project has one analysis/ of its
+        ## own plus one per replicate, so the button had no single target.
+        ## qc/ is still unambiguous — only an experiment has one.
         btn_open_qc = ActionButton(
             "Open qc folder", Category.TOOLS, icon_name="open"
         )
@@ -1186,8 +1181,7 @@ class HubWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        buttons = (btn_open_analysis, btn_open_qc, btn_validate,
-                   btn_clear_cache)
+        buttons = (btn_validate, btn_open_qc, btn_clear_cache)
         for i, b in enumerate(buttons):
             grid.addWidget(b, i // 2, i % 2)
         grid.setColumnStretch(0, 1)
@@ -1284,6 +1278,29 @@ class HubWindow(QMainWindow):
         script_row.addWidget(self._btn_run_batch)
         card.add_body(script_row)
 
+        ## A Batch Run touches every replicate of every Project, so the
+        ## artifact/figure tabs it would open run into the hundreds and bury
+        ## the Output tab the user is actually reading. Checked, new tabs stop
+        ## being created; Output and Errors keep streaming.
+        self._chk_batch_narrative = QCheckBox("AI narrative of the batch")
+        self._chk_batch_narrative.setToolTip(
+            "After the run, ask an AI provider to synthesize the Projects' "
+            "own narratives into batch_ai_narrative.md at the batch folder — "
+            "results across the batch, design problems, and Projects that "
+            "lost a lot of flies. A Project with no narrative gets one "
+            "generated first (one extra provider call each), because the "
+            "default 'batch' script rebuilds Combined Analysis, which "
+            "deletes it.")
+        card.add_body(self._chk_batch_narrative)
+
+        self._chk_suppress_tabs = QCheckBox("Suppress new plot / output tabs")
+        self._chk_suppress_tabs.setToolTip(
+            "Stop opening a tab for every figure and saved file. The Output "
+            "and Errors tabs keep updating, and every artifact is still "
+            "written to disk — only the tabs are skipped. Applies to all "
+            "runs while it is checked, not just Batch Runs.")
+        card.add_body(self._chk_suppress_tabs)
+
         ## Parked here from the Tools card: Batch Tools iterates a Project's
         ## subdirectories and predates the Project structure — disabled until
         ## its rework (ADR-0009).
@@ -1297,7 +1314,7 @@ class HubWindow(QMainWindow):
         card.add_body(self._btn_batch_tools)
 
         for w in (self._batch_table, self._batch_script_combo,
-                  self._btn_run_batch):
+                  self._btn_run_batch, self._chk_batch_narrative):
             w.setEnabled(False)
         self._cards["batch"] = card
         self._cards_lay.addWidget(card)
@@ -1350,8 +1367,11 @@ class HubWindow(QMainWindow):
         root = self._batch_root()
         live = root is not None
         self._batch_empty.setVisible(not live)
+        ## The suppress-tabs box is deliberately NOT in this list: it applies
+        ## to every run, not only Batch Runs, so it stays usable with no
+        ## Batch selected.
         for w in (self._batch_table, self._batch_script_combo,
-                  self._btn_run_batch):
+                  self._btn_run_batch, self._chk_batch_narrative):
             w.setEnabled(live)
         if not live:
             self._batch_table.setRowCount(0)
@@ -1495,6 +1515,16 @@ class HubWindow(QMainWindow):
             name = None
         else:
             name = data[1]
+
+        ## The provider is chosen BEFORE the run: the narrative is written
+        ## from the worker thread, which cannot raise a dialog, and finding
+        ## out there is no API key after an hour of analysis is no use.
+        provider = None
+        if self._chk_batch_narrative.isChecked():
+            provider = self._choose_ai_provider("Batch AI narrative")
+            if provider is None:
+                return
+
         ## A Batch Run rewrites every replicate's analysis in every Project —
         ## a loaded experiment would survive as a stale copy of results that
         ## no longer exist (ADR-0008's rule, one level up).
@@ -1508,12 +1538,49 @@ class HubWindow(QMainWindow):
                       for n, v in results.items() if v != "ok"]
             msg = (f"Batch Run complete: {ok}/{len(results)} Project(s) "
                    "succeeded.")
+            narrative = ""
+            if provider is not None:
+                ## Only the Projects that actually ran: summarizing one that
+                ## just failed would describe stale numbers as fresh ones.
+                ran = [n for n, v in results.items() if v == "ok"]
+                narrative = self._batch_narrative_note(
+                    batch_mod, root, provider, ran)
             if failed:
                 raise RuntimeError(
-                    msg + "\nFailed:\n  - " + "\n  - ".join(failed))
-            return msg
+                    msg + narrative + "\nFailed:\n  - " + "\n  - ".join(failed))
+            return msg + narrative
 
         self._spawn_task("Batch Run", _do)
+
+    def _choose_ai_provider(self, title: str) -> str | None:
+        """Ask which configured provider to use, or None when unavailable or
+        cancelled (the caller then does nothing)."""
+        from ..ai import available_providers
+
+        providers = [p.provider_name for p in available_providers()]
+        if not providers:
+            self._warn("No AI provider key found (.env: ANTHROPIC_API_KEY "
+                       "or OPENAI_API_KEY).")
+            return None
+        choice, ok = QInputDialog.getItem(
+            self, title, "Provider:", providers, 0, False)
+        return choice if ok else None
+
+    def _batch_narrative_note(self, batch_mod, root, provider: str,
+                              ran: list[str]) -> str:
+        """Write the Batch narrative and return a line for the task message.
+
+        ADR-0004: a provider failure never fails the work that preceded it.
+        The Batch Run's own result stands either way.
+        """
+        if not ran:
+            return "\nBatch AI narrative skipped — no Project succeeded."
+        try:
+            path = batch_mod.generate_batch_narrative(
+                str(root), provider, project_names=ran, log=print)
+        except Exception as err:  # noqa: BLE001
+            return f"\nBatch AI narrative failed: {err}"
+        return f"\nBatch AI narrative: {path}"
 
     # ==================================================================
     # Behaviour — project dir / config
@@ -1983,6 +2050,9 @@ class HubWindow(QMainWindow):
         def _on_ok(msg: str) -> None:
             for ln in worker_log:
                 self._log.append_line(ln)
+            if self._discard_figures(figures, "script"):
+                self._log.append_line(msg)
+                return
             interactive = self._interactive_checkbox.isChecked()
             for title, fig in figures:
                 self._plot_dock.add_figure(title, fig, interactive=interactive)
@@ -2168,6 +2238,9 @@ class HubWindow(QMainWindow):
             if not figs:
                 self._log_issue(f"[plot] {method_name} produced no figures.")
                 return
+            if self._discard_figures([(title, f) for f in figs], "plot"):
+                self._log.append_line(msg)
+                return
             interactive = self._interactive_checkbox.isChecked()
             for i, fig in enumerate(figs):
                 tab_title = title if len(figs) == 1 else f"{title} ({i+1})"
@@ -2343,10 +2416,40 @@ class HubWindow(QMainWindow):
         self._worker = worker
         worker.start()
 
+    def _discard_figures(self, titled_figures: list, source: str) -> bool:
+        """When tabs are suppressed, close *titled_figures* and say so.
+
+        Returns True when they were discarded, so the caller skips its
+        add_figure loop. Closing matters: a figure that never becomes a tab
+        has no widget to own it, and pyplot would hold it for the life of the
+        process — over a Batch Run that is exactly the leak the switch is
+        meant to avoid.
+        """
+        if not self._tabs_suppressed() or not titled_figures:
+            return False
+        from ..ui.widgets import _close_figure
+
+        for _title, figure in titled_figures:
+            _close_figure(figure)
+        self._log.append_line(
+            f"[{source}] {len(titled_figures)} figure(s) not shown — "
+            "'Suppress new plot / output tabs' is on (Batch card).")
+        return True
+
+    def _tabs_suppressed(self) -> bool:
+        """The Batch card's 'Suppress new plot / output tabs' switch.
+
+        Read through ``getattr`` because the log starts flowing before the
+        cards are built, and a task can outlive the panel that owns the box.
+        """
+        box = getattr(self, "_chk_suppress_tabs", None)
+        return box is not None and box.isChecked()
+
     def _on_worker_log(self, text: str) -> None:
         """Mirror worker stdout to the Output tab and (when enabled for the
         current task) surface ``Saved: <path>`` artifacts as PlotDock tabs."""
-        self._log.append_line(text)
+        ## Raw stdout: no line discipline, so the streaming path.
+        self._log.append_stream(text)
         if not getattr(self, "_surface_artifacts", True):
             return
         for line in text.splitlines():
@@ -2364,6 +2467,10 @@ class HubWindow(QMainWindow):
 
     def _add_artifact_tab(self, path: Path) -> None:
         """Add a zoomable PlotDock tab for *path* (PNG / TXT / CSV)."""
+        ## Gated here rather than only at the call sites, so no future caller
+        ## can bypass the switch. The file itself is already on disk.
+        if self._tabs_suppressed():
+            return
         if not path.exists():
             return
         key = str(path.resolve())
@@ -2473,25 +2580,109 @@ class HubWindow(QMainWindow):
     # Behaviour — tools
     # ==================================================================
 
-    def _validate_yaml(self) -> None:
+    def _yaml_validation_targets(self) -> list[Path]:
+        """Every YAML worth checking for the current selection.
+
+        At a Project that is its ``project.yaml`` plus one
+        ``tracking_config.yaml`` per replicate — validating only the loaded
+        replicate left the rest of a Project unchecked, which is the case
+        where a design mismatch actually hides. Elsewhere it is the single
+        experiment config in hand.
+        """
+        from .. import project as prj
+
+        root = self._project_root()
+        if root is not None and prj.is_project_dir(root):
+            targets = [Path(root) / prj.PROJECT_FILENAME]
+            for entry in sorted(Path(root).iterdir()):
+                config = entry / _CANONICAL_CONFIG
+                if entry.is_dir() and config.is_file():
+                    targets.append(config)
+            return targets
         path = self._config_path()
-        if path is None:
-            self._log_issue(
-                "[validate] No tracking config here — a Project's configs live "
-                "in its experiment directories ('Experiment configs…').")
-            return
+        return [path] if path is not None else []
+
+    def _validate_yaml(self) -> None:
         # Parsing cleanly is not the same as being usable — check the semantics
         # too, so an unknown rig or a missing movie calibration is reported here
         # rather than surfacing mid-analysis or silently falling back to defaults.
+        from .. import project as prj
         from ..config_validation import validate_config_file
 
-        problems = validate_config_file(str(path))
-        if not problems:
-            self._log.append_line(f"[validate] {path} is valid.")
+        targets = self._yaml_validation_targets()
+        if not targets:
+            self._log_issue(
+                "[validate] No YAML here — load an experiment or select a "
+                "Project first.")
             return
-        self._log_issue(f"[validate] {path}: {len(problems)} problem(s) found:")
-        for problem in problems:
-            self._log_issue(f"[validate]   • {problem}")
+
+        total = 0
+        for path in targets:
+            if path.name == prj.PROJECT_FILENAME:
+                problems = self._validate_project_file(path)
+            else:
+                problems = validate_config_file(str(path))
+            total += len(problems)
+            if problems:
+                self._log_issue(
+                    f"[validate] {path}: {len(problems)} problem(s) found:")
+                for problem in problems:
+                    self._log_issue(f"[validate]   • {problem}")
+            else:
+                self._log.append_line(f"[validate] {path} is valid.")
+        summary = (f"[validate] {len(targets)} file(s) checked, "
+                   f"{total} problem(s) found.")
+        if total:
+            self._log_issue(summary)
+        else:
+            self._log.append_line(summary)
+
+    def _validate_project_file(self, path: Path) -> list[str]:
+        """Problems in a ``project.yaml``: it parses, and the Project it
+        describes actually loads — which is where design mismatches between
+        replicates surface."""
+        import yaml
+
+        from .. import project as prj
+
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = yaml.safe_load(handle)
+        except yaml.YAMLError as err:
+            return [f"YAML syntax error: {err}"]
+        except OSError as err:
+            return [f"Could not read the file: {err}"]
+        if data is not None and not isinstance(data, dict):
+            return ["project.yaml must be a mapping "
+                    f"(found {type(data).__name__})."]
+
+        problems: list[str] = []
+        try:
+            project = prj.Project(str(path.parent))
+        except Exception as err:  # noqa: BLE001
+            ## A Project that will not load is the loudest problem this file
+            ## can have — a design mismatch raises exactly here.
+            return [f"{type(err).__name__}: {err}"]
+        problems.extend(project.warnings)
+        from ..script_editor.project_actions import project_validation_issues
+        from ..script_editor.runner import ScriptError, load_scripts
+
+        try:
+            scripts = load_scripts(str(path))
+        except ScriptError as err:
+            problems.append(f"scripts: {err}")
+        else:
+            if not scripts:
+                problems.append(
+                    "no Project Script — a Batch Run cannot run this project "
+                    "(the Script Editor can add one).")
+            for script in scripts:
+                for index, issue in project_validation_issues(
+                        script.get("steps") or []):
+                    problems.append(
+                        f"script '{script.get('name')}' step {index + 1}: "
+                        f"{issue}")
+        return problems
 
     def _open_folder(self, subfolder: str) -> None:
         ## analysis/ and qc/ belong to an experiment, so the loaded one wins;

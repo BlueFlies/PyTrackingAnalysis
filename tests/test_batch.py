@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 
+import pytest
 import yaml
 
 from pytrackinganalysis import batch as batch_mod
@@ -288,3 +289,103 @@ def test_run_batch_unresolvable_designation_fails_that_project(
                                   log=lambda _m: None)
     assert called == []
     assert "ghost" in results["P1"]
+
+
+# ---- the Batch AI narrative ------------------------------------------------
+
+class _FakeSummarizer:
+    """Stands in for a provider: records what it was asked, returns prose."""
+
+    display_name = "Fake"
+    model = "fake-1"
+
+    def __init__(self):
+        self.instructions = None
+        self.text = None
+
+    def summarize(self, payload, instructions):
+        self.instructions = instructions
+        self.text = payload.text
+        return "P1 avoided light; P2 lost most of its flies to exclusions."
+
+
+def _write_narrative(project_dir, name, body):
+    analysis = project_dir / "analysis"
+    analysis.mkdir(exist_ok=True)
+    (analysis / "ai_narrative.md").write_text(
+        f"# AI narrative — {name}\n\n{body}\n", encoding="utf-8")
+
+
+def test_batch_narrative_synthesizes_the_project_narratives(
+        tmp_path, monkeypatch):
+    _make_batch(tmp_path, names=("P1", "P2"))
+    _write_narrative(tmp_path / "P1", "P1", "Strong avoidance; 2/24 excluded.")
+    _write_narrative(tmp_path / "P2", "P2", "Inconclusive; 18/24 excluded.")
+
+    fake = _FakeSummarizer()
+    monkeypatch.setattr("pytrackinganalysis.ai.get_summarizer",
+                        lambda provider, model=None: fake)
+
+    path = batch_mod.generate_batch_narrative(
+        str(tmp_path), "anthropic", ensure_projects=False, log=lambda _m: None)
+
+    assert os.path.basename(path) == batch_mod.BATCH_NARRATIVE_FILENAME
+    assert os.path.dirname(path) == str(tmp_path)     # at the Batch root
+    body = open(path, encoding="utf-8").read()
+    assert "P1 avoided light" in body
+    assert "Projects summarized (2):** P1, P2" in body
+    # Both Projects reached the model, each labelled.
+    assert "PROJECT: P1" in fake.text and "PROJECT: P2" in fake.text
+    # The prompt asks for what the user actually wants out of a batch.
+    assert "design" in fake.instructions.lower()
+    assert "fly loss" in fake.instructions.lower()
+
+
+def test_batch_narrative_names_the_projects_it_could_not_read(
+        tmp_path, monkeypatch):
+    """A synthesis that silently skipped half the batch reads exactly like
+    one that covered it, so the front matter has to say."""
+    _make_batch(tmp_path, names=("P1", "P2"))
+    _write_narrative(tmp_path / "P1", "P1", "Strong avoidance.")
+
+    monkeypatch.setattr("pytrackinganalysis.ai.get_summarizer",
+                        lambda provider, model=None: _FakeSummarizer())
+    path = batch_mod.generate_batch_narrative(
+        str(tmp_path), "anthropic", ensure_projects=False, log=lambda _m: None)
+    body = open(path, encoding="utf-8").read()
+    assert "Projects summarized (1):** P1" in body
+    assert "no narrative (excluded)" in body and "P2" in body
+
+
+def test_batch_narrative_generates_a_missing_project_narrative_first(
+        tmp_path, monkeypatch):
+    """The default 'batch' script rebuilds Combined Analysis, which deletes
+    each Project's narrative — so straight after a run there is usually
+    nothing to read, and the step has to make one."""
+    _make_batch(tmp_path, names=("P1",))
+    generated: list = []
+
+    def fake_generate(self, provider, model=None):
+        generated.append(os.path.basename(self.project_directory))
+        _write_narrative(tmp_path / "P1", "P1", "Freshly written.")
+        return "Freshly written."
+
+    monkeypatch.setattr(prj.Project, "generate_ai_summary", fake_generate)
+    monkeypatch.setattr("pytrackinganalysis.ai.get_summarizer",
+                        lambda provider, model=None: _FakeSummarizer())
+
+    path = batch_mod.generate_batch_narrative(
+        str(tmp_path), "anthropic", log=lambda _m: None)
+    assert generated == ["P1"]
+    body = open(path, encoding="utf-8").read()
+    assert "regenerated for this run:** P1" in body
+
+
+def test_batch_narrative_refuses_when_there_is_nothing_to_summarize(tmp_path):
+    from pytrackinganalysis.ai.base import AISummaryError
+
+    _make_batch(tmp_path, names=("P1",))
+    with pytest.raises(AISummaryError, match="No Project narratives"):
+        batch_mod.generate_batch_narrative(
+            str(tmp_path), "anthropic", ensure_projects=False,
+            log=lambda _m: None)

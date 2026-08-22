@@ -35,6 +35,26 @@ Projects — each Project keeps its own design and its own outputs.
   at a time, in name order — continue-on-error with `[project]`-prefixed
   log lines and a summary at the end. It unloads the loaded experiment
   first — the run rewrites every replicate's analysis.
+- **AI narrative of the batch** asks an AI provider, after the run, to
+  synthesize the Projects' own narratives into `batch_ai_narrative.md` at the
+  batch folder: results across the batch, Projects whose design looks
+  compromised, and Projects that lost a lot of flies. Minor per-Project
+  detail is left where it belongs, in each Project's own narrative. You pick
+  the provider before the run starts (the same providers and models as the
+  Project-level **AI narrative...**). Only Projects that succeeded are
+  included, and the file's front matter names which ones they were.
+
+  Note the interaction with the default script: `project_report` rebuilds
+  each Project's Combined Analysis, and that **deletes** that Project's
+  narrative. So a Project with no narrative left gets a fresh one generated
+  first — one extra provider call per Project, each logged. A provider
+  failure never fails the Batch Run itself; the run's own result stands.
+- **Suppress new plot / output tabs** stops the output area opening a tab
+  for every figure and every saved file. A Batch Run touches each replicate
+  of each Project, so unchecked it can bury the Output tab under hundreds of
+  them. The **Output** and **Errors** tabs keep updating as usual, and every
+  figure and artifact is still written to disk — only the tabs are skipped.
+  The switch applies to all runs while it is checked, not only Batch Runs.
 
 ## How the script resolves, per Project
 

@@ -295,7 +295,8 @@ class QcViewerWindow(QMainWindow):
             return f"Loaded {path.name}"
 
         worker = TaskWorker("Load experiment", _work)
-        worker.log_text.connect(self._log.append_line)
+        ## Raw stdout chunks, not finished lines — see OutputLog.
+        worker.log_text.connect(self._log.append_stream)
         worker.finished_ok.connect(lambda _msg: self._on_project_loaded(path, loaded.get("exp")))
         worker.failed.connect(self._on_project_load_failed)
         worker.finished.connect(lambda: self._set_loading(False))

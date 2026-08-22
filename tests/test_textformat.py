@@ -133,9 +133,9 @@ def test_output_log_splits_a_multi_line_chunk(qapp):  # noqa: F811
     from pytrackinganalysis.ui import OutputLog
 
     log = OutputLog()
-    log.append_line("=== Experiment: MaxIRSetup ===\n"
-                    "Project : /tmp/p\n"
-                    "Data    : /tmp/d\n")
+    log.append_stream("=== Experiment: MaxIRSetup ===\n"
+                      "Project : /tmp/p\n"
+                      "Data    : /tmp/d\n")
     assert log.toPlainText().splitlines() == [
         "=== Experiment: MaxIRSetup ===",
         "Project : /tmp/p",
@@ -148,7 +148,7 @@ def test_output_log_keeps_blank_lines(qapp):  # noqa: F811
     from pytrackinganalysis.ui import OutputLog
 
     log = OutputLog()
-    log.append_line("a\n\nb\n")
+    log.append_stream("a\n\nb\n")
     assert log.toPlainText() == "a\n\nb"
 
 
@@ -159,9 +159,9 @@ def test_output_log_joins_a_line_split_across_chunks(qapp):  # noqa: F811
     from pytrackinganalysis.ui import OutputLog
 
     log = OutputLog()
-    log.append_line("Saved: /tmp/out")
+    log.append_stream("Saved: /tmp/out")
     assert log.toPlainText() == "Saved: /tmp/out"      # visible right away
-    log.append_line(".pdf\n")
+    log.append_stream(".pdf\n")
     assert log.toPlainText() == "Saved: /tmp/out.pdf"  # joined, not doubled
 
 
@@ -171,7 +171,36 @@ def test_output_log_formats_each_line_of_a_chunk_on_its_own(qapp):  # noqa: F811
     from pytrackinganalysis.ui import OutputLog
 
     log = OutputLog()
-    log.append_line("Project: /tmp/somewhere\nT_0    0.987654    0.000123\n")
+    log.append_stream("Project: /tmp/somewhere\nT_0    0.987654    0.000123\n")
     html = log.document().toHtml()
     assert "JetBrains Mono" in html
     assert "0.9877" in html and "0.987654" not in html
+
+
+def test_append_line_keeps_separate_messages_separate(qapp):  # noqa: F811
+    """Most callers hand over a finished message with no trailing newline.
+    Treating that as "more to come" glued consecutive log messages into one
+    run-on line."""
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_line("Project: /tmp/x")
+    log.append_line("[validate] project.yaml is valid.")
+    log.append_line("[validate] 3 file(s) checked.")
+    assert log.toPlainText().splitlines() == [
+        "Project: /tmp/x",
+        "[validate] project.yaml is valid.",
+        "[validate] 3 file(s) checked.",
+    ]
+
+
+def test_a_complete_message_never_joins_a_half_streamed_line(qapp):  # noqa: F811
+    """A direct message arriving mid-stream closes the partial line rather
+    than being appended to it."""
+    from pytrackinganalysis.ui import OutputLog
+
+    log = OutputLog()
+    log.append_stream("half")
+    log.append_line("[warn] interrupting message")
+    assert log.toPlainText().splitlines() == [
+        "half", "[warn] interrupting message"]

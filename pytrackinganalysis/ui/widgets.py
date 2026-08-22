@@ -322,20 +322,37 @@ class OutputLog(QPlainTextEdit):
         self._pending_shown = False
 
     def append_line(self, text: str) -> None:
-        """Append *text*, which may be one line, many, or a partial chunk.
+        """Append *text* as one or more COMPLETE lines.
 
-        Writes arrive straight from a redirected ``stdout``, so one call can
-        carry a whole multi-line table, a bare newline, or the front half of
-        a line. ``appendHtml`` renders its argument as a single HTML
-        fragment, where newlines are just whitespace — passing a multi-line
-        chunk to it ran every row of a table together on one line. Split
-        here so each line becomes its own block.
+        For callers that hand over a finished message — most of the app.
+        A trailing newline is optional and never treated as "more to come",
+        so two consecutive messages cannot run together. Embedded newlines
+        still split into separate blocks: ``appendHtml`` renders its argument
+        as a single HTML fragment, where a newline is mere whitespace, which
+        is what ran whole tables together on one line.
         """
         if not text:
             return
-        # Re-attach anything held back from the previous chunk, then peel off
-        # the new trailing fragment (empty when the chunk ends in a newline).
-        lines = (self._pending + text).split("\n")
+        self._flush_pending()
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()          # a trailing newline closes, it does not add
+        for line in lines:
+            self._append_one(line)
+        self._after_append(text)
+
+    def append_stream(self, chunk: str) -> None:
+        """Append a raw chunk from a redirected ``stdout``.
+
+        Unlike :meth:`append_line` a chunk has no line discipline: ``print``
+        writes its text and its terminator separately, so one call can carry
+        several lines, a bare newline, or the front half of a line. The
+        trailing fragment is shown immediately and rewritten in place when
+        the rest of it arrives, so nothing appears twice.
+        """
+        if not chunk:
+            return
+        lines = (self._pending + chunk).split("\n")
         self._pending = lines.pop()
         if self._pending_shown:
             self._drop_last_block()
@@ -345,6 +362,15 @@ class OutputLog(QPlainTextEdit):
         if self._pending:
             self._append_one(self._pending)
             self._pending_shown = True
+        self._after_append(chunk)
+
+    def _flush_pending(self) -> None:
+        """Close off a partial streamed line so a complete message from
+        somewhere else cannot be glued onto its end."""
+        self._pending = ""
+        self._pending_shown = False
+
+    def _after_append(self, text: str) -> None:
         self.moveCursor(QTextCursor.MoveOperation.End)
         self.ensureCursorVisible()
         self.line_appended.emit(text)
