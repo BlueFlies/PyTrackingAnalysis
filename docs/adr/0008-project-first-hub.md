@@ -46,19 +46,49 @@ between replicates.
   **Create config…** offers to write the `project.yaml` on the *parent*, so the
   experiment becomes a replicate — writing it in place would create a Project
   with zero replicates and nothing to load.
-- **Scripts wait on a load too.** Experiment Scripts run against the loaded
-  experiment, so the Scripts tile dims while nothing is loaded even when the
-  selected config lists recipes. Project Scripts are unaffected: they live in
-  the Project panel's Analysis card.
+- **The selection names a Project; the loaded experiment is the other
+  context.** `_project_dir` used to be one pointer doing two jobs — "which
+  Project am I in" and "which experiment directory do the experiment-level
+  buttons act on" — and the double-click moved it *down* into the replicate.
+  It no longer moves: choosing a replicate directory selects the Project that
+  contains it, and every experiment-level action (the canonical config,
+  Experiment Scripts, Validate YAML, Open analysis/qc folder, the QC viewer)
+  takes its directory from the loaded experiment instead.
+- **There is no "Up to project" button**, because there is no drill-in state
+  to return from. It used to move the selection back up while leaving the
+  experiment loaded, which silently retargeted those same actions at the
+  Project root — the Scripts list emptied, Open analysis folder opened the
+  wrong folder, Validate YAML reported "no tracking config here" — with the
+  tile still naming the loaded replicate. Splitting the two contexts removes
+  the state rather than the button alone.
+- **Scripts wait on a load too.** Experiment Scripts are read from the loaded
+  experiment's config, so with nothing loaded there is nothing to list and the
+  Scripts tile dims with "load one to run scripts". Project Scripts are
+  unaffected: they live in the Project panel's Analysis card.
+- **Run all experiments unloads first.** It rewrites every replicate's
+  analysis, the loaded one included, so an in-memory `Experiment` would
+  survive as a stale copy of results that no longer exist. The run leaves
+  nothing loaded; the user double-clicks a replicate afterwards if they want
+  one. Other project actions do not unload — they read, they don't overwrite.
 
 ## Consequences
 
 - Mutual exclusivity is unnecessary. There is one subject at a time because
-  there is one way to change it, and drilling into a replicate keeps the
-  enclosing Project's table and project-level actions available — the
-  workflow ADR-0007's "effective project" already supported.
+  there is one way to change it, and loading a replicate leaves the Project's
+  table and project-level actions available throughout.
+- Batch Tools got safer for free. Rename/Convert/Copy-YAML/Combine iterate the
+  *subdirectories of the selection*, so with the old drill-in they would have
+  operated on a replicate's own `data/` and `analysis/` folders. The selection
+  can no longer be a replicate.
+- ADR-0007's "effective project" — the selection, or its parent when the
+  selection was a replicate — is gone. The selection is normalized to a
+  Project root on the way in (`_set_project_dir`), so `_project_root()` never
+  climbs, and no caller has to ask which of the two it is holding.
 - The Python API is unchanged: `Experiment(directory)` still loads a
-  standalone experiment. This is a Hub-level constraint, not a domain one.
+  standalone experiment, and `_load_experiment(directory=None)` still falls
+  back to the selection for that path. This is a Hub-level constraint, not a
+  domain one.
 - Any test that double-clicks a replicate row now triggers a real load. Tests
-  that only care about navigation must stub `_load_experiment`; a failed load
-  calls `_warn`, which is modal and will hang a headless run.
+  that only care about navigation must stub `_load_experiment` (which takes
+  the target directory); a failed load calls `_warn`, which is modal and will
+  hang a headless run.

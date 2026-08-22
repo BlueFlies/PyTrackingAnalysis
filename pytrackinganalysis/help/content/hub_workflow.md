@@ -1,52 +1,56 @@
 # Analysis Hub workflow
 
-The Hub is the day-to-day driver: load an experiment, run analyses, view
-plots, run scripts. Its layout is a **tile strip** across the top — Project ·
-Analyze · Plots · Scripts · AI — over a **full-width output
-area**. Each tile shows live status; clicking it (or its sidebar entry) opens
-an anchored **panel** with all the controls. One panel opens at a time; Esc
-or clicking elsewhere closes it, and launching a task closes it automatically
-so the streaming output is visible. Dimmed tiles still open — their panel
-holds the control that fixes the missing state.
+The Hub is the main day-to-day surface. It is Project-first: open a Project, manage its replicates, double-click one replicate to load it, then run experiment-level analysis or project-level combined results.
 
-Right of the AI tile, the **status readout** always shows what is open: the
-project's name and type, its path, the replicate and analysis counts, and the
-loaded experiment (or "none loaded"). Hover it for the design factors.
+## Layout
 
-## The panels
+Across the top is a live tile strip: **Project**, **Analyze**, **Plots**, **Scripts**, and **AI**. Tiles show status only. Click a tile, or the matching sidebar item, to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Starting a task closes the panel so the streaming output remains visible.
 
-1. **Project** — two cards, and the only way into an experiment.
-   **Create/Load** chooses the folder and edits its `project.yaml` (**Edit
-   config…**, or **Create config…** when the file is missing).
-   **Analysis** holds the replicates table — **double-click a row to load
-   that replicate** — the project-level actions (Run all, Build combined
-   analysis, Project report, Plot editor, AI narrative), and the Project
-   **Script** picker (the built-in **Standard pipeline** is always
-   available). **Create project…** (also in the sidebar) writes or edits a
-   `project.yaml` for a directory you choose.
-2. **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report**,
-   **Summarize**, **Run pairwise comparisons**. Tasks run in the background;
-   logs stream to **Output**. Run Analysis and Create PDF Report first ask
-   for optional **run notes** (saved as `<Experiment>_Notes.txt`, rendered
-   near the top of the report).
-3. **Plots** — buttons for plots valid for the loaded tracking type. Each
-   click adds an output tab. Toggle **Interactive plots** in the top bar for
-   live zoom/pan.
-4. **Scripts** — run saved experiment recipes from the YAML `scripts:`
-   section. They run against the loaded experiment, so this tile stays dimmed
-   until one is loaded.
-5. **AI** — request the AI Summary (key-gated).
-6. **Tools** (sidebar only) — validate YAML, open `analysis/` / `qc/`,
-   Batch tools, clear matplotlib cache.
+Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
+
+The status readout to the right of the AI tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
+
+## Project panel
+
+The Project panel contains two cards.
+
+**Create/Load** chooses the folder, reloads it, and edits `project.yaml`. The config button reads **Edit config...** when the selected folder is already a Project and **Create config...** when it is not. If the selected folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
+
+When a loaded replicate is selected, **Up to project** returns the folder field to the enclosing Project.
+
+**Analysis** is the main Project workspace. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
+
+Project actions:
+
+- **Experiment configs...** - create or edit each replicate's `tracking_config.yaml`.
+- **Add experiment...** - create a new replicate directory and config from the Project design.
+- **Run all experiments** - run analysis, QC, and reports for every configured replicate.
+- **Build combined analysis** - stack filtered summaries and write pooled plus mixed-model statistics.
+- **Plot editor...** - curate pooled publication figures.
+- **AI narrative...** - create an optional Project-level AI narrative from the Combined Analysis.
+- **Project report** - build the Project PDF report.
+- **Script** picker - run the built-in **Standard pipeline** or saved Project Scripts.
+
+## Experiment panels
+
+After a replicate is loaded:
+
+- **Analyze** runs the loaded experiment's analysis, QC-only task, report build, summary export, or pairwise comparisons. Run Analysis and Create PDF Report ask for optional run notes.
+- **Plots** shows only plots valid for the loaded tracking type. The top-bar **Interactive plots** toggle controls whether plot tabs are live canvases or faster static PNGs.
+- **Scripts** runs experiment scripts from the loaded replicate's `scripts:` block.
+- **AI** creates an optional AI Summary for the loaded experiment, when an AI provider key is available.
 
 ## Faceting
 
-When **Faceted** is checked (Analyze panel), Summarize / Pairwise / Plots use
-the experiment's `facet_cutoffs` (minute phases).
+When **Faceted** is checked in the Analyze panel, summaries, pairwise comparisons, and plot buttons use the loaded experiment's `facet_cutoffs`. Button labels add `(facet)` so the output mode is visible before you click.
 
-## The output area
+## Tools
 
-- **Output** — chronological log.
-- **Errors** — collects warnings/errors only; shows an unseen count.
-- Every plot or artifact opens as an additional closable tab; **Clear
-  plots** closes them all (Output and Errors stay).
+The **Tools** panel lives in the sidebar only. It can open `analysis/` or `qc/`, validate the loaded replicate's YAML, open Batch tools for parent-folder cleanup, and clear the matplotlib cache.
+
+## Output area
+
+- **Output** is the chronological log.
+- **Errors** collects warnings and failures, with an unseen count when issues arrive in the background.
+- Plots and surfaced text/CSV/PNG artifacts open as additional closable tabs.
+- **Clear plots** closes artifact and plot tabs but keeps Output and Errors.

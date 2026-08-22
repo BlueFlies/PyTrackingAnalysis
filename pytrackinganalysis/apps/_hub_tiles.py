@@ -5,8 +5,9 @@ across the top of the Hub; all of a tile's controls live in its
 :class:`TilePanel` — an anchored overlay that drops down under the tile,
 hosting the full existing Card widgets. Panels are persistent hidden children
 of the Hub's central widget (state survives open/close; ``findChildren``
-keeps working for tests), one open at a time, closed by Esc, click-away, or
-a background task starting.
+keeps working for tests), one open at a time. A panel closes when its own tile
+is clicked again, when another tile takes its place, on a click anywhere in the
+background, or on Esc — a running task leaves it alone.
 """
 
 from __future__ import annotations

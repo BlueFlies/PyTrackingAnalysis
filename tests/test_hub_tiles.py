@@ -59,7 +59,7 @@ def test_project_tile_reflects_state(hub, qapp, tmp_path):  # noqa: F811
     assert "Proj" in tile.summary_text()
     assert "2 replicates" in tile.summary_text()
 
-    # Drilling into a replicate keeps the project tile lit (effective root).
+    # Choosing a replicate directory selects the Project it belongs to.
     hub._set_project_dir(str(tmp_path / "Rep1"))
     assert not hub._tiles["project"].is_dimmed()
     assert "Proj" in hub._tiles["project"].summary_text()
@@ -90,17 +90,51 @@ def test_sidebar_items_open_matching_panels(hub):
     hub._close_panel()
 
 
-def test_launching_a_task_closes_the_open_panel(hub, qapp):
+def test_a_panel_survives_running_a_task(hub, qapp):
+    """A panel closes on a click, not on a task: running one action then
+    another from the same panel must not make it vanish underneath."""
     import time
 
     hub._open_panel("analyze")
     assert hub._panels["analyze"].isVisible()
     hub._spawn_task("noop", lambda: "done")
-    assert hub._open_panel_key is None        # closed at launch, not at finish
+    assert hub._open_panel_key == "analyze"
+    assert hub._panels["analyze"].isVisible()
+
     deadline = time.monotonic() + 10
     while hub._worker is not None and time.monotonic() < deadline:
         qapp.processEvents()
     assert hub._worker is None
+    assert hub._open_panel_key == "analyze"   # still open when it finishes
+
+
+def test_a_click_on_the_output_closes_the_panel_but_the_strip_does_not(
+        hub, monkeypatch):
+    """The three ways out: the same tile, another tile, or a click on the
+    background. Clicks on the strip or inside the panel are not one of them."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtWidgets import QApplication
+
+    class _Press:
+        def globalPosition(self):
+            return QPointF(0, 0)
+
+    def _clicking(widget):
+        monkeypatch.setattr(QApplication, "widgetAt",
+                            staticmethod(lambda _p: widget))
+
+    hub._open_panel("analyze")
+    _clicking(hub._panels["analyze"])         # inside the panel: stays open
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key == "analyze"
+
+    _clicking(hub._tiles["plots"])            # on the strip: the tile decides
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key == "analyze"
+
+    _clicking(hub._log)                       # the output area: closes
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key is None
 
 
 def test_cards_live_inside_panels_and_stay_functional(hub):
@@ -166,8 +200,11 @@ def test_project_script_controls_stay_on_one_row(hub):
     assert buttons == ["Run script", "Edit scripts…"]
 
 
-def test_scripts_tile_waits_for_a_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811
-    """A found recipe is not a runnable one — Run Script needs the experiment."""
+def test_experiment_scripts_come_from_the_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811
+    """Experiment Scripts run against the loaded experiment, so that is where
+    the list comes from — selecting the Project offers none."""
+    from types import SimpleNamespace
+
     import yaml
 
     _make_project(tmp_path)
@@ -176,12 +213,19 @@ def test_scripts_tile_waits_for_a_loaded_experiment(hub, qapp, tmp_path):  # noq
     cfg["scripts"] = [{"name": "nightly", "steps": []}]
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-    # Selected but never loaded: the recipe is listed, the tile still waits.
-    hub._set_project_dir(str(tmp_path / "Rep1"))
+    hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
-    assert hub._scripts_combo.count() == 1
+    assert hub._scripts_combo.count() == 0
     assert hub._tiles["scripts"].is_dimmed()
     assert "load" in hub._tiles["scripts"].summary_text()
+
+    hub._exp = SimpleNamespace(
+        project_directory=str(tmp_path / "Rep1"),
+        arena=SimpleNamespace(experiment_name="Rep1"))
+    hub._refresh_scripts()
+    hub._refresh_tiles()
+    assert hub._scripts_combo.count() == 1
+    assert not hub._tiles["scripts"].is_dimmed()
 
 
 def test_create_config_on_an_experiment_folder_targets_the_parent(
@@ -247,14 +291,16 @@ def test_double_clicking_a_replicate_loads_it(hub, qapp, tmp_path, monkeypatch):
     qapp.processEvents()
     loaded: list = []
     monkeypatch.setattr(type(hub), "_load_experiment",
-                        lambda self: loaded.append(str(self._project_dir)))
+                        lambda self, directory=None: loaded.append(str(directory)))
 
     row = next(r for r in range(hub._exp_table.rowCount())
                if hub._exp_table.item(r, 0).text() == "Rep2")
     hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
 
-    assert str(hub._project_dir).endswith("Rep2")
     assert loaded == [str(tmp_path / "Rep2")]
+    # The row that was double-clicked is the load target; the selection is
+    # still the Project, so its actions keep working on the whole set.
+    assert str(hub._project_dir) == str(tmp_path)
 
 
 def test_create_project_lives_on_the_project_card(hub):
@@ -263,6 +309,24 @@ def test_create_project_lives_on_the_project_card(hub):
 
     labels = [b.text() for b in hub._cards["project"].findChildren(QPushButton)]
     assert any("Create project" in t for t in labels)
+
+
+def test_one_load_action_and_no_reload(hub, monkeypatch):
+    """Reloading a project WAS browsing to it and opening it again, so the
+    card offers the one action: Load…, wired to the directory picker."""
+    from PyQt6.QtWidgets import QPushButton
+
+    buttons = {b.text(): b for b in
+               hub._cards["project"].findChildren(QPushButton)}
+    assert "Load…" in buttons
+    assert not [t for t in buttons if "Reload" in t or "Browse" in t]
+    assert not hasattr(hub, "_reload_project")
+
+    picked: list = []
+    monkeypatch.setattr(type(hub), "_pick_project_dir",
+                        lambda self: picked.append(True))
+    buttons["Load…"].click()
+    assert picked == [True]
 
 
 def test_project_panel_headers_are_distinct(hub):

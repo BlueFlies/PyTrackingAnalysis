@@ -1,24 +1,26 @@
-> The batch mode described here has been absorbed into **Projects**: add a `project.yaml` to the parent directory (Hub → New project…) and use the Project view's **Run all experiments** instead.
+# Legacy batch and migration
 
-# Batch experiments
+The old Hub **Batch experiments** mode has been retired. The Project workflow replaces it with a clearer model: a parent folder has `project.yaml`, each subdirectory is a replicate Experiment Directory, and Project actions run or combine the set.
 
-In **Batch experiments** mode the chosen project directory is treated as a **parent folder**: every immediate subdirectory is run as its own independent experiment. Click **Run batch script** (the Load button changes its label in batch mode) to start.
+## What to use now
 
-## Each subfolder needs
+- **Run all experiments** runs the full analysis and per-replicate report for every configured replicate.
+- **Build combined analysis** pools the already-filtered replicate summaries into the Project `analysis/` folder and writes pooled plus mixed-model statistics.
+- **Project report** builds the Project-level PDF.
+- **Standard pipeline** in the Project Script picker runs the usual full Project sequence with one click.
 
-- a `tracking_config.yaml` (any capitalisation) with the usual experiment configuration, and
-- inside that YAML, a `scripts:` entry containing a script named **`batch`** (case-insensitive).
+## Migrating an old batch parent
 
-## What runs
+1. Open the old parent folder in the Hub.
+2. Use **Create project** or **Create config...** to write `project.yaml`.
+3. Confirm the shared design in the Project editor. The dialog can infer it from the first existing replicate config.
+4. Use **Experiment configs...** for any subfolder that has data but no `tracking_config.yaml`.
+5. Use **Run all experiments** or the built-in **Standard pipeline**.
 
-For each subfolder, only its script named `batch` is executed, with that subfolder as the project directory. A `load_experiment` step with `path: "."` loads the subfolder’s own data. Scripts are authored in the Script Editor (Config Editor → Script Editor) and saved into each subfolder’s YAML.
+## Existing `batch` scripts
 
-## Skips and failures
+Old per-folder scripts named `batch` can still run. Create a Project Script containing `run_in_experiments` with `script: batch`. It resolves the script from the Project's central `experiment_scripts:` first, then falls back to each replicate's own `tracking_config.yaml`.
 
-- No `tracking_config.yaml` → subfolder is skipped with a warning in the Output tab.
-- YAML has no script named `batch` → skipped with a warning.
-- A script error in one subfolder is logged; the remaining subfolders still run.
+## Python batch helper
 
-When finished, a summary line reports how many subfolders ran, were skipped, or failed. Figures the scripts produce open as plot tabs.
-
-**Batch tools** (Tools panel, in the sidebar) helps prepare parent folders: convert to `data/` layout, rename subdirs, copy YAML, combine summary CSVs.
+The Python API still includes `batch_analyze(parent_folder)`. It scans immediate subdirectories and runs the fixed experiment pipeline in each one. It does not need `project.yaml`, and it does not build Combined Analysis or a Project Report.

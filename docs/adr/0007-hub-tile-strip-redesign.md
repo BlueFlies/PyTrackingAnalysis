@@ -1,5 +1,10 @@
 # The Hub becomes a tile strip with anchored panels
 
+> Partly superseded by ADR-0008: the Experiment tile is gone (five tiles), and
+> the "effective project" below — the selection, or its parent while a
+> replicate was selected — was replaced by a selection that always names a
+> Project, with the loaded experiment as a separate context.
+
 ## Context
 
 The Hub's layout was a left sidebar plus a ~450px scrollable column of eight

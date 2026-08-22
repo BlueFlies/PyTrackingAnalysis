@@ -24,7 +24,7 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "getting_started",
         "Getting started",
-        "How to set up a project and run your first analysis.",
+        "Set up a Project, configure replicates, and run the first analysis.",
         "getting_started.md",
     ),
     HelpTopic(
@@ -34,9 +34,15 @@ TOPICS: tuple[HelpTopic, ...] = (
         "project_structure.md",
     ),
     HelpTopic(
+        "project_yaml",
+        "Project YAML",
+        "What project.yaml owns, what stays in each tracking_config.yaml, and how validation works.",
+        "project_yaml.md",
+    ),
+    HelpTopic(
         "config_overview",
         "Config file overview",
-        "What belongs in tracking_config.yaml and how to create one.",
+        "What belongs in a replicate tracking_config.yaml.",
         "config_overview.md",
     ),
     HelpTopic(
@@ -54,13 +60,25 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "hub_workflow",
         "Analysis Hub workflow",
-        "Load, analyze, plots, stats, and reports in the Hub.",
+        "Project-first Hub tiles, panels, replicate loading, and outputs.",
         "hub_workflow.md",
     ),
     HelpTopic(
+        "project_actions",
+        "Project actions",
+        "Run all replicates, build Combined Analysis, make Project reports, and use Project scripts.",
+        "project_actions.md",
+    ),
+    HelpTopic(
+        "plot_editor",
+        "Plot Editor",
+        "Project-level publication figures, plot_specs.yaml, styles, and vector exports.",
+        "plot_editor.md",
+    ),
+    HelpTopic(
         "batch_experiments",
-        "Batch experiments",
-        "Run a batch script across every experiment subfolder.",
+        "Legacy batch migration",
+        "How retired batch workflows map to Projects and Project Scripts.",
         "batch_experiments.md",
     ),
     HelpTopic(
@@ -72,7 +90,7 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "scripts_overview",
         "Scripts and Script Editor",
-        "Saved recipes, the visual editor, and the special batch script.",
+        "Experiment Scripts, Project Scripts, and the visual editor.",
         "scripts_overview.md",
     ),
     HelpTopic(
@@ -90,7 +108,7 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "outputs",
         "Outputs",
-        "What appears under analysis/ and qc/.",
+        "Experiment and Project artifacts under analysis/, qc/, and figures/.",
         "outputs.md",
     ),
 )

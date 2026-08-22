@@ -1,22 +1,27 @@
 # Batch tools
 
-Open from the Hub **Tools → Batch tools**. Operates on **immediate subdirectories** of the current project (parent) folder.
+Open from the Hub sidebar: **Tools -> Batch tools**. These are housekeeping tools for immediate subdirectories of the currently selected folder, usually a Project root. They do not replace the Project workflow.
 
 ## Convert subdirectories
 
-For each subdirectory, create a `data/` folder and move every non-YAML file at the top level into it. Use this to prep folders that still have DTrack exports at the root.
+For each subdirectory, create a `data/` folder and move every non-YAML top-level file into it. Use this when old DTrack exports sit at the replicate root instead of inside `data/`.
 
 ## Rename helpers
 
-- **Prepend / Append** — add a substring to every subdirectory name.
-- **Remove** — strip a substring from every subdirectory name.
+- **Prepend to subdir names** adds a substring to the start of every subdirectory name.
+- **Append to subdir names** adds a substring to the end of every subdirectory name.
+- **Remove from subdir names** removes a substring from every subdirectory name.
+
+The tool plans the renames first and skips collisions.
 
 ## Combine summary CSVs
 
-Stack every `analysis/*_Summary.csv` and `*_Summary_Facet.csv` under each subdirectory into `<project>_combined.csv` and `<project>_combined_facet.csv` at the parent root. Adds a `subdirectory` column for origin.
+Stack every `analysis/*_Summary.csv` and `analysis/*_Summary_Facet.csv` found under each subdirectory into `<folder>_combined.csv` and `<folder>_combined_facet.csv` at the current folder root. A `subdirectory` column records the source.
+
+This is a legacy convenience output. For Project statistics, reports, and publication figures, use **Build combined analysis** in the Project panel.
 
 ## Copy YAML to subdirs
 
-Pick a YAML from the parent directory and copy it into every subdirectory (overwrites if present). Useful when all trials share one design / `batch` script template — then edit per folder only if needed.
+Pick a YAML file from the current folder and copy it into every immediate subdirectory, overwriting any file with the same name.
 
-After preparing folders, use Hub **Load → Batch experiments → Run batch script**.
+For new Project work, prefer **Experiment configs...**, which scaffolds each replicate config from `project.yaml`'s design. Use Copy YAML only when you deliberately want the same hand-prepared file in every subdirectory.

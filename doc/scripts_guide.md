@@ -118,24 +118,23 @@ A typical everyday recipe — load, drop bad trackers, analyse, report:
 
 1. Open the Script Editor, click **new**, and name the script (e.g.
    `full-run`).
-2. Double-click **Load experiment** in the palette. Leave *Project dir* as
-   `.` — it resolves to whatever project the script runs against.
+2. Double-click **Load experiment** in the palette. Leave the path as `.` -
+   it resolves to the Experiment Directory the script runs against.
 3. Double-click **Filter trackers by quality**; in the Inspector set
    `min_high_quality` to `0.9`.
 4. Double-click **Run Full Analysis**; leave *Faceted* checked and *cutoffs*
-   blank to inherit the project's `facet_cutoffs`.
+   blank to inherit the experiment's `facet_cutoffs`.
 5. Double-click **Create PDF Report**.
 6. Click **Save**.
 
-The script now appears in the Hub's **Scripts** card (click the Project
-card's **Reload** if the Hub was already open), ready to run.
+The script now appears in the Hub's **Scripts** tile after that replicate is
+loaded. Click **Reload** in the Project panel if the Hub was already open.
 
-**Rule of thumb: start every script with `Load experiment`.** Steps that need
-an experiment raise *"no experiment loaded — add a 'Load experiment' step
-first"* otherwise. The only exception is a script you always run from the Hub
-*after* loading an experiment there — a script without a load step reuses the
-Hub's currently-loaded experiment (see §7). Scripts run across replicates always
-start from nothing, so for them the load step is mandatory.
+**Rule of thumb: start standalone experiment scripts with `Load experiment`.**
+Steps that need an experiment raise *"no experiment loaded — add a 'Load
+experiment' step first"* otherwise. The exceptions are scripts you always run
+from the Hub after loading an experiment, and scripts run through
+`run_in_experiments`; both receive a pre-loaded experiment.
 
 ---
 
@@ -145,7 +144,7 @@ start from nothing, so for them the load step is mandatory.
 
 | Action | Key | Parameters | What it does |
 |--------|-----|------------|--------------|
-| **Load experiment** | `load_experiment` | `path` (default `.`), `force_preprocessing` (default off) | Loads the experiment from a project directory (`data/*.xlsx` + `tracking_config.yaml`) and makes it the current experiment for all later steps. `path` of `.` (or blank) resolves to the script's own directory — the loaded experiment's dir, or the replicate being processed in a `run_in_experiments` run. `force_preprocessing` recomputes cached nearest-neighbour preprocessing. |
+| **Load experiment** | `load_experiment` | `path` (default `.`), `force_preprocessing` (default off) | Loads the experiment from an Experiment Directory (`data/*.xlsx` + `tracking_config.yaml`) and makes it the current experiment for all later steps. `path` of `.` (or blank) resolves to the script's own directory — the loaded experiment's dir, or the replicate being processed in a `run_in_experiments` run. `force_preprocessing` recomputes cached nearest-neighbour preprocessing. |
 
 ### QC / filtering
 

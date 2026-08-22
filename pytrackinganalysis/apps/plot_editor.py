@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import pubfigures as pf
+from ..help import HelpButton, make_topbar_help_button
 from ..ui import TopBar, app_icon, apply_theme
 from ..ui import settings as ui_settings
 
@@ -187,7 +188,9 @@ class PlotEditorWindow(QMainWindow):
         central = QWidget()
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(TopBar("Plot Editor"))
+        top_bar = TopBar("Plot Editor")
+        top_bar.add_right(make_topbar_help_button(self, topic_id="plot_editor"))
+        outer.addWidget(top_bar)
 
         bar = QHBoxLayout()
         bar.setContentsMargins(10, 6, 10, 6)
@@ -223,6 +226,9 @@ class PlotEditorWindow(QMainWindow):
         bar.addWidget(self.reset_btn)
 
         bar.addStretch()
+        bar.addWidget(
+            HelpButton("plot_editor", tooltip="Plot Editor and publication figures")
+        )
         save_svg = QPushButton("Save SVG…")
         save_svg.clicked.connect(lambda: self._save_figure("svg"))
         save_pdf = QPushButton("Save PDF…")

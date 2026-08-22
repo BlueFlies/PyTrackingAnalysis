@@ -217,7 +217,19 @@ def qapp():
     return app
 
 
-def test_hub_project_view_populates_and_drills_in(qapp, tmp_path):
+class _FakeLoadedExperiment:
+    """Stands in for a loaded Experiment: the Hub routes experiment-level
+    actions by its directory and names it by its arena (ADR-0008)."""
+
+    def __init__(self, directory):
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        self.project_directory = str(directory)
+        self.arena = SimpleNamespace(experiment_name=Path(directory).name)
+
+
+def test_hub_project_view_populates_and_marks_the_loaded_replicate(qapp, tmp_path):
     from pytrackinganalysis.apps.hub import HubWindow
 
     _make_project(tmp_path)
@@ -234,12 +246,13 @@ def test_hub_project_view_populates_and_drills_in(qapp, tmp_path):
     # offers a tracking-config picker at all.
     assert win._config_path() is None
 
-    # Drilling into a replicate keeps the project view up (anchored to the
-    # enclosing Project) with the current replicate's row selected.
-    win._set_project_dir(str(tmp_path / "Rep1"))
-    assert not card.isHidden()
+    # The LOADED experiment marks its row — the selection stays on the
+    # Project, so it can no longer be what the highlight follows.
+    win._exp = _FakeLoadedExperiment(tmp_path / "Rep1")
+    win._refresh_project_view()
     selected = win._exp_table.selectedItems()
     assert selected and selected[0].text() == "Rep1"
+    win._exp = None
     win.close()
 
 
@@ -319,42 +332,80 @@ def test_hub_sidebar_has_both_creation_flows(qapp, tmp_path):
     win.close()
 
 
-def test_hub_project_context_survives_drill_in(qapp, tmp_path, monkeypatch):
+def test_the_selection_never_leaves_the_project(qapp, tmp_path, monkeypatch):
+    """The Project is the selection; the loaded experiment is the other,
+    separate context. So there is no drilling in and nothing to come back
+    from — no 'Up to project' button exists."""
     from pytrackinganalysis.apps.hub import HubWindow
 
     _make_project(tmp_path)
-    # The table double-click loads the replicate (ADR-0008); this test is
-    # about the surviving Project context, so record the load instead.
     loaded: list = []
     monkeypatch.setattr(HubWindow, "_load_experiment",
-                        lambda self: loaded.append(str(self._project_dir)))
+                        lambda self, directory=None: loaded.append(str(directory)))
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
     card = win._cards["projectview"]
     assert not card.isHidden()
-    assert win._up_btn.isHidden()          # at project level: no up button
+    assert not hasattr(win, "_up_btn")
 
-    # Inside a replicate: the card STAYS up (enclosing project), project
-    # actions resolve to the parent, and the up button offers the root.
+    # Choosing a replicate directory selects the Project that contains it.
     win._set_project_dir(str(tmp_path / "Rep1"))
-    assert not card.isHidden()
+    assert str(win._project_dir) == str(tmp_path)
     assert win._exp_table.rowCount() == 2
-    assert not win._up_btn.isHidden()
-    assert "Proj" in win._up_btn.text()
     project = win._current_project()
     assert project is not None and project.name == "Proj"
 
-    # Double-clicking another row hops replicates directly (base = parent)
-    # and loads the one it hopped to.
+    # Double-clicking a row loads THAT replicate and leaves the selection
+    # where it was: the project-level actions never retarget.
     win._open_selected_replicate(win._exp_table.item(1, 0))
-    assert str(win._project_dir).endswith("Rep2")
     assert loaded == [str(tmp_path / "Rep2")]
-    assert not card.isHidden()
-
-    # Up returns the selected directory to the project root.
-    win._go_up_to_project()
-    assert win._up_btn.isHidden()
     assert str(win._project_dir) == str(tmp_path)
+    assert not card.isHidden()
+    win.close()
+
+
+def test_experiment_actions_follow_the_loaded_experiment(qapp, tmp_path):
+    """Experiment-level actions take their directory from the loaded
+    experiment, not from the selected directory (which is the Project)."""
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path)
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    # Nothing loaded: no experiment context at a Project root.
+    assert win._experiment_dir() is None
+    assert win._config_path() is None
+
+    win._exp = _FakeLoadedExperiment(tmp_path / "Rep1")
+    win._refresh_scripts()
+    assert win._experiment_dir() == tmp_path / "Rep1"
+    assert win._config_path() == tmp_path / "Rep1" / "tracking_config.yaml"
+    # …while the project-level context is untouched.
+    assert win._project_root() == tmp_path
+    win._exp = None
+    win.close()
+
+
+def test_run_all_experiments_leaves_nothing_loaded(qapp, tmp_path, monkeypatch):
+    """Run all re-analyzes every replicate underneath the loaded one, so the
+    in-memory experiment is dropped before the run rather than left stale."""
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path)
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+    win._exp = _FakeLoadedExperiment(tmp_path / "Rep1")
+    win._btn_run_analysis.setEnabled(True)      # as a real load leaves it
+
+    spawned: list = []
+    monkeypatch.setattr(HubWindow, "_spawn_task",
+                        lambda self, label, fn: spawned.append(label))
+    win._project_run_all()
+
+    assert spawned == ["Run all experiments"]
+    assert win._exp is None
+    assert not win._btn_run_analysis.isEnabled()   # no subject to analyze
     win.close()
 
 
@@ -433,7 +484,8 @@ def test_hub_plot_editor_launches_with_project_root(qapp, tmp_path, monkeypatch)
                         lambda args, **k: launched.append(args) or _Proc())
     win = hub_mod.HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
-    # Drill into a replicate, then use the Project card's Plot editor button:
+    # Choosing a replicate directory selects its Project, so the Analysis
+    # card's Plot editor button opens on the Project either way.
     win._set_project_dir(str(tmp_path / "Rep1"))
     card = win._cards["projectview"]
     btn = [b for b in card.findChildren(QPushButton)

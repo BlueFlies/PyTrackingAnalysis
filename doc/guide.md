@@ -694,7 +694,7 @@ bar, PlotDock) so the visual language is consistent across all of them.
 
 | Command | Window | Purpose |
 |---------|--------|---------|
-| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day driver — loads experiments, shows the Project view for a directory of replicates (run all, combined analysis, Project report), renders figures in a tabbed dock, launches Config + QC + Plot Editor |
+| `pytrack-hub` (or just `pytrack`) | Analysis Hub  | Day-to-day Project driver: manage replicates, load experiments, run analyses, build combined results, render figures in a tabbed dock, launch Config + QC + Plot Editor |
 | `pytrack-config` | Config Editor | Structured editor for `tracking_config.yaml` + visual Script Editor for saved recipes |
 | `pytrack-qc`     | QC Viewer     | Per-tracker data-quality table + XY / distance / quality-timeline plots |
 | `pytrack-plots`  | Plot Editor   | Publication figures (project-level): live-edit pooled plots' style and content, save vector output (SVG/PDF) for Illustrator |
@@ -705,12 +705,12 @@ bar, PlotDock) so the visual language is consistent across all of them.
 # With the environment active:
 pytrack                                  # Hub (shorthand)
 pytrack-hub                              # Hub
-pytrack-hub /path/to/MyExperiment        # Hub, pre-loaded project
+pytrack-hub /path/to/MyProject           # Hub, pre-loaded Project
 
 pytrack-config                           # Config Editor (opens last-used or ./tracking_config.yaml)
-pytrack-config /path/to/MyExperiment     # Config Editor, pre-loaded project YAML
+pytrack-config /path/to/MyExperiment     # Config Editor, pre-loaded tracking_config.yaml
 
-pytrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded project
+pytrack-qc /path/to/MyExperiment         # QC Viewer, pre-loaded experiment
 
 pytrack-plots /path/to/MyProject         # Plot Editor (Project directories only)
 
@@ -726,7 +726,7 @@ python -m pytrackinganalysis qc /path/to/Trial1
 
 **Desktop launcher / taskbar icon (Linux).** The apps set their own window
 icon (a fly in a tracking reticle), but on Wayland/GNOME the *taskbar* icon
-comes from a `.desktop` entry. Install entries for all three apps once per
+comes from a `.desktop` entry. Install entries for the desktop apps once per
 environment with:
 
 ```bash
@@ -789,8 +789,9 @@ The panels:
   no tracking-config picker here — `project.yaml` is fixed at the Project
   root, and each experiment's `tracking_config.yaml` lives one level down
   (use **Experiment configs…** in the Analysis card); QC is experiment-level
-  and opens on load.  When the loaded experiment is a replicate inside a
-  Project, an **Up to project** button returns to the enclosing Project.
+  and opens on load.  When the selected directory is a replicate inside a
+  Project, an **Up to project** button returns to the enclosing Project while
+  the Project view continues to show the replicate table and project actions.
 - **Analysis** (the second card in the Project panel; populated when the
   selected directory is — or sits inside — a Project) —
   the main working surface for replicates: a table with per-replicate status
@@ -895,10 +896,10 @@ the two-level Project scripting model (§8.3) — lives in
 ### 5.4 QC Viewer (`pytrack-qc`)
 
 - Left pane — **Trackers** table with columns `Tracker, HighQuality, NotFound,
-  Indiscernible, StartMinutes, EndMinutes`.  Rows auto-tint green (≥ cutoff)
-  or red (< cutoff) based on the **qc_cutoff** spinbox; a filter box narrows by
-  tracker name.
-- Right pane — `PlotDock` that auto-populates when you select a tracker with
+  Indiscernible, StartMinutes, EndMinutes`. Rows tint green, yellow, or red
+  against the experiment's QC cutoff, with the exact thresholds shown under
+  the table; a filter box narrows by tracker name.
+- Right pane — `PlotDock` that updates when you select a tracker with
   four tabs:
   - **XY trajectory** — RelX/RelY scatter coloured by time (viridis).
   - **Total distance over time** — cumulative `Dist_mm` vs `Minutes`.
@@ -1185,9 +1186,13 @@ replicate table plus the project actions, in the natural order —
    figures, the pooled + mixed statistics table, and a per-replicate summary
    table.
 
-Double-click a replicate row to open it as the current experiment (the
-regular Analyze/Plots/Scripts/AI cards then apply to it); **Up to project**
-returns to the Project view.
+Double-click a replicate row to open it as the current experiment; the
+regular Analyze/Plots/Scripts/AI cards then apply to it, while the project
+actions above keep applying to the whole set.  The two contexts are
+independent, so nothing has to be closed to get back to the Project — except
+after **Run all experiments**, which rewrites every replicate's analysis and
+therefore unloads the current experiment rather than leave it holding results
+that no longer exist.
 
 ### 8.3 Project Scripts (two-level scripting)
 
@@ -1256,10 +1261,10 @@ uv run pytrack-hub /absolute/path/to/project
 
 # Standalone Config Editor (with visual Script Editor):
 pytrack-config
-pytrack-config /path/to/project
+pytrack-config /path/to/ExperimentDirectory
 
 # Standalone QC Viewer:
-pytrack-qc /path/to/project
+pytrack-qc /path/to/ExperimentDirectory
 
 # Plot Editor (publication figures; Project directories only):
 pytrack-plots /path/to/MyProject

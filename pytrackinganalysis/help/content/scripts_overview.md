@@ -1,39 +1,34 @@
 # Scripts and Script Editor
 
-Scripts are saved, re-runnable analysis recipes: an ordered list of steps stored under `scripts:` in `tracking_config.yaml`.
+Scripts are saved, re-runnable recipes: an ordered list of steps such as load, filter, analyze, plot, and report. They can operate at either the experiment level or the Project level.
 
-## Concepts
+## Two script levels
 
-- A **script** is `{name: "...", steps: [...]}`.
-- A **step** is one action plus parameters, e.g. `{action: run_analysis, params: {facet: true}}`.
-- Steps run **top to bottom**. `load_experiment` sets the current experiment; later steps use it. Filters change the in-memory experiment only (not files on disk).
-- The name **`batch`** (any capitalisation) is reserved for Hub **Batch experiments** mode.
+- **Experiment Scripts** use experiment actions. They live in a replicate's `tracking_config.yaml` under `scripts:`, or centrally in a Project's `project.yaml` under `experiment_scripts:`.
+- **Project Scripts** use Project actions. They live in `project.yaml` under `scripts:` and can run all replicates, build combined analysis, render publication figures, create Project reports, and generate Project AI narratives.
+
+The levels do not mix. The bridge is the Project action `run_in_experiments`, which runs a named Experiment Script in every replicate.
 
 ## Opening the editor
 
-Config Editor → scripts icon in the top bar. Non-modal: keep Hub / Config open beside it. Plot actions offered depend on `global.tracking_type`.
+- For a replicate's Experiment Scripts, open its config in **Config Editor** and click the scripts icon in the top bar.
+- For Project Scripts or centrally held Experiment Scripts, use the Hub Project panel's **Edit scripts...** button. The editor opens on `project.yaml` and shows a level switcher.
 
-## Panes
+## Editor panes
 
-- **Palette** — double-click an action to append a step.
-- **Canvas** — ordered step cards; move / delete; click to select.
-- **Inspector** — parameters for the selected step.
-- **Preview + Save** — live YAML; Save writes all scripts back into the config file.
+- **Palette** - available actions, filtered by tracking type where needed. Double-click an action to append a step.
+- **Canvas** - ordered step cards with move, delete, and validation markers.
+- **Inspector** - parameter form for the selected step.
+- **Preview + Save** - live YAML preview; Save writes the script section back to the same YAML while preserving the rest of the file.
 
-## First script
+## Running experiment scripts
 
-1. New script (e.g. `full-run`).
-2. **Load experiment** with project dir `.`.
-3. Optional **Filter trackers by quality** (e.g. min high-quality 0.9).
-4. **Run Full Analysis** (faceted if desired).
-5. Optional **Create report** / plot steps.
-6. Save, then run from the Hub **Scripts** tile.
+The Hub's **Scripts** tile lists scripts from the loaded replicate's `tracking_config.yaml`. A script can begin with **Load experiment**, or it can reuse the experiment already loaded in the Hub. Scripts run by `run_in_experiments` receive each replicate pre-loaded, so they usually do not need their own load step.
 
-## Running from the Hub
+## Running Project scripts
 
-The **Scripts** panel lists recipes from the active YAML. **Run Script** / **Run All** streams logs to Output and figures to plot tabs.
+The Project panel's **Script** picker runs Project Scripts from `project.yaml`. The built-in **Standard pipeline** is always available: validate design, run all analyses, build combined analysis, render publication figures, and create the Project report.
 
+## Legacy batch scripts
 
-## Project scripts
-
-A Project's `project.yaml` holds **Project Scripts** (`scripts:`, project-level actions: run in experiments, combined analysis, publication figures, project report, AI narrative) and centrally-held **Experiment Scripts** (`experiment_scripts:`) that `run_in_experiments` executes in every replicate (each replicate's own scripts are the fallback). The level switcher in this editor's top bar picks which list you are editing. The Hub's Project panel runs them — including the built-in **Standard pipeline**.
+A script named `batch` is no longer a special Hub mode. It is still useful for migration: create a Project around the old parent folder, then run a Project Script with `run_in_experiments` and `script: batch`. The action first looks in `project.yaml`'s `experiment_scripts:`, then falls back to each replicate's own `tracking_config.yaml`.

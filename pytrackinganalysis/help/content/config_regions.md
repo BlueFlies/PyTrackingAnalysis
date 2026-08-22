@@ -1,22 +1,32 @@
 # Tracking and counting regions
 
+These tabs edit the replicate-specific parts of `tracking_config.yaml`.
+
 ## Tracking regions
 
-Each row is one tracking region (tube / well). Region names usually follow `T_0`, `T_1`, … matching DTrack `*_Data_1.csv` → `T_0`, etc.
+Each row is one tracking region, such as a tube or well. Region names usually follow DTrack numbering: `T_0`, `T_1`, and so on. `ExperimentName_Data_1.csv` maps to `T_0`; `ExperimentName_Data_2.csv` maps to `T_1`.
 
-- Assign a level for every experimental-design factor from the Global tab.
-- **X / Y multipliers** are `1` or `-1` to flip coordinates when arenas are mirrored.
-- **Generate N regions** bulk-fills `T_0` … `T_(N-1)`.
+For each row:
+
+- Pick one level for every design factor from the **Global** tab.
+- Set **X multiplier** and **Y multiplier** to `1` or `-1` when a mirrored arena needs its coordinates flipped.
+- Use **Generate N regions** for Custom layouts, or let a typed rig such as Valence on Arena Max or Colosseum lay out the required plate.
+
+In a Project, region-to-treatment assignments remain per replicate. The shared design says which factor levels exist; each recording still chooses which physical region belongs to which level.
 
 ## Counting regions
 
-Used by two-choice and counter assays. Each row maps a **treatment label** to one or more **aliases** found in the data’s counting-region column.
+Counting regions map DTrack strings to treatment labels. Each row has:
 
-Example: label `Light` with aliases `Light, LL, L` assigns the Light treatment whenever the file says Light, LL, or L.
+- **Treatment label** - the label used in summaries and plots.
+- **Aliases** - comma-separated strings that may appear in the data file.
+
+Example: label `Light` with aliases `Light, LL, L` assigns the Light treatment whenever DTrack reports any of those aliases.
 
 Rules:
 
-- Two-choice types need **exactly two** counting regions.
-- Every counting-region entry needs an `alias` key.
+- Two-choice types need exactly two counting-region names.
+- Each counting-region entry needs an `alias`.
+- In a Project, `project.yaml` enforces the counting-region names and their order; aliases remain per replicate because DTrack exports can differ.
 
-After editing regions, save the YAML and **Reload** / re-load the experiment in the Hub so analyses see the change.
+After saving, reload the replicate in the Hub so analyses use the updated config.

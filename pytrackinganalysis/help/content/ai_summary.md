@@ -1,50 +1,47 @@
 # AI summary
 
-The **AI Summary** is an optional, AI-written narrative (up to one page) of an
-experiment's analysis, embedded near the top of the report and clearly labeled
-as AI-generated. The AI *summarizes* the pipeline's analysis — it never
-performs its own.
+AI writing is optional. It summarizes results the pipeline already produced; it does not analyze raw tracking data or compute new statistics.
 
-## Enabling it
+There are two related outputs:
 
-The AI panel's action is offered only when a provider API key is available.
-Put one (or both) of these in a `.env` file — in the folder you launch the app
-from, or in `~/.config/pytrackinganalysis/.env` — or in the environment:
+- **Experiment AI Summary** - created from the Hub's **AI** tile for the loaded replicate and embedded in that replicate's PDF report.
+- **Project AI narrative** - created from the Project panel's **AI narrative...** action after Combined Analysis and embedded in the Project Report.
+
+Both are clearly labeled in reports as AI-generated.
+
+## Enabling AI
+
+Add one or both API keys to a `.env` file in the launch folder, to `~/.config/pytrackinganalysis/.env`, or to the environment:
 
 ```
 ANTHROPIC_API_KEY=...
 OPENAI_API_KEY=...
 ```
 
-Only the key's *presence* is checked up front; a revoked or mistyped key shows
-up as an error message when a summary is requested.
+The app checks only that a key exists before enabling the action. Bad keys, offline providers, or rate limits show an error when you request a summary.
 
-## Generating a summary
+## Experiment summary
 
-1. Load an experiment and run the analysis.
-2. Open the **AI** tile and click **AI summary…**, pick a provider and model, and
-   click **Generate**. The choice is remembered for next time. The model list
-   is fetched from each provider and cached; it refreshes itself when it is
-   more than a month old, and the refresh button next to the model dropdown
-   fetches it on demand. Offline, the saved list keeps working.
-3. The provider is sent the report's own content — cover metadata, figures
-   (as images), statistics, and the per-fly summary CSVs — never the raw
-   tracking data.
-4. On success the summary is saved to `analysis/<name>_AI_Summary.txt` and the
-   report PDF is rebuilt automatically so the two never disagree.
+1. Load a replicate by double-clicking it in the Project table.
+2. Run analysis so the report content, figures, stats, and summary CSVs exist.
+3. Open **AI -> AI summary...**, choose provider and model, and click **Generate**.
+4. The summary is saved to `analysis/<experiment>_AI_Summary.txt`.
+5. The experiment report is rebuilt automatically so the PDF and text file agree.
 
-If the call fails (bad key, offline, rate limit), you get an error message and
-nothing else changes — the report is never blocked by the AI.
+The provider receives report-ready content: cover metadata, figures as images, statistics, and per-fly summaries. It is not sent raw tracking files.
+
+## Project narrative
+
+1. Run **Build combined analysis** for the Project.
+2. Click **AI narrative...** in the Project panel and choose a provider.
+3. The narrative is saved to `analysis/<project>_AI_Summary.txt`.
+4. The next **Project report** embeds it.
 
 ## Lifecycle
 
-- The saved file **is** the opt-in: the report embeds an AI Summary section
-  exactly when `<name>_AI_Summary.txt` exists.
-- **Re-running the analysis deletes the saved summary.** It describes a single
-  analysis run; once the figures and statistics change, keeping it would put
-  stale prose next to fresh results. Regenerate it from the AI panel after the
-  run.
-- Regenerating replaces the saved summary and rebuilds the report.
+- The saved text file is the opt-in. Reports embed AI prose only while the corresponding `*_AI_Summary.txt` exists.
+- Re-running an experiment analysis deletes its experiment AI Summary.
+- Rebuilding a Project Combined Analysis deletes its Project AI narrative.
+- Regenerating replaces the saved text.
 
-Always review the summary — it is a language-model narrative of your results,
-not a verified scientific conclusion.
+Always review AI prose before using it. It is a language-model summary of pipeline outputs, not an independent scientific conclusion.

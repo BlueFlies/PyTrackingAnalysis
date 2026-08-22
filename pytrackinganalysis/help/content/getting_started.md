@@ -1,28 +1,28 @@
 # Getting started
 
-PyTrackingAnalysis analyses insect-tracking data from DTrack. You configure one experiment with a `tracking_config.yaml`, then run summaries, plots, stats, and reports from the desktop apps.
+PyTrackingAnalysis analyzes insect-tracking data exported from DTrack. The Hub is now Project-first: a **Project** is a parent directory with a `project.yaml`, and each replicate is an **Experiment Directory** underneath it.
 
 ## What you need
 
-1. A **Project directory** with a `project.yaml`, holding one subdirectory per experiment.
-2. A **`tracking_config.yaml`** at the top of each experiment subdirectory (not inside `data/`).
-3. A **`data/`** folder in each, with the DTrack export (`.xlsx` workbook + `*_Data_*.csv` files).
+1. A **Project directory** with `project.yaml`. This file holds the shared design: experiment type, factors and levels, facets, quality criteria, and counting-region names.
+2. One **Experiment Directory** per replicate. Each one has a top-level `tracking_config.yaml` with the rig, tracking-region treatment assignments, counting-region aliases, and optional experiment scripts.
+3. A `data/` folder inside each Experiment Directory, containing the DTrack workbook (`.xlsx`) and its `*_Data_*.csv` files.
 
-The pipeline creates `analysis/` and `qc/` on first run.
+The pipeline creates `analysis/` and `qc/` folders when it writes results.
 
 ## First-time workflow
 
-1. **Open the folder** in the Analysis Hub (**Project → Browse…**). Tiles across the top show live status; every tile opens its controls in a drop-down panel.
-2. **Make it a Project** — Project tile → **Create config…** writes the `project.yaml` and opens the Project editor, where you set the shared design. (Pointing at a folder that is itself an experiment offers to create the Project on its parent instead.)
-3. **Give each experiment a config** — **Experiment configs…** in the Analysis card creates them from the project design; edit one in `pytrack-config` to assign region treatments and the rig.
-4. **Load an experiment** — **double-click its row** in the replicates table. That is the only way in, and it runs QC as it loads.
-5. **Run analysis** — **Analyze → Run Analysis** (or open **Scripts** and run a saved recipe).
-6. **Check quality** — the QC Viewer opens on load; `pytrack-qc` reopens it later.
+1. Open the **Analysis Hub** (`pytrack`) and choose the parent folder from **Project -> Browse...**.
+2. Make or edit the Project: **Project -> Create/Load -> Create config...** writes `project.yaml` and opens the Project editor. If you point at a folder that is already an Experiment Directory, the Hub offers to create the Project on the parent so that experiment becomes a replicate.
+3. Add or adopt replicates from the Project panel's **Analysis** card. Use **Add experiment...** for a new replicate directory, or **Experiment configs...** to create missing `tracking_config.yaml` files from the project design.
+4. Finish each replicate config in the Config Editor: choose the rig, assign every tracking region to the design factors, and check counting-region aliases.
+5. Load a replicate by **double-clicking its row** in the Project table. This is the Hub's only experiment-loading path, and it runs QC as the experiment loads.
+6. Run a single replicate from **Analyze -> Run Analysis**, or run the whole study from the Project panel with **Run all experiments** followed by **Build combined analysis** and **Project report**.
 
 ## Apps
 
-- **Analysis Hub** (`pytrack` / `pytrack-hub`) — day-to-day load, analyze, plots, scripts, batch.
-- **Config Editor** (`pytrack-config`) — YAML forms + Script Editor.
-- **QC Viewer** (`pytrack-qc`) — data-quality table and tracker plots.
+- **Analysis Hub** (`pytrack` / `pytrack-hub`) - day-to-day Project workflow: load replicates, run analyses, view plots, build combined results, run Project scripts.
+- **Config Editor** (`pytrack-config`) - structured editor for each replicate's `tracking_config.yaml`, plus the Script Editor for experiment scripts.
+- **QC Viewer** (`pytrack-qc`) - per-tracker data-quality table and diagnostic plots for one Experiment Directory.
 
-Use the **?** buttons next to controls for topic-specific help. This Help window lists every topic in the sidebar.
+Use the **?** buttons next to controls for topic-specific help. The top-bar **Help** button opens the full help browser.
