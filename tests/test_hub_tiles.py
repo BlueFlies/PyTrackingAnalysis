@@ -1,8 +1,8 @@
 """Tests for the Hub tile-strip redesign (ADR-0007) and the Project-first Hub
-(ADR-0008): the strip's five tiles, their live summaries and dimming across
+(ADR-0008): the strip's six tiles, their live summaries and dimming across
 loading states, the anchored panels (open/close/one-at-a-time/
-auto-close-on-launch), the sidebar's open-the-panel behavior, and loading an
-experiment by double-clicking its row in the replicates table."""
+auto-close-on-launch), and loading an experiment by double-clicking its row in
+the replicates table."""
 
 from __future__ import annotations
 
@@ -27,18 +27,18 @@ def hub(qapp):  # noqa: F811
     win.close()
 
 
-TILE_ORDER = ["project", "analyze", "plots", "scripts", "ai"]
+TILE_ORDER = ["project", "analyze", "plots", "scripts", "ai", "tools"]
 
 
-def test_strip_has_five_fixed_tiles_and_full_width_output(hub):
+def test_strip_has_six_fixed_tiles_and_full_width_output(hub):
     assert list(hub._tiles) == TILE_ORDER
-    assert "tools" not in hub._tiles          # sidebar-only
-    assert "tools" in hub._panels             # …but it still has a panel
+    assert not hasattr(hub, "_sidebar")
+    assert "tools" in hub._panels
     # Experiments load from the Project panel's table — no Experiment tile.
     assert "experiment" not in hub._panels
     assert "load" not in hub._cards
-    # The output dock owns the full width under the strip (no card column).
-    assert hub._plot_dock.width() > hub.width() - 300
+    # The output dock owns nearly the full window width under the strip.
+    assert hub._plot_dock.width() > hub.width() - 80
 
 
 def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
@@ -81,12 +81,11 @@ def test_panels_open_one_at_a_time_and_toggle(hub, qapp):
     assert not hub._panels["analyze"].isVisible()
 
 
-def test_sidebar_items_open_matching_panels(hub):
-    hub._open_panel_for_sidebar("project")
-    assert hub._open_panel_key == "project"
-    hub._open_panel_for_sidebar("tools")      # sidebar-only panel, no tile
+def test_tools_tile_opens_tools_panel(hub):
+    hub._toggle_panel("tools")
     assert hub._open_panel_key == "tools"
     assert hub._panels["tools"].isVisible()
+    assert hub._tiles["tools"]._active
     hub._close_panel()
 
 
@@ -157,7 +156,7 @@ def test_tile_summary_lines_are_hard_capped(hub):
 def test_status_panel_fills_the_strip_right_of_the_last_tile(hub):
     lay = hub._strip.layout()
     assert lay.itemAt(lay.count() - 1).widget() is hub._status_panel
-    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles["ai"]
+    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles["tools"]
 
 
 def test_status_panel_reports_the_project_and_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811

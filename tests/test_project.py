@@ -320,13 +320,14 @@ def test_project_info_dialog_creates_and_edits(qapp, tmp_path):
     dlg.close()
 
 
-def test_hub_sidebar_has_both_creation_flows(qapp, tmp_path):
+def test_project_card_has_both_creation_flows(qapp, tmp_path):
     from PyQt6.QtWidgets import QPushButton
 
     from pytrackinganalysis.apps.hub import HubWindow
 
     win = HubWindow()
-    texts = [b.text() for b in win.findChildren(QPushButton)]
+    texts = [b.text() for b in
+             win._cards["project"].findChildren(QPushButton)]
     assert any("Create experiment" in t for t in texts)
     assert any("Create project" in t for t in texts)
     win.close()

@@ -5,6 +5,26 @@ This glossary fixes the domain language; it is not a spec.
 
 ## Language
 
+**Batch**:
+A directory whose immediate subdirectories holding a `project.yaml` are its
+Projects — the same structural rule a Project applies to its Experiments, one
+level up. Purely a processing convenience: it exists to run many Projects
+unattended, its only output is a per-Project run summary, and it never pools
+results across Projects (each Project has its own design; there is no
+cross-Project analysis). Nothing marks a Batch — being one is structural, and
+a `batch.yaml` at its root appears only once batch-level scripting is
+authored, because unlike a Project a Batch has no authority to declare.
+Batch mode runs one **designated Project Script** in every Project
+(continue-on-error, per-Project log prefixes, run summary; default: the
+Standard Pipeline, so zero authoring yields a full run). `batch.yaml` holds
+that designation (`script:`) and a central `project_scripts:` section — one
+recipe serving every Project without being copied, the `experiment_scripts:`
+idea one level up.
+_Avoid_: study, collection, batch script (there is no third script level —
+the thing batch mode runs IS a Project Script). Unrelated to **Batch Tools**
+(per-Project directory operations) and to the retired batch-over-experiments
+mode.
+
 **Project**:
 A directory with a `project.yaml` at its root whose immediate subdirectories
 holding a `tracking_config.yaml` are its Experiments — replicates of one
@@ -42,13 +62,17 @@ narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
 The main app (`pytrack`): a left rail, a horizontal **tile strip** across the
-top (Project · Analyze · Plots · Scripts · AI — each tile shows only live
-status, with a **status readout** filling the strip to their right: the loaded
-project and experiment in words), and a full-width output/plots area below.
-All controls live in a
+top (Batch · Project · Analyze · Plots · Scripts · AI — each tile shows only
+live status, with a **status readout** filling the strip to their right: the
+loaded project and experiment in words), and a full-width output/plots area
+below. All controls live in a
 tile's **anchored panel** (one open at a time; launching a task closes it).
 Tiles never move or hide — an inapplicable tile dims and its panel holds the
-fix. The Hub is **Project-first**: an experiment is loaded only by
+fix. The **selection names the working container — a Batch or a Project** —
+and does only that one job: selecting a Batch lights the Batch tile and dims
+the rest; double-clicking a row in its projects table is an ordinary selection
+change down to that Project (no drill-in state, no up-button; ADR-0009). The
+Hub is **Project-first**: an experiment is loaded only by
 double-clicking its row in the Project panel's replicates table, and the
 Project tile reports the loaded experiment (ADR-0008).
 _Avoid_: card column (the pre-2026-08 layout), Experiment tile (removed)

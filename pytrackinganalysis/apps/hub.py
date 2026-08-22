@@ -74,7 +74,6 @@ from ..ui import (
     Category,
     OutputLog,
     PlotDock,
-    SidebarNav,
     TopBar,
     ZoomableImageView,
     ZoomableTextView,
@@ -154,7 +153,7 @@ class HubWindow(QMainWindow):
         # Maps a Plots-card ActionButton to its Arena method name; rebuilt whenever
         # an experiment is loaded so the buttons always reflect the tracking type.
         self._plot_buttons: list[ActionButton] = []
-        # Cards we reference by sidebar key so clicking a sidebar item scrolls to it.
+        # Cards are staged once, then moved into anchored tile panels.
         self._cards: dict[str, Card] = {}
         self._scripts: list[dict] = []
         # Resolved artifact path → tab widget. Used to deduplicate tabs when
@@ -201,36 +200,7 @@ class HubWindow(QMainWindow):
         self._top_bar.add_right(self._btn_theme)
         outer.addWidget(self._top_bar)
 
-        # ── Body: sidebar | (tile strip + full-width output) — ADR-0007 ──
-        body_host = QWidget()
-        body_lay = QHBoxLayout(body_host)
-        body_lay.setContentsMargins(0, 0, 0, 0)
-        body_lay.setSpacing(0)
-
-        self._sidebar = SidebarNav()
-        self._sidebar.add_item("project", "Project", "project", category=Category.NEUTRAL)
-        # Rail buttons (not panel anchors): the two creation flows — the
-        # Project (the parent of replicates) first, then the experiment.
-        create_proj_btn = self._sidebar.add_action(
-            "Create project", "project", category=Category.LOAD,
-            tooltip="Create (or edit) a Project of replicate experiments — "
-                    "writes the project.yaml marker")
-        create_proj_btn.clicked.connect(lambda: self._new_project())
-        create_exp_btn = self._sidebar.add_action(
-            "Create experiment", "new", category=Category.LOAD,
-            tooltip="Create a new experiment directory from an Experiment Type")
-        create_exp_btn.clicked.connect(lambda: self._create_experiment())
-        self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
-        self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
-        self._sidebar.add_item("scripts", "Scripts", "scripts", category=Category.SCRIPTS)
-        self._sidebar.add_item("ai", "AI", "ai", category=Category.AI)
-        self._sidebar.add_item("tools", "Tools", "tools", category=Category.TOOLS)
-        self._sidebar.add_stretch()
-        ## Sidebar items open the matching tile panel (same mental model as
-        ## clicking the tile — two entry points, one behavior).
-        self._sidebar.itemSelected.connect(self._open_panel_for_sidebar)
-        body_lay.addWidget(self._sidebar)
-
+        # ── Body: tile strip + full-width output — ADR-0007 ───────────────
         main_col = QWidget()
         main_lay = QVBoxLayout(main_col)
         main_lay.setContentsMargins(0, 0, 0, 0)
@@ -250,6 +220,7 @@ class HubWindow(QMainWindow):
             ("plots", "Plots", "plots", Category.PLOTS),
             ("scripts", "Scripts", "scripts", Category.SCRIPTS),
             ("ai", "AI", "ai", Category.AI),
+            ("tools", "Tools", "tools", Category.TOOLS),
         ):
             tile = StatusTile(key, title, icon_name, cat)
             tile.clicked.connect(self._toggle_panel)
@@ -268,8 +239,7 @@ class HubWindow(QMainWindow):
         self._plot_dock = PlotDock(self._log, self._err_log)
         main_lay.addWidget(self._plot_dock, 1)
 
-        body_lay.addWidget(main_col, 1)
-        outer.addWidget(body_host, 1)
+        outer.addWidget(main_col, 1)
 
         # Build the existing cards (unchanged) into a hidden staging host,
         # then move each into its tile's anchored panel.
@@ -390,13 +360,19 @@ class HubWindow(QMainWindow):
             "information."
         )
         new_project_btn.clicked.connect(self._new_project)
+        create_exp_btn = ActionButton("Create experiment…", Category.LOAD,
+                                      icon_name="new")
+        create_exp_btn.setToolTip(
+            "Create a standalone experiment directory from an Experiment Type."
+        )
+        create_exp_btn.clicked.connect(self._create_experiment)
         ## One three-column grid, matching the Analysis card: the panel is wide
         ## for the replicates table, and ragged half-rows read as accidental.
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
         for i, btn in enumerate((load_btn, self._btn_edit_cfg,
-                                 new_project_btn)):
+                                 new_project_btn, create_exp_btn)):
             grid.addWidget(btn, i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
@@ -1106,9 +1082,6 @@ class HubWindow(QMainWindow):
 
     # ---------------- Tile strip & panels (ADR-0007) ----------------
 
-    def _open_panel_for_sidebar(self, key: str) -> None:
-        self._open_panel(key)
-
     def _toggle_panel(self, key: str) -> None:
         if self._open_panel_key == key:
             self._close_panel()
@@ -1127,7 +1100,6 @@ class HubWindow(QMainWindow):
             x = tile.mapTo(central, tile.rect().bottomLeft()).x()
             tile.set_active(True)
         else:
-            ## Sidebar-only panels (Tools) anchor to the strip's right edge.
             x = central.width() - 8 - 440
         panel.open_at(x, strip_bottom + 4, central.height() - 8)
         self._open_panel_key = key
@@ -1328,6 +1300,11 @@ class HubWindow(QMainWindow):
         else:
             tile.set_summary(["no API key", "add one to .env"])
             tile.set_dimmed(True)
+
+        # Tools tile.
+        tile = tiles["tools"]
+        tile.set_summary(["folders & YAML", "batch cleanup"])
+        tile.set_dimmed(False)
 
     def _pick_project_dir(self) -> None:
         start = str(self._project_dir) if self._project_dir else os.getcwd()

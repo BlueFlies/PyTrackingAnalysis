@@ -345,7 +345,7 @@ Rules that make a file *valid*:
   `counting_regions` entries.
 - Every `counting_regions` entry must have an `alias` key.
 
-Check a file at any time with the Hub's **Tools → Validate YAML** button —
+Check a file at any time with the Hub's **Tools → Validate YAML** button in the top tile strip —
 parse errors are reported in the Output and Errors tabs.
 
 ### 4.1 `global` — required fields
@@ -409,8 +409,8 @@ Rules for a typed experiment:
   `tracking_type`-driven behavior described below, unchanged. Existing configs
   keep working as-is.
 
-The fastest way to start is the **Create experiment** button on the Analysis
-Hub's sidebar: pick the type and rig, optionally set facets (default 10, 70)
+The fastest way to start is **Project → Create/Load → Create experiment…** in
+the Analysis Hub: pick the type and rig, optionally set facets (default 10, 70)
 and design factors, and it writes a ready-to-edit `tracking_config.yaml` and the
 `data/`/`analysis/`/`qc/` folders. For Valence it also lays out the plate — 36
 regions for Arena Max (with the first 18 X-flipped) or 24 for Colosseum, plus the
@@ -745,14 +745,14 @@ AI provider/model — are tracked there too.
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
 The Hub's layout (see `docs/adr/0007`) is a **tile strip** across the top —
-five compact live-status tiles: **Project · Analyze · Plots · Scripts · AI**
+six compact live-status tiles: **Project · Analyze · Plots · Scripts · AI · Tools**
 — with the **output area at full width** underneath. A tile
 shows only status (the project's name and replicate health, the loaded
 experiment's fly counts, whether analysis is faceted, …); **clicking it
 drops an anchored panel** holding all of that area's controls. One panel is
-open at a time; **Esc** or clicking anywhere else closes it, and **starting
-any task closes it automatically** so the streaming log and plots are
-immediately visible. Tiles never move or hide: an inapplicable tile is
+open at a time; **Esc** or clicking anywhere else closes it, and **running
+tasks leave panels in place** while the streaming log and plots remain
+visible below. Tiles never move or hide: an inapplicable tile is
 dimmed with a hint, and its panel contains exactly the control that fixes
 the missing state (the dimmed Analyze tile opens the panel that tells you to
 load an experiment first).
@@ -761,15 +761,9 @@ The Hub is **Project-first** (`docs/adr/0008`): an experiment is loaded only
 by double-clicking its row in the Project panel's replicates table, so there
 is one subject at a time because there is one way to change it.  There is no
 Experiment tile — the Project tile reports the loaded experiment on its
-second line, and the **status readout** filling the strip right of the AI tile
+second line, and the **status readout** filling the strip right of the Tools tile
 spells the same state out in full: project name and type, path, replicate and
 analysis counts, and the loaded experiment (design factors in its tooltip).
-
-The left sidebar opens the same panels (Tools lives *only* there), and
-carries the two creation shortcuts — **Create project** (write or edit a
-`project.yaml`, turning a directory of replicates into a Project) and
-**Create experiment** (scaffold a new experiment directory from an
-Experiment Type).
 
 The panels:
 
@@ -785,7 +779,8 @@ The panels:
   becomes a replicate — a `project.yaml` written beside a
   `tracking_config.yaml` would be a Project with nothing to load.  Beside it,
   **Create project…** does the same for a directory you pick, so a new Project
-  can be started without first opening it.  There is
+  can be started without first opening it, and **Create experiment…** scaffolds
+  a standalone experiment directory from an Experiment Type.  There is
   no tracking-config picker here — `project.yaml` is fixed at the Project
   root, and each experiment's `tracking_config.yaml` lives one level down
   (use **Experiment configs…** in the Analysis card); QC is experiment-level
@@ -1143,7 +1138,7 @@ project-level publication figures, and builds a Project Report.
 
 ### 8.1 Creating a Project
 
-- **New study** — Hub sidebar → **Create project**: pick/create the parent
+- **New study** — **Project → Create/Load → Create project…**: pick/create the parent
   directory and edit the project **design** (experiment type, design factors
   and levels, facets, quality criteria, counting-region names).  The design
   is seeded from the Experiment Type's defaults.  An empty Project is valid —

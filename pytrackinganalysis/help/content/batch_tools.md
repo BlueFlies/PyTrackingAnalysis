@@ -1,6 +1,6 @@
 # Batch tools
 
-Open from the Hub sidebar: **Tools -> Batch tools**. These are housekeeping tools for immediate subdirectories of the currently selected folder, usually a Project root. They do not replace the Project workflow.
+Open from the Hub's **Tools** tile: **Batch tools**. These are housekeeping tools for immediate subdirectories of the currently selected folder, usually a Project root. They do not replace the Project workflow.
 
 ## Convert subdirectories
 

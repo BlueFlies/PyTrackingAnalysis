@@ -27,7 +27,7 @@ Project-level scripts live in `project.yaml`, not in a replicate's `tracking_con
 - `TWOCHOICETRACKER` and `TWOCHOICECOUNTER` need exactly two counting regions, each with an `alias`.
 - Typed Experiment Types, such as Valence, may fix or constrain fields. The editor disables fixed fields and validates required regions before saving.
 
-Validate a loaded replicate config from the Hub with **Tools -> Validate YAML**. At a Project root, use **Experiment configs...** to open the replicate config you want to inspect.
+Validate a loaded replicate config from the Hub with **Tools -> Validate YAML** from the top tile strip. At a Project root, use **Experiment configs...** to open the replicate config you want to inspect.
 
 ## Minimal Custom example
 

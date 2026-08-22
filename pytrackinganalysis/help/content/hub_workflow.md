@@ -4,17 +4,17 @@ The Hub is the main day-to-day surface. It is Project-first: open a Project, man
 
 ## Layout
 
-Across the top is a live tile strip: **Project**, **Analyze**, **Plots**, **Scripts**, and **AI**. Tiles show status only. Click a tile, or the matching sidebar item, to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Starting a task closes the panel so the streaming output remains visible.
+Across the top is a live tile strip: **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
 
 Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
 
-The status readout to the right of the AI tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
+The status readout to the right of the Tools tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
 
 ## Project panel
 
 The Project panel contains two cards.
 
-**Create/Load** chooses the folder, reloads it, and edits `project.yaml`. The config button reads **Edit config...** when the selected folder is already a Project and **Create config...** when it is not. If the selected folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
+**Create/Load** chooses the folder, reloads it, creates standalone experiments, and edits `project.yaml`. The config button reads **Edit config...** when the selected folder is already a Project and **Create config...** when it is not. If the selected folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
 
 **Analysis** is the main Project workspace. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
 
@@ -44,7 +44,7 @@ When **Faceted** is checked in the Analyze panel, summaries, pairwise comparison
 
 ## Tools
 
-The **Tools** panel lives in the sidebar only. It can open `analysis/` or `qc/`, validate the loaded replicate's YAML, open Batch tools for parent-folder cleanup, and clear the matplotlib cache.
+The **Tools** tile opens `analysis/` or `qc/`, validates the loaded replicate's YAML, opens Batch tools for parent-folder cleanup, and clears the matplotlib cache.
 
 ## Output area
 
