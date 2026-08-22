@@ -4,7 +4,7 @@ The Plot Editor (`pytrack-plots`) creates Project-level publication figures from
 
 ## Before opening
 
-Run **Build combined analysis** first. The Plot Editor needs the Project's combined faceted summary data. If you open a replicate inside a Project, the app redirects to the Project root. A standalone experiment is refused with guidance to create a Project around it first.
+Run **Create report** or **Update report** first. The Plot Editor needs the Project's combined faceted summary data, and the report refresh creates it. If you open a replicate inside a Project, the app redirects to the Project root. A standalone experiment is refused with guidance to create a Project around it first.
 
 ## What it edits
 

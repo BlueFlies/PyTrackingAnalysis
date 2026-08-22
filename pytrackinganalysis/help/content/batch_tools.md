@@ -18,7 +18,7 @@ The tool plans the renames first and skips collisions.
 
 Stack every `analysis/*_Summary.csv` and `analysis/*_Summary_Facet.csv` found under each subdirectory into `<folder>_combined.csv` and `<folder>_combined_facet.csv` at the current folder root. A `subdirectory` column records the source.
 
-This is a legacy convenience output. For Project statistics, reports, and publication figures, use **Build combined analysis** in the Project panel.
+This is a legacy convenience output. For Project statistics, reports, and publication figures, use **Create report** or **Update report** in the Project panel.
 
 ## Copy YAML to subdirs
 

@@ -53,10 +53,10 @@ MyProject/
 The Hub's **Project** panel has two cards:
 
 - **Create/Load** chooses the folder, reloads it, and edits or creates `project.yaml`.
-- **Analysis** shows the replicate table plus Project actions: **Experiment configs...**, **Add experiment...**, **Run all experiments**, **Build combined analysis**, **Plot editor...**, **AI narrative...**, **Project report**, and Project scripts.
+- **Analysis** shows the replicate table plus Project actions: **Experiment configs...**, **Add experiment...**, **Create report** or **Update report**, **Plot editor...**, **AI narrative...**, and Project scripts.
 
-Double-click a replicate row to load that experiment. Rows marked **Config: missing** are folders with data but no `tracking_config.yaml`; double-clicking offers to create the config from the project design. Use **Experiment configs...** to create or edit replicate configs in bulk.
+Double-click a replicate row to load that experiment. Rows marked **Config: missing** are folders with data but no `tracking_config.yaml`; double-clicking offers to create the config from the project design. Use **Experiment configs...** to create or edit replicate configs in bulk. **Create report** appears before the Project PDF exists; **Update report** appears after it exists. Both run every replicate, rebuild Combined Analysis, and write the Project report.
 
 ## Migrating an old batch parent
 
-The old Hub batch mode has been absorbed into Projects. Point the Hub at the parent folder and use **Create project** to write `project.yaml`. The dialog can infer the design from the first existing replicate config, and the existing subfolders become replicates. Use **Run all experiments** or the built-in **Standard pipeline** instead of the retired Batch experiments panel.
+The old Hub batch mode has been absorbed into Projects. Point the Hub at the parent folder and use **Create project** to write `project.yaml`. The dialog can infer the design from the first existing replicate config, and the existing subfolders become replicates. Use **Create report** or the built-in **Standard pipeline** instead of the retired Batch experiments panel.

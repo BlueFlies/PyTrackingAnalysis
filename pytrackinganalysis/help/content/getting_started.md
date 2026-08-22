@@ -17,7 +17,7 @@ The pipeline creates `analysis/` and `qc/` folders when it writes results.
 3. Add or adopt replicates from the Project panel's **Analysis** card. Use **Add experiment...** for a new replicate directory, or **Experiment configs...** to create missing `tracking_config.yaml` files from the project design.
 4. Finish each replicate config in the Config Editor: choose the rig, assign every tracking region to the design factors, and check counting-region aliases.
 5. Load a replicate by **double-clicking its row** in the Project table. This is the Hub's only experiment-loading path, and it runs QC as the experiment loads.
-6. Run a single replicate from **Analyze -> Run Analysis**, or run the whole study from the Project panel with **Run all experiments** followed by **Build combined analysis** and **Project report**.
+6. Run a single replicate from **Analyze -> Run Analysis**, or run the whole study from the Project panel with **Create report**. After the PDF exists, the same button reads **Update report**; both labels analyze every replicate, rebuild Combined Analysis, and write the Project report.
 
 ## Apps
 

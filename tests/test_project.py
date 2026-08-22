@@ -387,9 +387,9 @@ def test_experiment_actions_follow_the_loaded_experiment(qapp, tmp_path):
     win.close()
 
 
-def test_run_all_experiments_leaves_nothing_loaded(qapp, tmp_path, monkeypatch):
-    """Run all re-analyzes every replicate underneath the loaded one, so the
-    in-memory experiment is dropped before the run rather than left stale."""
+def test_project_report_refresh_leaves_nothing_loaded(qapp, tmp_path, monkeypatch):
+    """Report refresh re-analyzes every replicate underneath the loaded one, so
+    the in-memory experiment is dropped before the run rather than left stale."""
     from pytrackinganalysis.apps.hub import HubWindow
 
     _make_project(tmp_path)
@@ -401,9 +401,9 @@ def test_run_all_experiments_leaves_nothing_loaded(qapp, tmp_path, monkeypatch):
     spawned: list = []
     monkeypatch.setattr(HubWindow, "_spawn_task",
                         lambda self, label, fn: spawned.append(label))
-    win._project_run_all()
+    win._project_report()
 
-    assert spawned == ["Run all experiments"]
+    assert spawned == ["Create report"]
     assert win._exp is None
     assert not win._btn_run_analysis.isEnabled()   # no subject to analyze
     win.close()

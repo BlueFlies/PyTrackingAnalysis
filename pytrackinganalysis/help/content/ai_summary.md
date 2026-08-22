@@ -5,7 +5,7 @@ AI writing is optional. It summarizes results the pipeline already produced; it 
 There are two related outputs:
 
 - **Experiment AI Summary** - created from the Hub's **AI** tile for the loaded replicate and embedded in that replicate's PDF report.
-- **Project AI narrative** - created from the Project panel's **AI narrative...** action after Combined Analysis and embedded in the Project Report.
+- **Project AI narrative** - created from the Project panel's **AI narrative...** action after Combined Analysis; the Project report is rebuilt immediately so the narrative is embedded.
 
 Both are clearly labeled in reports as AI-generated.
 
@@ -32,16 +32,16 @@ The provider receives report-ready content: cover metadata, figures as images, s
 
 ## Project narrative
 
-1. Run **Build combined analysis** for the Project.
+1. Run **Create report** or **Update report** for the Project so Combined Analysis is current.
 2. Click **AI narrative...** in the Project panel and choose a provider.
 3. The narrative is saved to `analysis/<project>_AI_Summary.txt`.
-4. The next **Project report** embeds it.
+4. The Project report is rebuilt immediately so the PDF and text file agree.
 
 ## Lifecycle
 
 - The saved text file is the opt-in. Reports embed AI prose only while the corresponding `*_AI_Summary.txt` exists.
 - Re-running an experiment analysis deletes its experiment AI Summary.
-- Rebuilding a Project Combined Analysis deletes its Project AI narrative.
+- Rebuilding a Project Combined Analysis deletes its Project AI narrative. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh when you want AI prose in the PDF.
 - Regenerating replaces the saved text.
 
 Always review AI prose before using it. It is a language-model summary of pipeline outputs, not an independent scientific conclusion.

@@ -20,15 +20,19 @@ Double-click a configured row to load that replicate and run QC. Double-click a 
 
 ## Project pipeline
 
-Recommended order:
+The Hub has one full Project refresh button:
 
-1. **Run all experiments** - runs each replicate's analysis and per-replicate report. The Hub unloads any currently loaded replicate first so it cannot keep stale in-memory results.
-2. **Build combined analysis** - stacks analyzed replicate summaries into Project-level CSVs and writes pooled plus mixed-model statistics under `<project>/analysis/`.
-3. **Plot editor...** - opens the Project-level publication figure editor, using the combined faceted data.
-4. **AI narrative...** - optional; writes a Project AI narrative from Combined Analysis.
-5. **Project report** - builds `<project>/<project>_report.pdf`.
+- **Create report** appears when `<project>/<project>_report.pdf` does not exist.
+- **Update report** appears after the Project report exists.
 
-`Build combined analysis` does not silently run missing replicates. It reports missing analyses and builds from the summaries that exist. Rebuilding combined analysis deletes any saved Project AI narrative because the narrative describes one specific combined result.
+Both labels run the same sequence: unload any currently loaded replicate, analyze every configured replicate, create each per-replicate report, rebuild the Project Combined Analysis under `<project>/analysis/`, and write `<project>/<project>_report.pdf`. If any replicate fails, the Combined Analysis and Project report are not rebuilt.
+
+Use the other Project actions around that full refresh:
+
+- **Plot editor...** - open the Project-level publication figure editor after a report refresh has created combined faceted data. Save plot specs, then click **Update report** to rebuild the PDF with those specs.
+- **AI narrative...** - write a Project AI narrative from the current Combined Analysis and rebuild the Project report so the narrative is embedded.
+
+Rebuilding Combined Analysis deletes any saved Project AI narrative because the narrative describes one specific combined result. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh if you want AI prose in the PDF.
 
 ## Project scripts
 
@@ -40,4 +44,4 @@ The Project **Script** picker runs Project Scripts from `project.yaml`. **Standa
 4. render publication figures
 5. create Project report
 
-Use **Edit scripts...** to author custom Project Scripts or centrally held Experiment Scripts.
+Use **Edit scripts...** to author custom Project Scripts or centrally held Experiment Scripts. If you need something more specific than the Hub's full report refresh, use a Project Script: scripts still expose lower-level run, combined-analysis, figure-rendering, report, AI, and `run_in_experiments` steps for custom automation.

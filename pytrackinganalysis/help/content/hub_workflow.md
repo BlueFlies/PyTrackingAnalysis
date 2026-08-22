@@ -16,20 +16,18 @@ The Project panel contains two cards.
 
 **Create/Load** chooses the folder, reloads it, and edits `project.yaml`. The config button reads **Edit config...** when the selected folder is already a Project and **Create config...** when it is not. If the selected folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
 
-When a loaded replicate is selected, **Up to project** returns the folder field to the enclosing Project.
-
 **Analysis** is the main Project workspace. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
 
 Project actions:
 
 - **Experiment configs...** - create or edit each replicate's `tracking_config.yaml`.
 - **Add experiment...** - create a new replicate directory and config from the Project design.
-- **Run all experiments** - run analysis, QC, and reports for every configured replicate.
-- **Build combined analysis** - stack filtered summaries and write pooled plus mixed-model statistics.
-- **Plot editor...** - curate pooled publication figures.
-- **AI narrative...** - create an optional Project-level AI narrative from the Combined Analysis.
-- **Project report** - build the Project PDF report.
+- **Create report** / **Update report** - analyze every replicate, rebuild Combined Analysis, and write the Project PDF report. The label changes depending on whether `<project>_report.pdf` already exists.
+- **Plot editor...** - curate pooled publication figures after a report refresh has created combined faceted data.
+- **AI narrative...** - create an optional Project-level AI narrative from the current Combined Analysis and rebuild the PDF to embed it.
 - **Script** picker - run the built-in **Standard pipeline** or saved Project Scripts.
+
+For a custom sequence, use **Edit scripts...** and make a Project Script. Scripts can run lower-level steps such as replicate analysis, Combined Analysis, publication figure rendering, report creation, AI narrative, or a named Experiment Script in every replicate.
 
 ## Experiment panels
 

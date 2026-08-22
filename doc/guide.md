@@ -777,7 +777,7 @@ The panels:
   already titled Project, so neither card repeats it).
   **Create/Load** picks the folder (an experiment directory *or* a Project; the
   text box shows just the folder name to stay readable; hover it for the full
-  path), **Reload** re-scans it, and one button edits the Project's own
+  path), **Load…** opens or re-scans it, and one button edits the Project's own
   config: **Edit config…** when `project.yaml` is present, **Create config…**
   when it is missing (which writes a default and opens the same Project
   editor).  Pointing it at a folder that is *itself* an experiment
@@ -789,18 +789,15 @@ The panels:
   no tracking-config picker here — `project.yaml` is fixed at the Project
   root, and each experiment's `tracking_config.yaml` lives one level down
   (use **Experiment configs…** in the Analysis card); QC is experiment-level
-  and opens on load.  When the selected directory is a replicate inside a
-  Project, an **Up to project** button returns to the enclosing Project while
-  the Project view continues to show the replicate table and project actions.
+  and opens on load.
 - **Analysis** (the second card in the Project panel; populated when the
   selected directory is — or sits inside — a Project) —
   the main working surface for replicates: a table with per-replicate status
   (**Experiment, Config, Flies, Excluded, Flagged, Report**; **double-click a
   row to load that replicate** — this is the only way to load an experiment,
   and it runs QC as it loads), plus **Experiment configs…** and
-  **Add experiment…** (below), the project-level actions — **Run all
-  experiments**, **Build combined analysis**, **Project report**,
-  **Plot editor…**, **AI narrative…** — and a **Script** picker with
+  **Add experiment…** (below), the project-level actions — **Create report** or
+  **Update report**, **Plot editor…**, **AI narrative…** — and a **Script** picker with
   **Run script** / **Edit scripts…** (§8.3; the built-in **Standard
   pipeline** is always available).  Subdirectories that hold no
   `tracking_config.yaml` are listed too, in italics with **Config: missing**
@@ -1129,7 +1126,7 @@ outputs to the Project root — see the last table below).
 | `analysis/<project>_Summary.csv` / `_Summary_Facet.csv` | The Combined Analysis: each replicate's *filtered* summaries stacked with an `Experiment` first column |
 | `analysis/<project>_Excluded.csv` | All replicates' excluded flies, tagged by replicate |
 | `analysis/<project>_Stats.txt` | Pooled per-fly Welch/Tukey tests beside the mixed-model p-values (treatment fixed, experiment random intercept), plus any cross-replicate warnings |
-| `analysis/<project>_AI_Summary.txt` | (Optional) The AI narrative; deleted by every `build_combined_analysis()` |
+| `analysis/<project>_AI_Summary.txt` | (Optional) The AI narrative; deleted by every `build_combined_analysis()` and recreated by **AI narrative…** |
 | `plot_specs.yaml` | Publication-figure Plot Specs + Plot Styles (written by the Plot Editor) |
 | `figures/*.svg` / `*.pdf` | Vector publication figures rendered from the pooled data |
 | `<project>_report.pdf` | The Project Report: cover with per-replicate status → AI narrative (when present) → pooled publication figures → pooled + mixed statistics table → per-replicate summary table |
@@ -1170,29 +1167,33 @@ surfaced as warnings, not errors.
 ### 8.2 The Project view workflow
 
 With a Project selected, the Hub shows the **Project view** (§5.2): the
-replicate table plus the project actions, in the natural order —
+replicate table plus project actions.  For a full refresh, use **Create
+report** before `<project>_report.pdf` exists or **Update report** after it
+exists; both labels run every replicate, rebuild Combined Analysis, and write
+the Project report.
 
-1. **Run all experiments** — full analysis + report in every replicate
-   (continue-on-error; failures summarized).
-2. **Build combined analysis** — stacks each replicate's *filtered* summary
-   CSVs (`Experiment` column added) into `<project>/analysis/`, with pooled
-   Welch/Tukey statistics beside the mixed-model p-values.  Replicates
-   without a saved analysis are reported as missing, never silently analyzed.
-3. **Plot editor…** — curate the pooled publication figures (§5.5).
-4. **AI narrative…** — optional AI-written narrative for the Project Report
+The remaining Project actions build on that refresh:
+
+1. **Plot editor…** — curate the pooled publication figures (§5.5) from the
+   Combined Analysis created by the report refresh.  Save plot specs, then run
+   **Update report** to rebuild the PDF with those specs.
+2. **AI narrative…** — optional AI-written narrative for the Project Report
    (same rules as the per-experiment AI Summary: key-gated, clearly labeled,
-   deleted by the next combined-analysis build, never blocks the report).
-5. **Project report** — `<project>/<name>_report.pdf`: pooled publication
-   figures, the pooled + mixed statistics table, and a per-replicate summary
-   table.
+   deleted by the next combined-analysis build).  It rebuilds the Project
+   report immediately so the PDF and saved text agree.
 
 Double-click a replicate row to open it as the current experiment; the
 regular Analyze/Plots/Scripts/AI cards then apply to it, while the project
 actions above keep applying to the whole set.  The two contexts are
-independent, so nothing has to be closed to get back to the Project — except
-after **Run all experiments**, which rewrites every replicate's analysis and
-therefore unloads the current experiment rather than leave it holding results
-that no longer exist.
+independent, so nothing has to be closed to get back to the Project.  A report
+refresh rewrites every replicate's analysis and therefore unloads the current
+experiment rather than leave it holding results that no longer exist.
+
+For anything more specific than the Hub's full report refresh, use a Project
+Script.  Scripts expose the lower-level project steps — replicate analysis,
+Combined Analysis, publication figure rendering, report creation, AI narrative,
+and `run_in_experiments` — without putting all of those partial actions back
+into the main Hub.
 
 ### 8.3 Project Scripts (two-level scripting)
 

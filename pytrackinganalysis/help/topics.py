@@ -66,7 +66,7 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "project_actions",
         "Project actions",
-        "Run all replicates, build Combined Analysis, make Project reports, and use Project scripts.",
+        "Refresh the full Project report, use publication plots and AI narrative, and run Project scripts.",
         "project_actions.md",
     ),
     HelpTopic(

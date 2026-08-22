@@ -186,8 +186,97 @@ def test_status_panel_reports_the_project_and_loaded_experiment(hub, qapp, tmp_p
 def test_project_actions_use_three_columns(hub):
     grid = hub._project_actions_grid
     assert grid.columnCount() == 3
-    # Seven actions over three columns — no button spans the whole card.
-    assert grid.count() == 7
+    # Five focused actions over three columns — no button spans the whole card.
+    assert grid.count() == 5
+    labels = [grid.itemAt(i).widget().text() for i in range(grid.count())]
+    assert labels == [
+        "Experiment configs…", "Add experiment…", "Create report",
+        "Plot editor…", "AI narrative…",
+    ]
+
+
+def test_project_report_button_labels_create_or_update(hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    assert hub._btn_project_report.text() == "Create report"
+
+    (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-")
+    hub._refresh_project_view()
+    assert hub._btn_project_report.text() == "Update report"
+
+
+def test_project_report_button_runs_full_refresh(hub, tmp_path, monkeypatch):
+    calls: list[str] = []
+
+    class _Project:
+        name = "Proj"
+        project_directory = str(tmp_path)
+        experiment_names = ["Rep1", "Rep2"]
+
+        def run_all(self):
+            calls.append("run_all")
+            return []
+
+        def build_combined_analysis(self):
+            calls.append("combined")
+            return {"written": ["a.csv", "b.txt"], "missing": []}
+
+        def create_report(self):
+            calls.append("report")
+            return str(tmp_path / "Proj_report.pdf")
+
+    spawned: list[tuple[str, str]] = []
+    monkeypatch.setattr(hub, "_current_project", lambda: _Project())
+    monkeypatch.setattr(
+        hub, "_spawn_task",
+        lambda name, fn: spawned.append((name, fn())),
+    )
+
+    hub._project_report()
+
+    assert calls == ["run_all", "combined", "report"]
+    assert spawned[0][0] == "Create report"
+    assert "ran 2 replicate analyses" in spawned[0][1]
+    assert "wrote Combined Analysis (2 files)" in spawned[0][1]
+
+
+def test_project_ai_narrative_rebuilds_report(hub, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QInputDialog
+
+    class _Provider:
+        provider_name = "testai"
+
+    class _Project:
+        def __init__(self):
+            self.calls: list[tuple[str, str] | tuple[str]] = []
+
+        def generate_ai_summary(self, provider):
+            self.calls.append(("ai", provider))
+
+        def create_report(self):
+            self.calls.append(("report",))
+            return str(tmp_path / "Proj_report.pdf")
+
+    project = _Project()
+    spawned: list[tuple[str, str]] = []
+    monkeypatch.setattr("pytrackinganalysis.ai.available_providers",
+                        lambda: [_Provider()])
+    monkeypatch.setattr(
+        QInputDialog, "getItem",
+        staticmethod(lambda *a, **k: ("testai", True)),
+    )
+    monkeypatch.setattr(hub, "_current_project", lambda: project)
+    monkeypatch.setattr(
+        hub, "_spawn_task",
+        lambda name, fn: spawned.append((name, fn())),
+    )
+
+    hub._project_ai_narrative()
+
+    assert project.calls == [("ai", "testai"), ("report",)]
+    assert spawned[0][0] == "AI narrative"
+    assert "report rebuilt" in spawned[0][1]
 
 
 def test_project_script_controls_stay_on_one_row(hub):
@@ -311,10 +400,10 @@ def test_create_project_lives_on_the_project_card(hub):
     assert any("Create project" in t for t in labels)
 
 
-def test_one_load_action_and_no_reload(hub, monkeypatch):
+def test_one_load_action_and_no_reload(hub, qapp, tmp_path, monkeypatch):  # noqa: F811
     """Reloading a project WAS browsing to it and opening it again, so the
-    card offers the one action: Load…, wired to the directory picker."""
-    from PyQt6.QtWidgets import QPushButton
+    card offers the one action — and picking the open project re-reads it."""
+    from PyQt6.QtWidgets import QFileDialog, QPushButton
 
     buttons = {b.text(): b for b in
                hub._cards["project"].findChildren(QPushButton)}
@@ -322,11 +411,23 @@ def test_one_load_action_and_no_reload(hub, monkeypatch):
     assert not [t for t in buttons if "Reload" in t or "Browse" in t]
     assert not hasattr(hub, "_reload_project")
 
-    picked: list = []
-    monkeypatch.setattr(type(hub), "_pick_project_dir",
-                        lambda self: picked.append(True))
+    _make_project(tmp_path)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
     buttons["Load…"].click()
-    assert picked == [True]
+    qapp.processEvents()
+    assert hub._project_dir == tmp_path
+    assert hub._exp_table.rowCount() == 2      # the project was read
+
+    # Clicking it again re-reads from disk: a replicate added outside the Hub
+    # appears without any separate Reload.
+    (tmp_path / "Rep3" / "data").mkdir(parents=True)
+    (tmp_path / "Rep3" / "tracking_config.yaml").write_text(
+        (tmp_path / "Rep1" / "tracking_config.yaml").read_text(),
+        encoding="utf-8")
+    buttons["Load…"].click()
+    qapp.processEvents()
+    assert hub._exp_table.rowCount() == 3
 
 
 def test_project_panel_headers_are_distinct(hub):

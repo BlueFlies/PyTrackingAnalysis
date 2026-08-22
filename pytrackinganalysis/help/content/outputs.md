@@ -34,9 +34,9 @@ Project-level outputs are written at the Project root.
 - `analysis/<project>_Summary_Facet.csv` - combined faceted summaries, when available.
 - `analysis/<project>_Excluded.csv` - excluded flies across replicates.
 - `analysis/<project>_Stats.txt` - pooled per-fly tests plus mixed-model p-values that account for replicate-to-replicate variation.
-- `analysis/<project>_AI_Summary.txt` - optional Project AI narrative; deleted by the next Combined Analysis build.
+- `analysis/<project>_AI_Summary.txt` - optional Project AI narrative; deleted by the next Combined Analysis build and then recreated by **AI narrative...** when requested.
 - `plot_specs.yaml` - Plot Editor specs and styles.
 - `figures/*.svg` and `figures/*.pdf` - pooled publication figures.
-- `<project>_report.pdf` - Project Report with pooled figures, statistics, replicate summary, and any saved AI narrative.
+- `<project>_report.pdf` - Project Report with pooled figures, statistics, replicate summary, and any saved AI narrative. In the Hub, **Create report** / **Update report** refreshes all replicate analyses, rebuilds Combined Analysis, and then writes this PDF.
 
 The Hub **Tools** panel opens `analysis/` and `qc/` for the currently selected directory. If a replicate is loaded, those buttons open the replicate folders; at a Project root, they open Project-level folders when they exist.

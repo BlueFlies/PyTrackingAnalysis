@@ -654,30 +654,23 @@ class HubWindow(QMainWindow):
                                  icon_name="report")
         btn_plots.clicked.connect(
             lambda: self._launch_subapp("plots", self._project_root()))
-        btn_run_all = ActionButton("Run all experiments", Category.ANALYZE,
-                                   icon_name="basic", primary=True)
-        btn_run_all.clicked.connect(self._project_run_all)
-        btn_combined = ActionButton("Build combined analysis",
-                                    Category.ANALYZE, icon_name="csv")
-        btn_combined.clicked.connect(self._project_build_combined)
-        btn_report = ActionButton("Project report", Category.ANALYZE,
-                                  icon_name="report")
+        btn_report = ActionButton("Create report", Category.ANALYZE,
+                                  icon_name="report", primary=True)
         btn_report.clicked.connect(self._project_report)
+        self._btn_project_report = btn_report
         btn_ai = ActionButton("AI narrative…", Category.AI, icon_name="ai")
         btn_ai.setToolTip(
             "Have an AI provider write the project narrative from the "
-            "Combined Analysis; the next Project report embeds it.")
+            "Combined Analysis and rebuild the Project report to embed it.")
         btn_ai.clicked.connect(self._project_ai_narrative)
 
-        ## Three equal columns: the card has to be wide for the replicates
-        ## table, and full-width action rows looked stretched and odd in it.
-        ## Row 1 manages the replicate set, row 2 is the pipeline in order.
+        ## Three equal columns: setup on the left, the full Project refresh in
+        ## the middle, and downstream review/AI actions after it.
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        for i, btn in enumerate((btn_configs, btn_add, btn_plots,
-                                 btn_run_all, btn_combined, btn_report,
-                                 btn_ai)):
+        for i, btn in enumerate((btn_configs, btn_add, btn_report,
+                                 btn_plots, btn_ai)):
             grid.addWidget(btn, i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
@@ -786,6 +779,7 @@ class HubWindow(QMainWindow):
         for warning in project.warnings:
             lines.append(f"<i>Note: {warning}</i>")
         self._projectview_summary.setText("<br>".join(lines))
+        self._refresh_project_report_button(project)
 
         self._exp_table.setRowCount(0)
         for name in project.experiment_names:
@@ -829,6 +823,26 @@ class HubWindow(QMainWindow):
                 str(script.get("name", "Untitled")), script.get("name"))
         self._project_script_combo.blockSignals(False)
         card.setVisible(True)
+
+    def _project_report_path(self, project) -> Path:
+        return Path(project.project_directory) / f"{project.name}_report.pdf"
+
+    def _project_report_exists(self, project) -> bool:
+        return self._project_report_path(project).is_file()
+
+    def _refresh_project_report_button(self, project) -> None:
+        btn = getattr(self, "_btn_project_report", None)
+        if btn is None:
+            return
+        exists = self._project_report_exists(project)
+        btn.setText("Update report" if exists else "Create report")
+        btn.setToolTip(
+            "Analyze all experiments, rebuild Combined Analysis, and update "
+            "the Project report."
+            if exists else
+            "Analyze all experiments, build Combined Analysis, and create the "
+            "Project report."
+        )
 
     def _enclosing_project_dir(self, path):
         """The Project *path* is a replicate of, or None when *path* is not a
@@ -903,13 +917,15 @@ class HubWindow(QMainWindow):
             f"{name}/data/.")
         return path
 
-    def _project_run_all(self) -> None:
+    def _project_report(self) -> None:
         project = self._current_project()
         if project is None:
             return
-        ## Every replicate's analysis is rewritten, the loaded one included, so
-        ## an in-memory Experiment would survive as a stale copy of results
-        ## that no longer exist. Drop it and let the user load one afterwards.
+        task_name = "Update report" if self._project_report_exists(project) \
+            else "Create report"
+        ## The report action rewrites every replicate's outputs before pooling.
+        ## Drop the loaded replicate so the Hub cannot keep stale in-memory
+        ## results after the files under that replicate have been regenerated.
         self._unload_experiment()
 
         def _do() -> str:
@@ -918,31 +934,15 @@ class HubWindow(QMainWindow):
                 raise RuntimeError(
                     f"{len(failures)} replicate(s) failed: "
                     + "; ".join(failures))
-            return (f"Ran {len(project.experiment_names)} replicate "
-                    f"analyses (with reports).")
-
-        self._spawn_task("Run all experiments", _do)
-
-    def _project_build_combined(self) -> None:
-        project = self._current_project()
-        if project is None:
-            return
-
-        def _do() -> str:
             result = project.build_combined_analysis()
-            msg = f"Combined analysis written ({len(result['written'])} files)."
-            if result["missing"]:
-                msg += (" Not yet analyzed (omitted): "
-                        + ", ".join(result["missing"]))
-            return msg
+            path = project.create_report()
+            return (
+                f"{task_name} complete: ran {len(project.experiment_names)} "
+                f"replicate analyses, wrote Combined Analysis "
+                f"({len(result['written'])} files), and saved {path}."
+            )
 
-        self._spawn_task("Build combined analysis", _do)
-
-    def _project_report(self) -> None:
-        project = self._current_project()
-        if project is None:
-            return
-        self._spawn_task("Project report", lambda: project.create_report())
+        self._spawn_task(task_name, _do)
 
     def _project_ai_narrative(self) -> None:
         from ..ai import available_providers
@@ -962,7 +962,8 @@ class HubWindow(QMainWindow):
 
         def _do() -> str:
             project.generate_ai_summary(choice)
-            return ("AI narrative saved — the next Project report embeds it. "
+            path = project.create_report()
+            return (f"AI narrative saved and report rebuilt: {path}. "
                     "It summarizes the pipeline's numbers; it performs no "
                     "analysis of its own.")
 

@@ -4,9 +4,8 @@ The old Hub **Batch experiments** mode has been retired. The Project workflow re
 
 ## What to use now
 
-- **Run all experiments** runs the full analysis and per-replicate report for every configured replicate.
-- **Build combined analysis** pools the already-filtered replicate summaries into the Project `analysis/` folder and writes pooled plus mixed-model statistics.
-- **Project report** builds the Project-level PDF.
+- **Create report** / **Update report** runs every replicate, rebuilds Combined Analysis, and writes the Project-level PDF.
+- **Plot editor...** uses the Combined Analysis created by the report refresh to curate publication figures.
 - **Standard pipeline** in the Project Script picker runs the usual full Project sequence with one click.
 
 ## Migrating an old batch parent
@@ -15,7 +14,7 @@ The old Hub **Batch experiments** mode has been retired. The Project workflow re
 2. Use **Create project** or **Create config...** to write `project.yaml`.
 3. Confirm the shared design in the Project editor. The dialog can infer it from the first existing replicate config.
 4. Use **Experiment configs...** for any subfolder that has data but no `tracking_config.yaml`.
-5. Use **Run all experiments** or the built-in **Standard pipeline**.
+5. Use **Create report** or the built-in **Standard pipeline** for a full Project refresh.
 
 ## Existing `batch` scripts
 
