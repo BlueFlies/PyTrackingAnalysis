@@ -144,6 +144,69 @@ class StatusTile(QFrame):
         super().mousePressEvent(event)
 
 
+class StatusPanel(QFrame):
+    """The strip's right-hand readout: what is open right now.
+
+    Not a tile — it opens nothing and is never dimmed. It fills the strip's
+    leftover width so the Hub can always answer "which project, and which
+    experiment inside it?" without opening a panel first.
+    """
+
+    #: Kept to the tile height so the strip stays one band.
+    _HEIGHT = 84
+    _MAX_ROWS = 4
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("StatusPanel")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self._HEIGHT)
+        self.setMinimumWidth(160)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(0)
+        self._label = QLabel("")
+        self._label.setTextFormat(Qt.TextFormat.RichText)
+        self._label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self._label, 1, Qt.AlignmentFlag.AlignTop)
+        self._plain = ""
+        self.restyle()
+
+    def set_rows(self, rows: list[tuple[str, str]]) -> None:
+        """Render ``(label, value)`` pairs, one per line. Extra rows go to the
+        tooltip rather than growing the strip."""
+        import html as _html
+
+        chrome = chrome_colors()
+        shown = rows[: self._MAX_ROWS]
+        parts = []
+        for label, value in shown:
+            lab = _html.escape(str(label))
+            val = _html.escape(str(value))
+            parts.append(
+                f"<div style='margin:0'>"
+                f"<span style='color:{chrome['muted']}'>{lab}:</span> "
+                f"{val}</div>")
+        self._label.setText("".join(parts))
+        self._plain = "\n".join(f"{lab}: {val}" for lab, val in rows)
+        self.setToolTip(self._plain)
+
+    def status_text(self) -> str:
+        """The rendered rows as plain text (every row, not just the shown)."""
+        return self._plain
+
+    def restyle(self) -> None:
+        chrome = chrome_colors()
+        self.setStyleSheet(
+            f"QFrame#StatusPanel {{ background: {chrome['chip']}; "
+            f"border: 1px solid {chrome['border']}; border-radius: 8px; }} "
+            f"QLabel {{ color: {chrome['text']}; background: transparent; "
+            "border: none; font-size: 9pt; }")
+
+
 class TilePanel(QFrame):
     """The anchored overlay under a tile: a framed, scrollable host for the
     full Card widgets. Created once, shown/hidden — never destroyed."""

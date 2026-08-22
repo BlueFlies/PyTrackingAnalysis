@@ -42,12 +42,16 @@ narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
 The main app (`pytrack`): a left rail, a horizontal **tile strip** across the
-top (Project · Experiment · Analyze · Plots · Scripts · AI — each tile shows
-only live status), and a full-width output/plots area below. All controls
-live in a tile's **anchored panel** (one open at a time; launching a task
-closes it). Tiles never move or hide — an inapplicable tile dims and its
-panel holds the fix.
-_Avoid_: card column (the pre-2026-08 layout)
+top (Project · Analyze · Plots · Scripts · AI — each tile shows only live
+status, with a **status readout** filling the strip to their right: the loaded
+project and experiment in words), and a full-width output/plots area below.
+All controls live in a
+tile's **anchored panel** (one open at a time; launching a task closes it).
+Tiles never move or hide — an inapplicable tile dims and its panel holds the
+fix. The Hub is **Project-first**: an experiment is loaded only by
+double-clicking its row in the Project panel's replicates table, and the
+Project tile reports the loaded experiment (ADR-0008).
+_Avoid_: card column (the pre-2026-08 layout), Experiment tile (removed)
 
 **Experiment Script**:
 A saved, re-runnable step list of experiment-level actions (run analysis,

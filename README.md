@@ -61,10 +61,11 @@ uv run pytrack-config                 # Config Editor
 uv run pytrack-qc /path/to/MyExperiment
 ```
 
-A *project* is a folder containing a `tracking_config.yaml` plus a `data/`
-sub-folder with the DTrack export. In the Hub: pick the project folder, click
-**Load experiment**, then run analyses from the cards — output streams to the
-dock on the right, and every plot opens as a tab.
+An *experiment directory* holds a `tracking_config.yaml` plus a `data/`
+sub-folder with the DTrack export; a *Project* holds a `project.yaml` and one
+such directory per replicate. In the Hub: pick the Project folder, then
+**double-click a replicate row** to load it — output streams to the dock, and
+every plot opens as a tab.
 
 ### Python
 

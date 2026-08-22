@@ -230,10 +230,9 @@ def test_hub_project_view_populates_and_drills_in(qapp, tmp_path):
     assert win._exp_table.item(0, 0).text() == "Rep1"
     assert win._exp_table.item(0, 2).text() == "12"      # flies
 
-    # project.yaml / plot_specs.yaml never offered as tracking configs
-    combos = [win._config_combo.itemText(i)
-              for i in range(win._config_combo.count())]
-    assert "project.yaml" not in combos
+    # project.yaml is not a tracking config; the Project card no longer
+    # offers a tracking-config picker at all.
+    assert win._config_path() is None
 
     # Drilling into a replicate keeps the project view up (anchored to the
     # enclosing Project) with the current replicate's row selected.
@@ -320,10 +319,15 @@ def test_hub_sidebar_has_both_creation_flows(qapp, tmp_path):
     win.close()
 
 
-def test_hub_project_context_survives_drill_in(qapp, tmp_path):
+def test_hub_project_context_survives_drill_in(qapp, tmp_path, monkeypatch):
     from pytrackinganalysis.apps.hub import HubWindow
 
     _make_project(tmp_path)
+    # The table double-click loads the replicate (ADR-0008); this test is
+    # about the surviving Project context, so record the load instead.
+    loaded: list = []
+    monkeypatch.setattr(HubWindow, "_load_experiment",
+                        lambda self: loaded.append(str(self._project_dir)))
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
     card = win._cards["projectview"]
@@ -340,9 +344,11 @@ def test_hub_project_context_survives_drill_in(qapp, tmp_path):
     project = win._current_project()
     assert project is not None and project.name == "Proj"
 
-    # Double-clicking another row hops replicates directly (base = parent).
+    # Double-clicking another row hops replicates directly (base = parent)
+    # and loads the one it hopped to.
     win._open_selected_replicate(win._exp_table.item(1, 0))
     assert str(win._project_dir).endswith("Rep2")
+    assert loaded == [str(tmp_path / "Rep2")]
     assert not card.isHidden()
 
     # Up returns the selected directory to the project root.
@@ -657,21 +663,18 @@ def test_scaffold_replicate_adopts_an_existing_folder(tmp_path):
     assert (tmp_path / "Third" / "data").is_dir()
 
 
-def test_hub_project_dir_has_no_config_of_its_own(qapp, tmp_path):
+def test_hub_project_dir_has_no_tracking_config_of_its_own(qapp, tmp_path):
     from pytrackinganalysis.apps.hub import HubWindow
 
     _project_with_bare_dirs(tmp_path)
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
 
-    # The Config selector used to fall back to "tracking_config.yaml" here,
-    # pointing Edit config / Validate YAML at a file a Project never has.
-    assert win._config_combo.count() == 0
-    assert not win._config_combo.isEnabled()
+    # A Project root has no tracking_config.yaml — Validate / Scripts / Load
+    # must not invent one. The Project card edits project.yaml instead.
     assert win._config_path() is None
-    assert not win._btn_edit_cfg.isEnabled()
-    assert "each experiment directory" in win._config_note.text()
-    assert not win._config_note.isHidden()
+    assert win._btn_edit_cfg.isEnabled()
+    assert win._btn_edit_cfg.text().startswith("Edit")
 
     # The config-less folders are listed (discovery would hide them) and the
     # summary says how to fix them.

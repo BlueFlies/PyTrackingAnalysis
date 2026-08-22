@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QToolButton,
     QVBoxLayout,
@@ -59,7 +60,13 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
-from ._hub_tiles import ClickAwayFilter, StatusTile, TilePanel, chrome_colors
+from ._hub_tiles import (
+    ClickAwayFilter,
+    StatusPanel,
+    StatusTile,
+    TilePanel,
+    chrome_colors,
+)
 from ..help import HelpButton, make_topbar_help_button
 from ..ui import (
     ActionButton,
@@ -213,7 +220,6 @@ class HubWindow(QMainWindow):
             "Create experiment", "new", category=Category.LOAD,
             tooltip="Create a new experiment directory from an Experiment Type")
         create_exp_btn.clicked.connect(lambda: self._create_experiment())
-        self._sidebar.add_item("load", "Experiment", "load", category=Category.LOAD)
         self._sidebar.add_item("analyze", "Analyze", "basic", category=Category.ANALYZE)
         self._sidebar.add_item("plots", "Plots", "plots", category=Category.PLOTS)
         self._sidebar.add_item("scripts", "Scripts", "scripts", category=Category.SCRIPTS)
@@ -240,7 +246,6 @@ class HubWindow(QMainWindow):
         self._tiles: dict[str, StatusTile] = {}
         for key, title, icon_name, cat in (
             ("project", "Project", "project", Category.NEUTRAL),
-            ("experiment", "Experiment", "load", Category.LOAD),
             ("analyze", "Analyze", "basic", Category.ANALYZE),
             ("plots", "Plots", "plots", Category.PLOTS),
             ("scripts", "Scripts", "scripts", Category.SCRIPTS),
@@ -250,7 +255,10 @@ class HubWindow(QMainWindow):
             tile.clicked.connect(self._toggle_panel)
             self._tiles[key] = tile
             strip_lay.addWidget(tile)
-        strip_lay.addStretch(1)
+        ## The strip's leftover width was dead space; it now carries the
+        ## general status readout (what is open right now).
+        self._status_panel = StatusPanel()
+        strip_lay.addWidget(self._status_panel, 1)
         main_lay.addWidget(self._strip)
 
         # The output area — the whole point of the redesign: full width,
@@ -268,7 +276,6 @@ class HubWindow(QMainWindow):
         cards_host = QWidget()
         self._cards_lay = QVBoxLayout(cards_host)
         self._build_project_card()
-        self._build_load_card()
         self._build_project_view_card()
         self._build_analyze_card()
         self._build_plots_card()
@@ -279,7 +286,6 @@ class HubWindow(QMainWindow):
         self._panels: dict[str, TilePanel] = {}
         panel_map = {
             "project": (640, ["project", "projectview"]),
-            "experiment": (460, ["load"]),
             "analyze": (460, ["analyze"]),
             "plots": (500, ["plots"]),
             "scripts": (460, ["scripts"]),
@@ -312,9 +318,9 @@ class HubWindow(QMainWindow):
         outer.addWidget(self._progress)
 
         self._log.append_line(
-            "Welcome to PyTrackingAnalysis. Click the Project tile to open "
-            "or create a Project, or the Experiment tile to load a single "
-            "experiment."
+            "Welcome to PyTrackingAnalysis. Click the Project tile to open or "
+            "create a Project, then double-click a replicate in its table to "
+            "load that experiment."
         )
         self._restyle_chrome()
         self._refresh_tiles()
@@ -328,6 +334,7 @@ class HubWindow(QMainWindow):
             f"border-bottom: 1px solid {chrome['border']}; }}")
         for tile in self._tiles.values():
             tile.restyle()
+        self._status_panel.restyle()
         for panel in self._panels.values():
             panel.restyle()
 
@@ -335,9 +342,9 @@ class HubWindow(QMainWindow):
 
     def _build_project_card(self) -> None:
         card = Card(
-            "Project",
+            "Create/Load",
             category=Category.NEUTRAL,
-            subtitle="Pick the experiment folder and its config file.",
+            subtitle="Open a Project directory and edit its project.yaml.",
             icon_name="project",
         )
         card.add_title_widget(
@@ -352,111 +359,53 @@ class HubWindow(QMainWindow):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._project_edit = QLineEdit()
-        self._project_edit.setPlaceholderText("/path/to/experiment/folder")
+        self._project_edit.setPlaceholderText("/path/to/project/folder")
         self._project_edit.setReadOnly(True)
         browse = ActionButton("Browse…", Category.NEUTRAL, icon_name="browse")
         browse.clicked.connect(self._pick_project_dir)
         reload_btn = ActionButton("Reload", Category.TOOLS, icon_name="clear")
         reload_btn.clicked.connect(self._reload_project)
         # Path on its own line so long paths stay readable; buttons below.
-        proj_col = QVBoxLayout()
-        proj_col.setContentsMargins(0, 0, 0, 0)
-        proj_col.setSpacing(6)
-        proj_col.addWidget(self._project_edit)
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 0, 0, 0)
-        btn_row.addWidget(browse)
-        btn_row.addWidget(reload_btn)
+        form.addRow("Project dir:", self._project_edit)
+        card.add_body(form)
+
         # Way back up from a replicate to its Project — drilling in via the
         # Experiments table was otherwise a one-way door.
         self._up_btn = ActionButton("Up to project", Category.NEUTRAL,
                                     icon_name="project")
         self._up_btn.setVisible(False)
         self._up_btn.clicked.connect(self._go_up_to_project)
-        btn_row.addWidget(self._up_btn)
-        btn_row.addStretch(1)
-        proj_col.addLayout(btn_row)
-        form.addRow("Project dir:", _wrap_layout(proj_col))
 
-        self._config_combo = QComboBox()
-        self._config_combo.setToolTip(
-            "YAML configs found in the project dir. The selected file is the "
-            "one that Validate YAML checks, the Scripts card reads, and Load "
-            "experiment analyses."
-        )
-        # Both the Scripts list and the "wrong config" notice below are read
-        # off this selection; without this the Scripts card kept listing the
-        # previously selected file's recipes.
-        self._config_combo.currentIndexChanged.connect(self._on_config_changed)
-        form.addRow("Config:", self._config_combo)
-
-        card.add_body(form)
-
-        self._config_note = QLabel()
-        self._config_note.setWordWrap(True)
-        self._config_note.setStyleSheet("color: #f59e0b; font-size: 9pt;")
-        self._config_note.setVisible(False)
-        card.add_body(self._config_note)
-
-        # A summary of the selected config, shown as soon as it is read: the
-        # Experiment Type, tracking type/rig, phases, and treatment breakdown.
-        self._project_summary = QLabel()
-        self._project_summary.setWordWrap(True)
-        self._project_summary.setTextFormat(Qt.TextFormat.RichText)
-        self._project_summary.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._project_summary.setStyleSheet(
-            "QLabel { background: palette(alternate-base); border: 1px solid "
-            "palette(mid); border-radius: 6px; padding: 8px; font-size: 9pt; }")
-        self._project_summary.setVisible(False)
-        card.add_body(self._project_summary)
-
-        launchers = QHBoxLayout()
-        # Both act on the selected config / its directory, so both are turned
-        # off for a Project directory, which has neither.
+        # project.yaml is fixed in the Project directory — Edit when present,
+        # Create (writes a default) when missing; both open the Project editor.
+        # QC viewer is experiment-level and lives on the Experiment tile.
         self._btn_edit_cfg = ActionButton("Edit config…", Category.TOOLS,
                                           icon_name="config")
-        self._btn_edit_cfg.clicked.connect(lambda: self._launch_subapp("config"))
-        self._btn_qc_view = ActionButton("QC viewer…", Category.QC,
-                                         icon_name="qc")
-        self._btn_qc_view.clicked.connect(lambda: self._launch_subapp("qc"))
-        launchers.addWidget(self._btn_edit_cfg)
-        launchers.addWidget(self._btn_qc_view)
-        card.add_body(launchers)
-
-        self._cards["project"] = card
-        self._cards_lay.addWidget(card)
-
-    # ---------------- Load card ----------------
-
-    def _build_load_card(self) -> None:
-        card = Card(
-            "Load",
-            category=Category.LOAD,
-            subtitle="Load an experiment — or select a Project directory of replicates.",
-            icon_name="load",
-        )
-
-        load_btn = ActionButton(
-            "Load experiment", Category.LOAD, icon_name="load", primary=True
-        )
-        load_btn.clicked.connect(self._load_experiment)
-        new_project_btn = ActionButton(
-            "Create project…", Category.LOAD, icon_name="project"
-        )
+        self._btn_edit_cfg.setEnabled(False)
+        self._btn_edit_cfg.clicked.connect(self._edit_or_create_project_config)
+        # Making a Project is project-level work: it belongs beside the
+        # directory it writes into, not in the Experiment (Load) card.
+        new_project_btn = ActionButton("Create project…", Category.LOAD,
+                                       icon_name="project")
         new_project_btn.setToolTip(
-            "Create (or edit) a Project of replicate experiments: choose the "
-            "parent directory and fill in the project.yaml information."
+            "Create (or edit) a Project of replicate experiments somewhere "
+            "else: choose the directory and fill in the project.yaml "
+            "information."
         )
         new_project_btn.clicked.connect(self._new_project)
-        load_row = QHBoxLayout()
-        load_row.addWidget(load_btn)
-        load_row.addWidget(new_project_btn)
-        load_row.addStretch(1)
-        card.add_body(load_row)
-        self._load_btn = load_btn
+        ## One three-column grid, matching the Analysis card: the panel is wide
+        ## for the replicates table, and ragged half-rows read as accidental.
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for i, btn in enumerate((browse, reload_btn, self._up_btn,
+                                 self._btn_edit_cfg, new_project_btn)):
+            grid.addWidget(btn, i // 3, i % 3)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+        card.add_body(grid)
 
-        self._cards["load"] = card
+        self._cards["project"] = card
         self._cards_lay.addWidget(card)
 
     # ---------------- Analyze card ----------------
@@ -657,7 +606,7 @@ class HubWindow(QMainWindow):
         """The Project view (ADR-0005): shown when the selected directory is a
         Project — per-replicate status plus the project-level actions."""
         card = Card(
-            "Project",
+            "Analysis",
             category=Category.ANALYZE,
             subtitle="Replicate experiments of one design.",
             icon_name="batch",
@@ -688,8 +637,6 @@ class HubWindow(QMainWindow):
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
         card.add_body(hint)
 
-        # Managing the replicate set itself, next to the table it changes.
-        set_row = QHBoxLayout()
         btn_configs = ActionButton("Experiment configs…", Category.TOOLS,
                                    icon_name="config")
         btn_configs.setToolTip(
@@ -703,48 +650,50 @@ class HubWindow(QMainWindow):
             "Create a replicate subdirectory whose config is scaffolded from "
             "the project design — the shared design holds by construction.")
         btn_add.clicked.connect(self._project_add_experiment)
-        set_row.addWidget(btn_configs)
-        set_row.addWidget(btn_add)
-        card.add_body(set_row)
-
-        row1 = QHBoxLayout()
+        btn_plots = ActionButton("Plot editor…", Category.ANALYZE,
+                                 icon_name="report")
+        btn_plots.clicked.connect(
+            lambda: self._launch_subapp("plots", self._effective_project_dir()))
         btn_run_all = ActionButton("Run all experiments", Category.ANALYZE,
                                    icon_name="basic", primary=True)
         btn_run_all.clicked.connect(self._project_run_all)
         btn_combined = ActionButton("Build combined analysis",
                                     Category.ANALYZE, icon_name="csv")
         btn_combined.clicked.connect(self._project_build_combined)
-        row1.addWidget(btn_run_all)
-        row1.addWidget(btn_combined)
-        card.add_body(row1)
-
-        row2 = QHBoxLayout()
         btn_report = ActionButton("Project report", Category.ANALYZE,
                                   icon_name="report")
         btn_report.clicked.connect(self._project_report)
-        btn_plots = ActionButton("Plot editor…", Category.ANALYZE,
-                                 icon_name="report")
-        btn_plots.clicked.connect(
-            lambda: self._launch_subapp("plots", self._effective_project_dir()))
-        row2.addWidget(btn_report)
-        row2.addWidget(btn_plots)
-        card.add_body(row2)
-
-        row3 = QHBoxLayout()
         btn_ai = ActionButton("AI narrative…", Category.AI, icon_name="ai")
         btn_ai.setToolTip(
             "Have an AI provider write the project narrative from the "
             "Combined Analysis; the next Project report embeds it.")
         btn_ai.clicked.connect(self._project_ai_narrative)
-        row3.addWidget(btn_ai)
-        row3.addStretch(1)
-        card.add_body(row3)
+
+        ## Three equal columns: the card has to be wide for the replicates
+        ## table, and full-width action rows looked stretched and odd in it.
+        ## Row 1 manages the replicate set, row 2 is the pipeline in order.
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for i, btn in enumerate((btn_configs, btn_add, btn_plots,
+                                 btn_run_all, btn_combined, btn_report,
+                                 btn_ai)):
+            grid.addWidget(btn, i // 3, i % 3)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+        card.add_body(grid)
+        self._project_actions_grid = grid
 
         script_row = QHBoxLayout()
         script_row.addWidget(QLabel("Script:"))
         self._project_script_combo = QComboBox()
+        ## Sized by the row, not by the longest script name: AdjustToContents
+        ## let one long name push Run/Edit off the card and onto a second row.
         self._project_script_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContents)
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._project_script_combo.setMinimumContentsLength(12)
+        self._project_script_combo.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                                 QSizePolicy.Policy.Fixed)
         script_row.addWidget(self._project_script_combo, 1)
         btn_run_script = ActionButton("Run script", Category.SCRIPTS,
                                       icon_name="scripts")
@@ -762,6 +711,7 @@ class HubWindow(QMainWindow):
         script_row.addWidget(btn_run_script)
         script_row.addWidget(btn_edit_scripts)
         card.add_body(script_row)
+        self._project_script_row = script_row
 
         card.setVisible(False)
         self._cards["projectview"] = card
@@ -924,9 +874,9 @@ class HubWindow(QMainWindow):
             return
         name = name_item.text()
         target = Path(root) / name
-        ## A row without a config is a folder, not a replicate: opening it
-        ## would show an experiment card with nothing to load, so offer the
-        ## config the folder is missing instead.
+        ## A row without a config is a folder, not a replicate: there is
+        ## nothing to load yet, so offer the config it is missing instead and
+        ## stop there — region treatments still have to be assigned.
         if not prj.is_experiment_dir(target):
             resp = QMessageBox.question(
                 self, "Create config",
@@ -939,7 +889,12 @@ class HubWindow(QMainWindow):
             ## The dialog promises to OPEN the new config, not just write it —
             ## without this the user was left hunting for the file by hand.
             self._launch_subapp("config", directory=str(target))
+            self._set_project_dir(target)
+            return
+        ## The table is the only way to load an experiment (ADR-0008), so the
+        ## double-click both selects the replicate and loads it.
         self._set_project_dir(target)
+        self._load_experiment()
 
     def _create_replicate_config(self, name: str):
         """Scaffold *name*'s tracking_config.yaml from the project design.
@@ -1160,10 +1115,8 @@ class HubWindow(QMainWindow):
 
     # ---------------- Tile strip & panels (ADR-0007) ----------------
 
-    _SIDEBAR_TO_PANEL = {"load": "experiment"}
-
     def _open_panel_for_sidebar(self, key: str) -> None:
-        self._open_panel(self._SIDEBAR_TO_PANEL.get(key, key))
+        self._open_panel(key)
 
     def _toggle_panel(self, key: str) -> None:
         if self._open_panel_key == key:
@@ -1235,6 +1188,49 @@ class HubWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             pass
 
+    def _loaded_experiment_line(self, short: bool = True) -> str | None:
+        """The loaded experiment as one line — its name and headline counts,
+        read from attributes computed at load time (never a fresh summarize).
+        None when nothing is loaded. *short* abbreviates for a 196px tile; the
+        strip's status panel has room for whole words."""
+        if self._exp is None:
+            return None
+        name = str(getattr(getattr(self._exp, "arena", None),
+                           "experiment_name", "loaded"))
+        flagged = getattr(self._exp, "flagged_flies", None)
+        excluded = getattr(self._exp, "excluded_flies", None)
+        bits = [name]
+        if flagged is not None and flagged.attrs.get("n_total"):
+            bits.append(f"{flagged.attrs['n_total']} flies")
+        if excluded is not None:
+            bits.append(f"{len(excluded)} " + ("ex" if short else "excluded"))
+        if flagged is not None:
+            bits.append(f"{len(flagged)} " + ("flag" if short else "flagged"))
+        return " · ".join(bits)
+
+    def _set_status_for_project(self, project, root, n_reps: int,
+                                analyzed: int, pending: int) -> None:
+        """Fill the strip's status readout from the already-loaded *project*
+        (loading it a second time here would double every refresh's cost)."""
+        reps = f"{n_reps} — {analyzed} analyzed"
+        if pending:
+            reps += f", {pending} folder(s) without a config"
+        loaded = self._loaded_experiment_line(short=False)
+        rows = [
+            ("Project", f"{project.name} — "
+                        f"{project.experiment_type.display_name}"),
+            ("Path", str(root)),
+            ("Replicates", reps),
+            ("Experiment", loaded or
+                           "none loaded — double-click a replicate"),
+        ]
+        factors = ";  ".join(f"{k}: {', '.join(v)}"
+                             for k, v in project.design_factors.items())
+        if factors:
+            ## Beyond the four shown rows, so it lands in the tooltip.
+            rows.append(("Design", factors))
+        self._status_panel.set_rows(rows)
+
     def _refresh_tiles_inner(self) -> None:
         from .. import project as prj
 
@@ -1243,7 +1239,8 @@ class HubWindow(QMainWindow):
             return
 
         # Project tile: the effective project (enclosing one when a
-        # replicate is loaded).
+        # replicate is loaded). With the Experiment tile gone (ADR-0008) its
+        # second line becomes the load status once something is loaded.
         root = self._effective_project_dir()
         tile = tiles["project"]
         if root is not None:
@@ -1257,7 +1254,10 @@ class HubWindow(QMainWindow):
                     pending = len(project.unconfigured_dirs())
                 except Exception:  # noqa: BLE001
                     pending = 0
-                if pending and not n_reps:
+                loaded = self._loaded_experiment_line()
+                if loaded is not None:
+                    line = loaded
+                elif pending and not n_reps:
                     line = f"{pending} folder(s) await configs"
                 elif pending:
                     line = f"{n_reps} reps · {analyzed} ✓ · {pending} pend"
@@ -1265,44 +1265,30 @@ class HubWindow(QMainWindow):
                     line = f"{n_reps} replicates · {analyzed} analyzed"
                 tile.set_summary([project.name, line])
                 tile.set_dimmed(False)
+                self._set_status_for_project(project, root, n_reps, analyzed,
+                                             pending)
             except Exception as err:  # noqa: BLE001
                 tile.set_summary(["project error", str(err)])
                 tile.set_dimmed(False)
+                self._status_panel.set_rows(
+                    [("Project", str(root)), ("Error", str(err))])
         elif self._project_dir is not None:
+            ## Only a Project offers experiments to load (ADR-0008), so a bare
+            ## directory's hint is the Project it still needs.
             tile.set_summary([Path(self._project_dir).name,
-                              "standalone experiment"])
+                              "not a project yet"])
             tile.set_dimmed(True)
+            self._status_panel.set_rows([
+                ("Directory", str(self._project_dir)),
+                ("Status", "not a project yet — use Create config…"),
+            ])
         else:
             tile.set_summary(["no project", "open or create one"])
             tile.set_dimmed(True)
-
-        # Experiment tile: the loaded experiment's headline numbers, from
-        # attributes computed at load time (never a fresh summarize here).
-        tile = tiles["experiment"]
-        if self._exp is not None:
-            name = str(getattr(getattr(self._exp, "arena", None),
-                               "experiment_name", "loaded"))
-            flagged = getattr(self._exp, "flagged_flies", None)
-            excluded = getattr(self._exp, "excluded_flies", None)
-            bits = []
-            if flagged is not None and flagged.attrs.get("n_total"):
-                bits.append(f"{flagged.attrs['n_total']} flies")
-            if excluded is not None:
-                bits.append(f"{len(excluded)} ex")
-            if flagged is not None:
-                bits.append(f"{len(flagged)} flag")
-            tile.set_summary([name, " · ".join(bits) or "loaded"])
-            tile.set_dimmed(False)
-        elif root is not None:
-            tile.set_summary(["not loaded", "double-click a replicate"])
-            tile.set_dimmed(True)
-        elif self._project_dir is not None:
-            tile.set_summary([Path(self._project_dir).name,
-                              "click Load experiment"])
-            tile.set_dimmed(True)
-        else:
-            tile.set_summary(["no experiment", "load one to analyze"])
-            tile.set_dimmed(True)
+            self._status_panel.set_rows([
+                ("Project", "no project loaded"),
+                ("Next", "Project tile → Browse… or Create project…"),
+            ])
 
         # Analyze tile.
         tile = tiles["analyze"]
@@ -1325,16 +1311,20 @@ class HubWindow(QMainWindow):
             tile.set_summary([mode, f"{len(self._plot_buttons)} plot types"])
             tile.set_dimmed(False)
 
-        # Scripts tile.
+        # Scripts tile. Experiment Scripts run against the loaded experiment,
+        # so a listed recipe is not yet a runnable one.
         tile = tiles["scripts"]
         n = len(self._scripts)
         selected = self._scripts_combo.currentText().strip()
-        if n:
-            tile.set_summary([f"{n} script(s)", selected or "—"])
-            tile.set_dimmed(False)
-        else:
+        if not n:
             tile.set_summary(["no scripts", "author in Script Editor"])
             tile.set_dimmed(True)
+        elif self._exp is None:
+            tile.set_summary([f"{n} script(s)", "load an experiment first"])
+            tile.set_dimmed(True)
+        else:
+            tile.set_summary([f"{n} script(s)", selected or "—"])
+            tile.set_dimmed(False)
 
         # AI tile.
         tile = tiles["ai"]
@@ -1368,8 +1358,6 @@ class HubWindow(QMainWindow):
                 "DTrack export to data/ before loading.")
 
     def _set_project_dir(self, path: str | Path) -> None:
-        from .. import project as prj
-
         p = Path(path).expanduser().resolve()
         self._project_dir = p
         # Show only the folder name; the full path lives in self._project_dir
@@ -1377,30 +1365,9 @@ class HubWindow(QMainWindow):
         self._project_edit.setText(p.name or str(p))
         self._project_edit.setToolTip(str(p))
         ui_settings.add_recent_project(p)
-        # Populate config combo
-        self._config_combo.blockSignals(True)
-        self._config_combo.clear()
-        ## project.yaml and plot_specs.yaml are not tracking configs.
-        _NOT_CONFIGS = {"project.yaml", "plot_specs.yaml"}
-        yamls = sorted([f.name for f in p.glob("*.yaml")
-                        if f.name not in _NOT_CONFIGS]) if p.exists() else []
-        ## A Project has no tracking config of its own — each Experiment
-        ## directory carries one. Falling back to the canonical name here (as
-        ## this did unconditionally) pointed Edit config, Validate YAML and the
-        ## Scripts card at a file that should never exist in a Project root.
-        if not yamls and not prj.is_project_dir(p):
-            yamls = [_CANONICAL_CONFIG]
-        for name in yamls:
-            self._config_combo.addItem(name)
-        if _CANONICAL_CONFIG in yamls:
-            self._config_combo.setCurrentText(_CANONICAL_CONFIG)
-        self._config_combo.blockSignals(False)
-        has_config = bool(yamls)
-        self._config_combo.setEnabled(has_config)
-        self._btn_edit_cfg.setEnabled(has_config)
-        self._btn_qc_view.setEnabled(has_config)
         self._log.append_line(f"Project: {p}")
-        self._on_config_changed()
+        self._refresh_project_config_button()
+        self._refresh_scripts()
         self._refresh_project_view()
         self._refresh_tiles()
 
@@ -1408,86 +1375,81 @@ class HubWindow(QMainWindow):
         if self._project_dir:
             self._set_project_dir(self._project_dir)
 
+    def _project_config_root(self) -> Path | None:
+        """Directory whose ``project.yaml`` the Project card edits: the
+        effective Project root, or the selected directory when promoting a
+        standalone folder into a Project."""
+        return self._effective_project_dir() or self._project_dir
+
+    def _refresh_project_config_button(self) -> None:
+        from .. import project as prj
+
+        root = self._project_config_root()
+        if root is None:
+            self._btn_edit_cfg.setEnabled(False)
+            self._btn_edit_cfg.setText("Edit config…")
+            return
+        self._btn_edit_cfg.setEnabled(True)
+        if prj.is_project_dir(root):
+            self._btn_edit_cfg.setText("Edit config…")
+            self._btn_edit_cfg.setToolTip(
+                "Open the Project editor on this directory's project.yaml.")
+        else:
+            self._btn_edit_cfg.setText("Create config…")
+            self._btn_edit_cfg.setToolTip(
+                "Write a default project.yaml here and open the Project editor.")
+
+    def _edit_or_create_project_config(self) -> None:
+        """Edit ``project.yaml`` when present; otherwise write a default and
+        open the Project editor (``ProjectInfoDialog``) either way."""
+        from .. import project as prj
+
+        root = self._project_config_root()
+        if root is None:
+            self._warn("Choose a project directory first.")
+            return
+        path = Path(root)
+        if not prj.is_project_dir(path):
+            ## A project.yaml written beside a tracking_config.yaml makes a
+            ## Project whose only experiment is its own root — zero replicates
+            ## and nothing to load. The Project belongs on the parent.
+            if prj.is_experiment_dir(path):
+                parent = path.parent
+                resp = QMessageBox.question(
+                    self, "Create project",
+                    f"'{path.name}' is an experiment, not a Project.\n\n"
+                    f"Create the Project on '{parent.name}' instead, so "
+                    f"'{path.name}' becomes one of its replicates?")
+                if resp != QMessageBox.StandardButton.Yes:
+                    return
+                path = parent
+            try:
+                prj.create_project_file(str(path))
+            except Exception as err:  # noqa: BLE001
+                self._warn(f"Could not write project.yaml:\n{err}")
+                return
+            self._log.append_line(f"Created {path / prj.PROJECT_FILENAME}")
+        dialog = ProjectInfoDialog(self, start_dir=str(path))
+        if dialog.exec() and dialog.saved_dir:
+            self._set_project_dir(dialog.saved_dir)
+        else:
+            # Refresh even on cancel: Create may have just written the marker.
+            self._set_project_dir(path)
+
     # ==================================================================
     # Scripts card
     # ==================================================================
 
     def _config_path(self) -> Path | None:
-        """The selected tracking config, or None when the directory has none
-        (a Project root — its configs live one level down)."""
-        name = self._config_combo.currentText().strip()
-        if self._project_dir is None or not name:
+        """Canonical ``tracking_config.yaml`` in an Experiment directory, or
+        None at a Project root (configs live one level down)."""
+        from .. import project as prj
+
+        if self._project_dir is None:
             return None
-        return self._project_dir / name
-
-    def _uses_canonical_config(self) -> bool:
-        """True when the selected config is the one an Experiment would read."""
-        return self._config_combo.currentText().strip() == _CANONICAL_CONFIG
-
-    def _on_config_changed(self, _index: int = -1) -> None:
-        """Re-read the selected file and note when it isn't the default.
-
-        ``Experiment`` now takes a ``config_path``, so the selection genuinely
-        drives the analysis. It previously did not: the filename was joined on
-        unconditionally, so the Hub validated one file and analysed another.
-        The note stays because loading a non-default config is worth seeing.
-        """
-        if not self._config_combo.currentText().strip():
-            ## An empty selector means a Project directory: say where its
-            ## configs actually live rather than leaving a blank row.
-            self._config_note.setText(
-                f"A Project has no {_CANONICAL_CONFIG} of its own — each "
-                "experiment directory carries one. Use 'Experiment configs…' "
-                "in the Project card to create or edit them."
-            )
-            self._config_note.setVisible(True)
-        elif self._uses_canonical_config():
-            self._config_note.setVisible(False)
-        else:
-            self._config_note.setText(
-                f"Using '{self._config_combo.currentText()}' instead of "
-                f"{_CANONICAL_CONFIG} for validation, scripts and analysis."
-            )
-            self._config_note.setVisible(True)
-        self._refresh_project_summary()
-        self._refresh_scripts()
-
-    def _refresh_project_summary(self) -> None:
-        """Render a short summary of the selected config in the project card."""
-        import yaml
-
-        from .. import config_summary
-
-        cfg_path = self._config_path()
-        if cfg_path is None or not cfg_path.exists():
-            self._project_summary.setVisible(False)
-            return
-        try:
-            with open(cfg_path, encoding="utf-8") as handle:
-                config = yaml.safe_load(handle)
-            rows = config_summary.summarize(config)
-        except Exception as err:  # noqa: BLE001
-            self._project_summary.setText(f"<i>Could not read config: {err}</i>")
-            self._project_summary.setVisible(True)
-            return
-        self._project_summary.setText(self._format_summary_html(rows))
-        self._project_summary.setVisible(True)
-
-    @staticmethod
-    def _format_summary_html(rows) -> str:
-        import html as _html
-
-        out = []
-        for label, value in rows:
-            lab = _html.escape(str(label))
-            val = _html.escape(str(value))
-            if label == "Experiment type":
-                out.append(f"<div style='margin-bottom:3px'><b>{lab}:</b> "
-                           f"<b>{val}</b></div>")
-            else:
-                out.append(f"<div><span style='color:#64748b'>{lab}:</span> "
-                           f"{val}</div>")
-        return "".join(out)
+        if prj.is_project_dir(self._project_dir):
+            return None
+        return self._project_dir / _CANONICAL_CONFIG
 
     def _refresh_scripts(self) -> None:
         from ..script_editor.runner import load_scripts
@@ -1587,9 +1549,9 @@ class HubWindow(QMainWindow):
             self._warn("Choose a project directory first.")
             return
         project_dir = self._project_dir
-        # The file the user actually selected — the same one Validate YAML
-        # checks and the Scripts card reads.
-        config_name = self._config_combo.currentText().strip() or _CANONICAL_CONFIG
+        # Experiments always use the canonical tracking_config.yaml (the
+        # Project card no longer offers alternate YAML pickers).
+        config_name = _CANONICAL_CONFIG
         # Use a list as a mutable holder so the worker callable can hand the
         # built Experiment back to the GUI thread without a custom signal.
         result_holder: list = []
@@ -1999,15 +1961,8 @@ class HubWindow(QMainWindow):
             self._btn_create_report,
             self._btn_summarize,
             self._btn_pairwise,
-            self._load_btn,
         ):
-            btn.setEnabled(
-                (not busy)
-                and (
-                    btn is self._load_btn
-                    or self._exp is not None
-                )
-            )
+            btn.setEnabled((not busy) and self._exp is not None)
         # The AI summary additionally needs a provider key (checked once at
         # card build; presence-gated per ADR-0004).
         self._btn_ai_summary.setEnabled(

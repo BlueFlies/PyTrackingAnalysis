@@ -745,8 +745,8 @@ AI provider/model — are tracked there too.
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
 The Hub's layout (see `docs/adr/0007`) is a **tile strip** across the top —
-six compact live-status tiles: **Project · Experiment · Analyze · Plots ·
-Scripts · AI** — with the **output area at full width** underneath. A tile
+five compact live-status tiles: **Project · Analyze · Plots · Scripts · AI**
+— with the **output area at full width** underneath. A tile
 shows only status (the project's name and replicate health, the loaded
 experiment's fly counts, whether analysis is faceted, …); **clicking it
 drops an anchored panel** holding all of that area's controls. One panel is
@@ -754,8 +754,16 @@ open at a time; **Esc** or clicking anywhere else closes it, and **starting
 any task closes it automatically** so the streaming log and plots are
 immediately visible. Tiles never move or hide: an inapplicable tile is
 dimmed with a hint, and its panel contains exactly the control that fixes
-the missing state (the dimmed Experiment tile opens the panel with the Load
-button in it).
+the missing state (the dimmed Analyze tile opens the panel that tells you to
+load an experiment first).
+
+The Hub is **Project-first** (`docs/adr/0008`): an experiment is loaded only
+by double-clicking its row in the Project panel's replicates table, so there
+is one subject at a time because there is one way to change it.  There is no
+Experiment tile — the Project tile reports the loaded experiment on its
+second line, and the **status readout** filling the strip right of the AI tile
+spells the same state out in full: project name and type, path, replicate and
+analysis counts, and the loaded experiment (design factors in its tooltip).
 
 The left sidebar opens the same panels (Tools lives *only* there), and
 carries the two creation shortcuts — **Create project** (write or edit a
@@ -765,25 +773,30 @@ Experiment Type).
 
 The panels:
 
-- **Project** (also holds the Project view) — pick the directory (an experiment directory *or* a Project;
-  the text box shows just the folder name to stay readable; hover it for the
-  full path), choose a YAML config, launch the Config Editor or QC Viewer in
-  their own windows, and **Reload** to re-scan the folder.  A **Project**
-  directory has no `tracking_config.yaml` of its own — its configs live one
-  level down, one per experiment directory — so the **Config** selector is
-  empty and the two launchers are disabled while one is selected; use
-  **Experiment configs…** in the Project view instead.  When the loaded
-  experiment is a replicate inside a Project, an **Up to project** button
-  returns to the enclosing Project view.
-- **Experiment** — **Load experiment** loads and caches the Experiment so
-  subsequent analyses re-use the parsed data (the Experiment tile then shows
-  its name and fly/excluded/flagged counts); **Create project…** creates or
-  edits a `project.yaml` for the selected directory.
-- **Project view** (inside the Project panel; populated when the selected
-  directory is — or sits inside — a Project) —
+- **Project** — two cards, **Create/Load** and **Analysis** (the panel itself is
+  already titled Project, so neither card repeats it).
+  **Create/Load** picks the folder (an experiment directory *or* a Project; the
+  text box shows just the folder name to stay readable; hover it for the full
+  path), **Reload** re-scans it, and one button edits the Project's own
+  config: **Edit config…** when `project.yaml` is present, **Create config…**
+  when it is missing (which writes a default and opens the same Project
+  editor).  Pointing it at a folder that is *itself* an experiment
+  makes **Create config…** offer the **parent** instead, so the experiment
+  becomes a replicate — a `project.yaml` written beside a
+  `tracking_config.yaml` would be a Project with nothing to load.  Beside it,
+  **Create project…** does the same for a directory you pick, so a new Project
+  can be started without first opening it.  There is
+  no tracking-config picker here — `project.yaml` is fixed at the Project
+  root, and each experiment's `tracking_config.yaml` lives one level down
+  (use **Experiment configs…** in the Analysis card); QC is experiment-level
+  and opens on load.  When the loaded experiment is a replicate inside a
+  Project, an **Up to project** button returns to the enclosing Project.
+- **Analysis** (the second card in the Project panel; populated when the
+  selected directory is — or sits inside — a Project) —
   the main working surface for replicates: a table with per-replicate status
-  (**Experiment, Config, Flies, Excluded, Flagged, Report**; double-click a
-  row to open that replicate), plus **Experiment configs…** and
+  (**Experiment, Config, Flies, Excluded, Flagged, Report**; **double-click a
+  row to load that replicate** — this is the only way to load an experiment,
+  and it runs QC as it loads), plus **Experiment configs…** and
   **Add experiment…** (below), the project-level actions — **Run all
   experiments**, **Build combined analysis**, **Project report**,
   **Plot editor…**, **AI narrative…** — and a **Script** picker with

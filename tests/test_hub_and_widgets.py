@@ -298,7 +298,7 @@ def test_closing_the_hub_waits_for_a_running_task(hub, no_dialogs, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# U1 — the Config dropdown was ignored by Load experiment
+# U1 — Load / Scripts always use the canonical tracking_config.yaml
 # --------------------------------------------------------------------------
 
 def _write_config(path, script_name):
@@ -312,28 +312,20 @@ def _write_config(path, script_name):
     }, sort_keys=False))
 
 
-def test_scripts_follow_the_selected_config(hub, tmp_path):
-    """The Scripts list used to keep showing the previous file's recipes."""
+def test_scripts_follow_the_canonical_config(hub, tmp_path):
+    """Scripts read tracking_config.yaml — alternate YAMLs are ignored."""
     _write_config(tmp_path / "tracking_config.yaml", "canonical")
     _write_config(tmp_path / "alt_config.yaml", "alternative")
     hub._set_project_dir(tmp_path)
     assert hub._scripts_combo.currentText() == "canonical"
-
-    hub._config_combo.setCurrentText("alt_config.yaml")
-
-    assert hub._scripts_combo.currentText() == "alternative"
+    assert hub._config_path() == tmp_path / "tracking_config.yaml"
 
 
-def test_loading_uses_the_selected_config(hub, tmp_path, monkeypatch):
-    """U1: the selection used to be ignored — tracking_config.yaml always won.
-
-    ``Experiment`` now takes ``config_path``, so the file the Hub validates is
-    the file it analyses.
-    """
+def test_loading_uses_the_canonical_config(hub, tmp_path, monkeypatch):
+    """Load always opens tracking_config.yaml (no Project-card picker)."""
     _write_config(tmp_path / "tracking_config.yaml", "canonical")
     _write_config(tmp_path / "alt_config.yaml", "alternative")
     hub._set_project_dir(tmp_path)
-    hub._config_combo.setCurrentText("alt_config.yaml")
 
     from pytrackinganalysis.apps import hub as hub_mod
 
@@ -351,8 +343,6 @@ def test_loading_uses_the_selected_config(hub, tmp_path, monkeypatch):
             return "fake"
 
     monkeypatch.setattr(hub_mod.ExperimentMod, "Experiment", _FakeExperiment)
-    # Run the task body inline: this test is about which config the load opens,
-    # not about the post-load wiring (covered elsewhere).
     monkeypatch.setattr(
         hub, "_spawn_task_with_callbacks",
         lambda label, task, on_ok, on_fail, **kwargs: task(),
@@ -360,9 +350,7 @@ def test_loading_uses_the_selected_config(hub, tmp_path, monkeypatch):
 
     hub._load_experiment()
 
-    assert seen.get("config_path") == "alt_config.yaml", (
-        "Load experiment ignored the Config dropdown"
-    )
+    assert seen.get("config_path") == "tracking_config.yaml"
 
 
 def test_experiment_honours_an_alternative_config_path(tmp_path):
@@ -380,35 +368,6 @@ def test_experiment_honours_an_alternative_config_path(tmp_path):
 
     assert exp.config_path == str(alt)
     assert exp.facet_cutoffs == (3,), "the alternative config was not the one loaded"
-
-
-def test_project_summary_shows_experiment_type_on_open(hub, tmp_path):
-    (tmp_path / "tracking_config.yaml").write_text(yaml.safe_dump({
-        "global": {"experiment_type": "Valence", "tracking_rig": "arena_max"},
-        "counting_regions": {"Light": {"alias": "L"}, "NoLight": {"alias": "N"}},
-        "tracking_regions": {f"T_{i}": {"experimental_factors": "control"}
-                             for i in range(36)},
-    }, sort_keys=False))
-    hub._set_project_dir(tmp_path)
-
-    # isVisible() needs the whole window shown; isHidden() reflects our setVisible.
-    assert not hub._project_summary.isHidden()
-    text = hub._project_summary.text()
-    assert "Valence Experiment" in text
-    assert "TWOCHOICETRACKER" in text
-    assert "control ×36" in text
-
-
-def test_selecting_the_canonical_config_hides_the_warning(hub, tmp_path):
-    _write_config(tmp_path / "tracking_config.yaml", "canonical")
-    _write_config(tmp_path / "alt_config.yaml", "alternative")
-    hub._set_project_dir(tmp_path)
-
-    hub._config_combo.setCurrentText("alt_config.yaml")
-    assert hub._config_note.text()
-    hub._config_combo.setCurrentText("tracking_config.yaml")
-
-    assert not hub._config_note.isVisible()
 
 
 # --------------------------------------------------------------------------

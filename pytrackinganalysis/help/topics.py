@@ -30,7 +30,7 @@ TOPICS: tuple[HelpTopic, ...] = (
     HelpTopic(
         "project_structure",
         "Project directory layout",
-        "Required folders, naming rules, and batch parent layout.",
+        "Experiment and Project layouts, naming rules, and the two config levels.",
         "project_structure.md",
     ),
     HelpTopic(
