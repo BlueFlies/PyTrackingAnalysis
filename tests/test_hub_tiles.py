@@ -54,14 +54,18 @@ def test_strip_has_seven_fixed_tiles_and_full_width_output(hub):
 
 
 def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
-    assert hub._tiles["project"].is_dimmed()
-    assert "no project" in hub._tiles["project"].summary_text()
-    assert hub._tiles["batch"].is_dimmed()
-    assert "no batch" in hub._tiles["batch"].summary_text()
-    # Every experiment-dependent tile waits on a load, Scripts included:
-    # its recipes run against the loaded experiment.
-    for key in ("analyze", "plots", "scripts"):
+    # Every experiment-dependent tile waits on a load, Scripts included (its
+    # recipes run against the loaded experiment) and AI too — a provider key
+    # with nothing to summarize is not "ready".
+    for key in ("analyze", "plots", "scripts", "ai"):
         assert hub._tiles[key].is_dimmed(), key
+
+    # Batch, Project, and Tools are never dimmed (user feedback 2026-08-24):
+    # they are the way in, always available, and say their state in words.
+    for key in ("batch", "project", "tools"):
+        assert not hub._tiles[key].is_dimmed(), key
+    assert "no project" in hub._tiles["project"].summary_text()
+    assert "no batch" in hub._tiles["batch"].summary_text()
 
 
 def test_a_dimmed_tile_actually_paints_dimmed(hub):
@@ -579,15 +583,17 @@ def test_project_card_edits_project_yaml_not_tracking_configs(
 
 # ---- the Batch tile & panel (ADR-0009) ------------------------------------
 
-def test_batch_selection_lights_the_batch_tile_and_dims_project(
+def test_batch_selection_fills_the_batch_tile_and_points_project_at_it(
         hub, qapp, tmp_path):  # noqa: F811
     _make_batch(tmp_path)
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
-    assert not hub._tiles["batch"].is_dimmed()
     assert "2 project" in hub._tiles["batch"].summary_text()
-    # The Project tile's fix is choosing a project in the Batch panel.
-    assert hub._tiles["project"].is_dimmed()
+    # The Project tile's fix is choosing a project in the Batch panel — said
+    # in its summary, since neither entry tile ever dims.
+    assert "double-click a project" in hub._tiles["project"].summary_text()
+    assert not hub._tiles["batch"].is_dimmed()
+    assert not hub._tiles["project"].is_dimmed()
     text = hub._status_panel.status_text()
     assert "Batch" in text
     assert "2 Project" in text
@@ -596,11 +602,13 @@ def test_batch_selection_lights_the_batch_tile_and_dims_project(
     assert "batch" in text
 
 
-def test_project_selection_dims_the_batch_tile(hub, qapp, tmp_path):  # noqa: F811
+def test_project_selection_tells_the_batch_tile_to_go_up_a_level(
+        hub, qapp, tmp_path):  # noqa: F811
     _make_project(tmp_path)
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
-    assert hub._tiles["batch"].is_dimmed()
+    assert "selection is a project" in hub._tiles["batch"].summary_text()
+    assert not hub._tiles["batch"].is_dimmed()
     assert not hub._tiles["project"].is_dimmed()
 
 
@@ -634,8 +642,8 @@ def test_batch_double_click_is_an_ordinary_selection_change(
     # The selection moved down to the Project — no second context, no
     # 'up to batch' button to return from (ADR-0009).
     assert hub._project_dir == tmp_path / "P2"
-    assert not hub._tiles["project"].is_dimmed()
-    assert hub._tiles["batch"].is_dimmed()
+    assert "replicates" in hub._tiles["project"].summary_text()
+    assert "selection is a project" in hub._tiles["batch"].summary_text()
 
 
 def test_batch_picker_defaults_to_each_projects_own_script(

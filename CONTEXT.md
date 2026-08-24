@@ -61,7 +61,8 @@ variation.
 **Project Report**:
 `<project>/<project>_report.pdf`: pooled publication figures rendered by the
 same Plot Spec/Style system the Plot Editor saves, the pooled + mixed
-statistics tables, a per-replicate summary table, and an opt-in AI-written
+statistics tables, a per-replicate summary table, a table naming every
+Excluded Fly across the Project with its reason, and an opt-in AI-written
 narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
@@ -253,8 +254,21 @@ after the event, because a dead animal still registers as occupancy in
 whichever region it died in and corrupts the fly's numbers throughout. Unlike
 the Low-Transition Exclusion it is not an Experiment Type's policy but an
 observation about the recording, so it applies to every type, Custom
-Experiments included.
+Experiments included (ADR-0010).
 _Avoid_: dead fly (death is one reason among several), bad well, censored
+
+**Removal Sheet**:
+`removed_regions.csv` (or `.xlsx`) at a Batch root — or a Project root — whose
+`project, experiment, region, reason` rows declare Removed Regions in bulk,
+the way lab notes actually arrive: a spreadsheet, authored without the app.
+It is a **writer, not an authority**: applying it writes the declarations into
+each Experiment's `removed_regions.yaml` and nothing reads it at analysis
+time, so a Project carries its own removals wherever it is copied. Applied at
+the start of a Batch Run and on an explicit button — never merely by browsing
+to a folder — merging into what is already declared, where the standing
+declaration wins and a differing reason is reported as a conflict.
+_Avoid_: removal manifest, exclusion list (that is `<exp>_Excluded.csv`, an
+output)
 
 **Low-Movement Flag**:
 Valence-only QC flag: a fly averaging less than `min_movement` mm/min (yaml

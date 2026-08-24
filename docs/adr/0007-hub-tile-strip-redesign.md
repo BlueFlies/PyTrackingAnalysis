@@ -63,3 +63,22 @@ permanently taxed the space the user actually watches: the log and the plots.
   leaves Window/Base/Mid at light values, which rendered unreadable light
   chips on the dark UI. The same fix was applied to the app-wide Card/TopBar
   QSS, healing a pre-existing dark-mode defect in all four apps.
+
+## Amendment (2026-08-24): which tiles dim, and what dimming looks like
+
+"Context-dimmed" was tracked but never painted: `StatusTile._dimmed` reached
+no stylesheet, so all seven chips looked equally available in every state.
+Dimming is now real — the tile recedes to the band color, its title and
+summary go muted, and its icon renders in Qt's disabled mode — and it applies
+to the Cards inside the panel too, so a state reads the same from the strip
+and from the panel it opens.
+
+Not every tile takes part. **Batch**, **Project**, and **Tools** never dim:
+the first two are the way into the Hub (their panels hold the pickers that
+create the state everything else waits on) and the third is housekeeping that
+needs no subject. All three say their state in words instead — "no project —
+open or create one", "selection is a project — load its parent to batch".
+Dimming is reserved for the four tiles whose subject is a loaded replicate:
+**Analyze**, **Plots**, **Scripts**, **AI**. AI dims without an experiment
+even when a provider key is present — a key with nothing to summarize is not
+"ready".

@@ -1739,26 +1739,29 @@ class HubWindow(QMainWindow):
             designated = meta["script"] or default_designation
 
         # Batch tile: the containment level above Project (ADR-0009).
+        ## Never dimmed, whatever is selected (user feedback 2026-08-24):
+        ## Batch and Project are the two ways INTO the Hub — their panels
+        ## hold the pickers that create the state everything else waits on,
+        ## so they are always available and must not read as unavailable.
         tile = tiles.get("batch")
         if tile is not None:
+            tile.set_dimmed(False)
             if batch_root is not None:
                 tile.set_summary([f"{len(batch_names)} project(s)",
                                   designated])
-                tile.set_dimmed(False)
             elif self._project_root() is not None:
                 tile.set_summary(["selection is a project",
                                   "load its parent to batch"])
-                tile.set_dimmed(True)
             else:
                 tile.set_summary(["no batch",
                                   "load a folder of projects"])
-                tile.set_dimmed(True)
 
         # Project tile: the effective project (enclosing one when a
         # replicate is loaded). With the Experiment tile gone (ADR-0008) its
         # second line becomes the load status once something is loaded.
         root = self._project_root()
         tile = tiles["project"]
+        tile.set_dimmed(False)          # always available — see the Batch tile
         if root is not None:
             try:
                 project = prj.Project(str(root))
@@ -1780,12 +1783,10 @@ class HubWindow(QMainWindow):
                 else:
                     line = f"{n_reps} replicates · {analyzed} analyzed"
                 tile.set_summary([project.name, line])
-                tile.set_dimmed(False)
                 self._set_status_for_project(project, root, n_reps, analyzed,
                                              pending)
             except Exception as err:  # noqa: BLE001
                 tile.set_summary(["project error", str(err)])
-                tile.set_dimmed(False)
                 self._status_panel.set_rows(
                     [("Project", str(root)), ("Error", str(err))])
         elif batch_root is not None:
@@ -1793,7 +1794,6 @@ class HubWindow(QMainWindow):
             ## fix is choosing one in the Batch panel's table (ADR-0009).
             tile.set_summary([Path(batch_root).name,
                               "double-click a project"])
-            tile.set_dimmed(True)
             self._status_panel.set_rows([
                 ("Batch", f"{Path(batch_root).name} — "
                           f"{len(batch_names)} Project(s)"),
@@ -1806,14 +1806,12 @@ class HubWindow(QMainWindow):
             ## directory's hint is the Project it still needs.
             tile.set_summary([Path(self._project_dir).name,
                               "not a project yet"])
-            tile.set_dimmed(True)
             self._status_panel.set_rows([
                 ("Directory", str(self._project_dir)),
                 ("Status", "not a project yet — use Create config…"),
             ])
         else:
             tile.set_summary(["no project", "open or create one"])
-            tile.set_dimmed(True)
             self._status_panel.set_rows([
                 ("Project", "no project loaded"),
                 ("Next", "Project tile → Load… or Create project…"),
@@ -1856,16 +1854,22 @@ class HubWindow(QMainWindow):
             tile.set_summary([f"{n} script(s)", selected or "—"])
             tile.set_dimmed(False)
 
-        # AI tile.
+        # AI tile. The summary is about the AI subject (a loaded experiment
+        # to summarize) as much as the provider key: with a key but nothing
+        # loaded the tile used to sit lit next to a dimmed AI card.
         tile = tiles["ai"]
-        if self._ai_available:
-            from ..ai import available_providers
-            names = ", ".join(p.provider_name for p in available_providers())
-            tile.set_summary(["ready", names])
-            tile.set_dimmed(False)
-        else:
+        if not self._ai_available:
             tile.set_summary(["no API key", "add one to .env"])
             tile.set_dimmed(True)
+        else:
+            from ..ai import available_providers
+
+            names = ", ".join(prov.provider_name
+                              for prov in available_providers())
+            ready = self._exp is not None
+            tile.set_summary(["ready", names] if ready
+                             else [names, "load an experiment first"])
+            tile.set_dimmed(not ready)
 
         # Tools tile.
         tile = tiles["tools"]

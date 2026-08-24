@@ -758,10 +758,17 @@ experiment's fly counts, whether analysis is faceted, …); **clicking it
 drops an anchored panel** holding all of that area's controls. One panel is
 open at a time; **Esc** or clicking anywhere else closes it, and **running
 tasks leave panels in place** while the streaming log and plots remain
-visible below. Tiles never move or hide: an inapplicable tile is
-dimmed with a hint, and its panel contains exactly the control that fixes
+visible below. Tiles never move or hide: a tile whose subject is missing is
+dimmed with a hint — greyed surface, muted title, greyed icon — and so are
+the cards inside its panel, so the state reads the same from the strip and
+from the open panel. The panel still contains exactly the control that fixes
 the missing state (the dimmed Analyze tile opens the panel that tells you to
-load an experiment first).
+load an experiment first), and a dimmed tile or card stays clickable
+throughout. **Batch**, **Project**, and **Tools** are never dimmed — the two
+entry points and the housekeeping tools are always available, and say their
+state in words ("no project - open or create one") rather than by greying.
+The four experiment-level tiles - Analyze, Plots, Scripts, AI - dim together
+until a replicate is loaded.
 
 The Hub is **Project-first** (`docs/adr/0008`): an experiment is loaded only
 by double-clicking its row in the Project panel's replicates table, so there

@@ -2,9 +2,11 @@
 
 A **Batch** is a folder whose immediate subdirectories are Projects. Nothing
 marks it — choose such a folder with the Batch panel's own **Choose batch
-folder…** button (or Project tile → **Load…**) and the **Batch** tile lights
-up with every Project inside it auto-loaded into the table; select a single
-Project and the Batch tile dims instead. A
+folder…** button (or Project tile → **Load…**) and the **Batch** tile fills
+with every Project inside it auto-loaded into the table; select a single
+Project and the Batch tile reads "selection is a project — load its parent to
+batch" instead. The Batch and Project tiles are never dimmed: they are the
+way in, always available whatever is selected. A
 Batch is a processing convenience: it runs many Projects unattended and
 reports per-Project success or failure. It never pools results across
 Projects — each Project keeps its own design and its own outputs.
