@@ -80,8 +80,3 @@ Optional, created only when needed: changing the Script picker away from the
 default writes the designation (`script:`) there, and a `project_scripts:`
 list can be added by hand. Leaving **Each project's own script** selected
 never creates the file.
-
-## Batch tools
-
-The old **Batch tools** button now lives here, disabled — it predates the
-Project structure and is being reworked.

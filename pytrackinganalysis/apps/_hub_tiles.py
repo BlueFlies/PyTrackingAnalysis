@@ -13,10 +13,12 @@ background, or on Esc — a running task leaves it alone.
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -74,13 +76,10 @@ class StatusTile(QFrame):
 
         head = QHBoxLayout()
         head.setSpacing(6)
-        icon_lbl = QLabel()
-        icon_lbl.setPixmap(icon(icon_name).pixmap(QSize(16, 16)))
-        head.addWidget(icon_lbl)
+        self._icon = icon(icon_name)
+        self._icon_lbl = QLabel()
+        head.addWidget(self._icon_lbl)
         self._title_lbl = QLabel(title.upper())
-        self._title_lbl.setStyleSheet(
-            f"color: {category_color(category)}; font-weight: 700; "
-            "font-size: 9pt; letter-spacing: 0.06em;")
         head.addWidget(self._title_lbl)
         head.addStretch(1)
         lay.addLayout(head)
@@ -136,15 +135,26 @@ class StatusTile(QFrame):
         color = category_color(self._category)
         ## Chips with a hairline seam and a thin outline (user feedback
         ## 2026-08-22); the open panel's tile upgrades it to its category
-        ## color.
+        ## color. An inapplicable tile keeps the outline — dimming must not
+        ## cost it its edge, or the strip loses its shape.
         border = f"2px solid {color}" if self._active \
             else f"1px solid {chrome['border']}"
         left, right = self._radii
-        ## Uniform, high-contrast subtext: pure white/black by theme — the
-        ## dim state lives in the title color alone.
-        pop = "#ffffff" if resolved_mode() == "dark" else "#000000"
+        if self._dimmed:
+            ## Dimmed tiles recede toward the window behind the strip, with
+            ## every element muted together — the title, the summary, and the
+            ## icon (user feedback 2026-08-24, superseding the 2026-08-22
+            ## "titles always wear their category color"). Words alone said
+            ## it too quietly: seven equally bright chips read as seven
+            ## equally available ones.
+            background, title, pop = chrome["band"], chrome["muted"], chrome["muted"]
+        else:
+            background, title = chrome["hover"], color
+            ## Uniform, high-contrast subtext on a live tile: pure white or
+            ## black by theme.
+            pop = "#ffffff" if resolved_mode() == "dark" else "#000000"
         self.setStyleSheet(
-            f"StatusTile {{ background: {chrome['hover']}; "
+            f"StatusTile {{ background: {background}; "
             f"border: {border}; "
             f"border-top-left-radius: {left}px; "
             f"border-bottom-left-radius: {left}px; "
@@ -152,12 +162,11 @@ class StatusTile(QFrame):
             f"border-bottom-right-radius: {right}px; }} "
             f"QLabel {{ color: {pop}; background: transparent; "
             "border: none; }")
-        # Titles always wear their category color, matching the icon (user
-        # feedback 2026-08-22); a tile's applicability is said in its
-        # summary words rather than shown by a muted title.
         self._title_lbl.setStyleSheet(
-            f"color: {color}; font-weight: 700; font-size: 9pt; "
+            f"color: {title}; font-weight: 700; font-size: 9pt; "
             "letter-spacing: 0.06em;")
+        mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
+        self._icon_lbl.setPixmap(self._icon.pixmap(QSize(16, 16), mode))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -274,20 +283,38 @@ class TilePanel(QFrame):
     def finish(self) -> None:
         self._content_lay.addStretch(1)
 
+    def _content_height(self) -> int:
+        """Height the panel needs to show its cards without scrolling.
+
+        Qt defers geometry updates for hidden widgets, so cards rebuilt while
+        the panel was closed (e.g. the plot buttons after an experiment load)
+        leave stale cached hints in every layout above them: the host layout
+        kept reporting the pre-rebuild height, and the panel opened far too
+        short, with a scrollbar. Walk the subtree — ``updateGeometry`` on each
+        widget, ``invalidate`` on each layout — so the measurement below sees
+        the content as it is now.
+        """
+        host = self._scroll.widget()
+        for lay in host.findChildren(QLayout):
+            lay.invalidate()
+        for child in host.findChildren(QWidget):
+            child.updateGeometry()
+        outer = self.layout()
+        if host.layout() is not None:
+            host.layout().invalidate()
+            host.layout().activate()
+        margins = outer.contentsMargins()
+        ## Chrome the content does not get: the panel's own frame, the scroll
+        ## area's frame, and the outer layout's margins.
+        return (host.sizeHint().height() + margins.top() + margins.bottom()
+                + 2 * self._scroll.frameWidth() + 2 * self.frameWidth())
+
     def open_at(self, x: int, y: int, max_bottom: int) -> None:
         """Show anchored at (*x*, *y*) in parent coordinates, clamped so the
         panel never runs past *max_bottom* or the parent's right edge."""
         parent = self.parentWidget()
         width = min(self._panel_width, parent.width() - 16)
-        ## Recompute the content hint: widgets rebuilt while the panel was
-        ## hidden (e.g. plot buttons after a load) leave a stale cached hint,
-        ## which opened the panel far too short on its first click.
-        host = self._scroll.widget()
-        if host.layout() is not None:
-            host.layout().invalidate()
-            host.layout().activate()
-        hint = host.sizeHint().height() + 24
-        height = max(120, min(hint, max_bottom - y - 8))
+        height = max(120, min(self._content_height(), max_bottom - y - 8))
         x = max(8, min(x, parent.width() - width - 8))
         self.setGeometry(x, y, width, height)
         self.raise_()

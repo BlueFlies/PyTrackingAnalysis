@@ -26,8 +26,8 @@ central `project_scripts:` section — one recipe serving every Project without
 being copied, the `experiment_scripts:` idea one level up.
 _Avoid_: study, collection, batch root (the Batch IS the directory), batch
 parent, batch script (there is no third script level — the thing a Batch Run
-runs IS a Project Script). Unrelated to **Batch Tools** (per-Project
-directory operations) and to the retired batch-over-experiments mode.
+runs IS a Project Script). Unrelated to the retired batch-over-experiments
+mode, and to the Batch Tools dialog removed in 2026-08.
 
 **Project**:
 A directory with a `project.yaml` at its root whose immediate subdirectories
@@ -228,11 +228,33 @@ is findable with one glob. Both die together.
 _Avoid_: AI analysis, AI interpretation
 
 **Excluded Fly**:
-A fly removed by the Low-Transition Exclusion — absent from figures, summary
-measures, statistics, and the summary CSVs, but listed with its transition
-count in the report's removal table and `<exp>_Excluded.csv`, and still shown
-in data-quality output.
+A fly removed from the **analysis population** for a recorded reason — absent
+from figures, summary measures, statistics, and the summary CSVs, but listed
+with its **Reason** in the report's removal table and `<exp>_Excluded.csv`,
+and still shown in data-quality output. The reason is a column, not a class:
+there is one exclusion list per experiment, and one row per fly, however many
+criteria produced it. Today's reasons are the Low-Transition Exclusion and a
+**Removed Region**; when both apply the reason string names both, the
+experimenter's observation first (`Removed: dead at ~20 min; Low
+transitions`), because an observation outranks an inferred rule.
 _Avoid_: dropped fly, filtered fly
+
+**Removed Region**:
+A tracking region the experimenter declares out of the analysis, with a
+free-text reason (default `Undefined`). Only the experimenter can know it —
+death, escape, a flooded well, a mis-loaded plate — so it is entered by hand,
+never inferred from the data. Declared in **`removed_regions.yaml`** at the
+Experiment Directory root: an observation about how the run went, deliberately
+outside `tracking_config.yaml`, which is a design specification. The unit is
+the **region, not the fly**: every tracker in a removed region becomes an
+Excluded Fly, so a well holding two animals loses both. Removal is
+all-or-nothing — the whole recording for that region goes, not just the part
+after the event, because a dead animal still registers as occupancy in
+whichever region it died in and corrupts the fly's numbers throughout. Unlike
+the Low-Transition Exclusion it is not an Experiment Type's policy but an
+observation about the recording, so it applies to every type, Custom
+Experiments included.
+_Avoid_: dead fly (death is one reason among several), bad well, censored
 
 **Low-Movement Flag**:
 Valence-only QC flag: a fly averaging less than `min_movement` mm/min (yaml

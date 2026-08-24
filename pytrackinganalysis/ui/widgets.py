@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QPalette, QPixmap, QTextCursor
+from PyQt6.QtGui import QColor, QIcon, QPalette, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -197,40 +197,97 @@ class Card(QFrame):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
 
-        if icon_name is not None:
-            ico = QLabel(self)
-            ico.setPixmap(icon(icon_name, category=category).pixmap(20, 20))
-            title_row.addWidget(ico)
+        self._icon = icon(icon_name, category=category) if icon_name else None
+        self._icon_lbl: QLabel | None = None
+        if self._icon is not None:
+            self._icon_lbl = QLabel(self)
+            title_row.addWidget(self._icon_lbl)
 
         self._title_lbl = QLabel(title, self)
         self._title_lbl.setObjectName("PtrackCardTitle")
-        self._title_lbl.setStyleSheet(
-            f"QLabel#PtrackCardTitle {{ "
-            f"  border-left: 4px solid {category_color(category)};"
-            f"  padding-left: 8px;"
-            f"}}"
-        )
         title_row.addWidget(self._title_lbl, 1)
         self._title_row = title_row
 
         outer.addLayout(title_row)
 
+        self._subtitle_lbl: QLabel | None = None
         if subtitle:
             sub = QLabel(subtitle, self)
             sub.setObjectName("PtrackCardSubtitle")
             sub.setWordWrap(True)
             outer.addWidget(sub)
+            self._subtitle_lbl = sub
 
         self._body = QVBoxLayout()
         self._body.setSpacing(8)
         outer.addLayout(self._body)
 
-        pal = self.palette()
-        base = pal.color(QPalette.ColorRole.Base)
-        bg = base.lighter(102) if resolved_mode() == "light" else base.lighter(115)
-        pal.setColor(QPalette.ColorRole.Window, bg)
+        self._dimmed = False
         self.setAutoFillBackground(True)
-        self.setPalette(pal)
+        self.restyle()
+
+    def set_dimmed(self, dimmed: bool) -> None:
+        """Grey the card's surface to show its actions have no subject yet.
+
+        Dimming is presentation only — the card stays live so the control
+        that fixes the missing state (a Reload, a checkbox) keeps working;
+        the actions themselves are gated with ``setEnabled`` as before.
+        """
+        if dimmed != self._dimmed:
+            self._dimmed = dimmed
+            self.restyle()
+
+    def is_dimmed(self) -> bool:
+        return self._dimmed
+
+    def restyle(self) -> None:
+        """Repaint the card for the CURRENT theme and dim state.
+
+        The colors come from ``surface_colors`` rather than palette roles,
+        which qdarktheme leaves at the platform's light values, and are
+        applied as this widget's own stylesheet — the app stylesheet's
+        ``QFrame#PtrackCard`` background rule wins over a palette color.
+
+        Every visible piece is repainted rather than fading the whole card
+        with a ``QGraphicsOpacityEffect``: an effect composites the card over
+        whatever is behind it, and behind it is a scroll viewport still
+        painting the platform's LIGHT base, so on the dark theme the "dim"
+        came out brighter than the live card.
+        """
+        from .theme import surface_colors
+
+        c = surface_colors()
+        base = QColor(c["base"])
+        if self._dimmed:
+            ## Away from the live surface in the direction the theme reads as
+            ## recessed, and far enough to survive a glance: on the dark
+            ## theme a few points of lightness is invisible.
+            bg = base.darker(112) if resolved_mode() == "light" else base.darker(150)
+            accent = text = c["muted"]
+            border = f"1px solid {c['border']}"
+        else:
+            bg, accent, text = base, category_color(self._category), c["text"]
+            border = "none"
+        self.setStyleSheet(
+            f"QFrame#PtrackCard {{ border-radius: 10px; "
+            f"background: {bg.name()}; border: {border}; }}"
+        )
+        self._title_lbl.setStyleSheet(
+            f"QLabel#PtrackCardTitle {{"
+            f"  border-left: 4px solid {accent};"
+            f"  padding-left: 8px;"
+            f"  color: {text};"
+            f"}}"
+        )
+        if self._subtitle_lbl is not None:
+            self._subtitle_lbl.setStyleSheet(
+                f"QLabel#PtrackCardSubtitle {{ color: {c['muted']}; }}"
+            )
+        if self._icon_lbl is not None and self._icon is not None:
+            ## Qt's own greyed rendering — the category tint at full strength
+            ## was the loudest thing left on a dimmed card.
+            mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
+            self._icon_lbl.setPixmap(self._icon.pixmap(QSize(20, 20), mode))
 
     def body_layout(self) -> QVBoxLayout:
         return self._body
@@ -364,6 +421,11 @@ class OutputLog(QPlainTextEdit):
             self._pending_shown = True
         self._after_append(chunk)
 
+    def clear_log(self) -> None:
+        """Erase the scrollback, including any partially-streamed line."""
+        self.clear()
+        self._flush_pending()
+
     def _flush_pending(self) -> None:
         """Close off a partial streamed line so a complete message from
         somewhere else cannot be glued onto its end."""
@@ -457,14 +519,41 @@ class PlotDock(QTabWidget):
             error_log.line_appended.connect(self._on_issue_logged)
             self.currentChanged.connect(self._on_tab_changed)
 
-        clear_btn = QToolButton(self)
-        clear_btn.setText("Clear plots")
-        clear_btn.setIcon(icon("clear"))
-        clear_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        clear_btn.setAutoRaise(True)
-        clear_btn.setToolTip("Close all plot tabs and show the Output tab.")
-        clear_btn.clicked.connect(self.clear_figures)
-        self.setCornerWidget(clear_btn, Qt.Corner.TopRightCorner)
+        self.setCornerWidget(self._build_clear_bar(), Qt.Corner.TopRightCorner)
+
+    def _build_clear_bar(self) -> QWidget:
+        """Row of clear buttons shown in the dock's top-right corner.
+
+        One per thing that accumulates: the analysis tabs, the Output log,
+        and (when present) the Errors log.
+        """
+        buttons: list[tuple[str, str, Any]] = [
+            (
+                "Clear Analysis Tabs",
+                "Close all analysis tabs and show the Output tab.",
+                self.clear_figures,
+            ),
+            ("Clear Output", "Erase the contents of the Output tab.", self.clear_output),
+        ]
+        if self._error_log is not None:
+            buttons.append(
+                ("Clear Errors", "Erase the contents of the Errors tab.", self.clear_errors)
+            )
+
+        bar = QWidget(self)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(0, 0, 4, 0)
+        lay.setSpacing(2)
+        for text, tip, slot in buttons:
+            btn = QToolButton(bar)
+            btn.setText(text)
+            btn.setIcon(icon("clear"))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            btn.setAutoRaise(True)
+            btn.setToolTip(tip)
+            btn.clicked.connect(slot)
+            lay.addWidget(btn)
+        return bar
 
     def _on_issue_logged(self, _text: str) -> None:
         idx = self.indexOf(self._error_log)
@@ -489,6 +578,20 @@ class PlotDock(QTabWidget):
             if w is not None:
                 w.deleteLater()
         self.setCurrentWidget(self._output_log)
+
+    def clear_output(self) -> None:
+        """Erase everything in the Output log."""
+        self._output_log.clear_log()
+
+    def clear_errors(self) -> None:
+        """Erase everything in the Errors log and drop its unseen badge."""
+        if self._error_log is None:
+            return
+        self._error_log.clear_log()
+        self._unseen_issues = 0
+        idx = self.indexOf(self._error_log)
+        if idx >= 0:
+            self.setTabText(idx, "Errors")
 
     def _on_close(self, idx: int) -> None:
         if self.widget(idx) in (self._output_log, self._error_log):
@@ -541,7 +644,7 @@ class PlotDock(QTabWidget):
                 pass
             # The tab owns the figure from here on. Without this, an
             # interactive figure stayed registered with pyplot forever —
-            # closing the tab (or "Clear plots") freed the widget but left the
+            # closing the tab (or "Clear Analysis Tabs") freed the widget but left the
             # full RGBA buffer and the source dataframes alive.
             _close_figure_when_destroyed(host, figure)
             widget: QWidget = host

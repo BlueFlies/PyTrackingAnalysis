@@ -19,7 +19,8 @@ adversarial review pass whose confirmed findings are fixed and pinned by
 tests (preflight hardened against lenient script shapes; empty-error-message
 summary guards; central-first designation resolution pinned — it was once
 flipped on disk without attribution). Final suite: 466 passed. Lane 3
-(Batch tools rework) remains parked.
+(Batch tools rework) is cancelled: the dialog and its six tools were removed
+on 2026-08-24 in favour of the Project workflow (ADR-0009 amendment).
 
 ## Already done (verified in repo)
 
@@ -61,10 +62,11 @@ flipped on disk without attribution). Final suite: 466 passed. Lane 3
    with a log line; continue-on-error with per-Project prefixes; unloads the
    loaded experiment first; per-Project run summary in the output area.
 6. Status readout Batch form: batch path, N projects, designated script.
-7. Batch Tools launcher: move from the Tools tile into the Batch panel,
-   disabled (rework parked — see Lane 3).
-8. Legacy "batch" wording sweep: finish once the tile ships (batch_tools.md,
-   hub_workflow.md, guide §5.x) so "Batch" means only the new level.
+7. Batch Tools launcher: moved from the Tools tile into the Batch panel,
+   disabled — then removed outright with the rest of the dialog (2026-08-24).
+8. Legacy "batch" wording sweep: finish once the tile ships (hub_workflow.md,
+   guide §5.x) so "Batch" means only the new level. batch_tools.md is gone
+   with the dialog.
 9. Optional Python helper: project-level equivalent of `batch_analyze`
    wrapping the same loop.
 10. Tests: batch detection (structural, non-Project children), resolution

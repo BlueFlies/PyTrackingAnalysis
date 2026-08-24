@@ -147,3 +147,26 @@ reading the seeded script saw three steps for what is one click.
 - The Python `batch_analyze(parent)` helper (experiment-level, pre-Project)
   is unchanged; a Project-level equivalent can wrap the same designated-script
   loop.
+
+## Amendment (2026-08-24): Batch Tools is removed, not reworked
+
+The parked rework is cancelled. The dialog and its six tools — Convert
+subdirectories, the three subdir renamers, Combine summary CSVs, Copy YAML to
+subdirs — are deleted, along with the disabled launcher and the `batch_tools`
+help topic.
+
+They were housekeeping for a tree assembled by hand, and every case they
+covered now has an owner in the Project workflow: **Add experiment…** and
+**Create experiment** make the `data/`, `analysis/`, `qc/` layout up front, so
+nothing produces the flat layout Convert migrated; **Experiment configs…**
+scaffolds a design-conformant `tracking_config.yaml` per replicate, which is
+strictly better than copying one master YAML over every subdirectory; and
+Combined Analysis pools the summary CSVs with the design attached, where
+Combine only stacked them under a `subdirectory` column. Nothing replaces the
+bulk renamers: a replicate's name is read by the design, so renaming them all
+at once is a thing to do deliberately in a file manager, not a one-click
+button next to Run batch.
+
+Removing them also retires six unguarded bulk filesystem mutations — moves,
+renames, and overwrites across every subdirectory of the selection, with no
+dry run and no undo.

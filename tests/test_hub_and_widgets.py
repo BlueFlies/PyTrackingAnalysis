@@ -84,6 +84,10 @@ def hub(qapp, no_dialogs, tmp_path, monkeypatch):
     )
     monkeypatch.setattr("pytrackinganalysis.ui.settings._CONFIG_DIR", tmp_path)
     window = HubWindow()
+    ## These tests exercise the artifact/plot tab machinery itself, and the
+    ## Batch card's "Suppress new plot / output tabs" switch — on by default —
+    ## short-circuits every one of them before a tab is ever made.
+    window._chk_suppress_tabs.setChecked(False)
     yield window
     window.close()
 
@@ -185,6 +189,50 @@ def test_clear_figures_closes_interactive_figures(dock):
     flush_deletions()
 
     assert plt.get_fignums() == []
+
+
+def test_the_dock_has_a_clear_button_per_thing_that_accumulates(dock):
+    """Analysis tabs, Output, and Errors each fill up on their own, so each
+    gets its own clear — "Clear plots" only ever emptied the first."""
+    from PyQt6.QtWidgets import QToolButton
+
+    labels = [b.text() for b in dock.cornerWidget().findChildren(QToolButton)]
+    assert labels == ["Clear Analysis Tabs", "Clear Output", "Clear Errors"]
+
+
+def test_clearing_output_and_errors_empties_only_its_own_log(dock):
+    out, err = dock.widget(0), dock.widget(1)
+    out.append_line("kept until cleared")
+    err.append_line("FAILED: boom")
+
+    dock.clear_output()
+    assert out.toPlainText() == ""
+    assert "boom" in err.toPlainText()
+
+    dock.clear_errors()
+    assert err.toPlainText() == ""
+
+
+def test_clearing_errors_drops_the_unseen_badge(dock):
+    """The count badge means "unread issues"; with the tab emptied there are
+    none left to read."""
+    dock.setCurrentIndex(0)                      # Errors not visible
+    dock.widget(1).append_line("FAILED: boom")
+    assert dock.tabText(1) == "Errors (1)"
+
+    dock.clear_errors()
+    assert dock.tabText(1) == "Errors"
+
+
+def test_a_cleared_log_does_not_rerender_a_partial_line(dock):
+    """``append_stream`` rewrites the block holding a partial line; after a
+    clear that block is gone, so the pending text must be dropped with it."""
+    out = dock.widget(0)
+    out.append_stream("half a line")
+    dock.clear_output()
+
+    out.append_stream(" and the rest\n")
+    assert out.toPlainText().strip() == "and the rest"
 
 
 def test_a_static_figure_is_closed_immediately(dock):

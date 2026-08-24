@@ -320,6 +320,9 @@ class HubWindow(QMainWindow):
         self._status_panel.restyle()
         for panel in self._panels.values():
             panel.restyle()
+        ## Card surfaces are theme colors too, dimmed ones especially.
+        for card in self._cards.values():
+            card.restyle()
 
     # ---------------- Project card ----------------
 
@@ -1176,8 +1179,7 @@ class HubWindow(QMainWindow):
         )
         btn_clear_cache.clicked.connect(self._clear_mpl_cache)
         # Two columns: full-width stacked buttons made the card oddly wide
-        # and tall for what are small housekeeping actions. Batch tools moved
-        # to the Batch panel (disabled, pending rework — ADR-0009).
+        # and tall for what are small housekeeping actions.
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
@@ -1299,19 +1301,11 @@ class HubWindow(QMainWindow):
             "and Errors tabs keep updating, and every artifact is still "
             "written to disk — only the tabs are skipped. Applies to all "
             "runs while it is checked, not just Batch Runs.")
+        ## On by default: a long run's tabs pile up faster than anyone reads
+        ## them, and every artifact is on disk regardless. Uncheck to watch
+        ## figures appear as they are made.
+        self._chk_suppress_tabs.setChecked(True)
         card.add_body(self._chk_suppress_tabs)
-
-        ## Parked here from the Tools card: Batch Tools iterates a Project's
-        ## subdirectories and predates the Project structure — disabled until
-        ## its rework (ADR-0009).
-        self._btn_batch_tools = ActionButton("Batch tools", Category.TOOLS,
-                                             icon_name="batch")
-        self._btn_batch_tools.setEnabled(False)
-        self._btn_batch_tools.setToolTip(
-            "Temporarily disabled — being reworked for the Project "
-            "directory structure.")
-        self._btn_batch_tools.clicked.connect(self._open_batch_tools)
-        card.add_body(self._btn_batch_tools)
 
         for w in (self._batch_table, self._batch_script_combo,
                   self._btn_run_batch, self._chk_batch_narrative):
@@ -1656,6 +1650,28 @@ class HubWindow(QMainWindow):
             self._refresh_tiles_inner()
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self._refresh_card_dimming()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _refresh_card_dimming(self) -> None:
+        """Grey the cards whose actions have no subject yet.
+
+        Same gating as the buttons inside them (and the tiles above them):
+        everything experiment-level waits on a loaded replicate. The cards
+        stay live — dimming says "nothing to act on", not "do not touch".
+        """
+        loaded = self._exp is not None
+        for key, ready in (
+            ("analyze", loaded),
+            ("plots", loaded),
+            ("scripts", loaded and bool(getattr(self, "_scripts", []))),
+            ("ai", loaded and self._ai_available),
+        ):
+            card = self._cards.get(key)
+            if card is not None:
+                card.set_dimmed(not ready)
 
     def _loaded_experiment_line(self, short: bool = True) -> str | None:
         """The loaded experiment as one line — its name and headline counts,
@@ -2505,7 +2521,7 @@ class HubWindow(QMainWindow):
             return  # PDFs / other formats: just leave them on disk.
 
         self._artifact_tabs[key] = view
-        # Closing the tab (or "Clear plots") calls deleteLater; prune the
+        # Closing the tab (or "Clear Analysis Tabs") calls deleteLater; prune the
         # mapping when the widget actually goes away so the next "Saved:" line
         # for the same path can't reach a deleted C++ object.
         # Everything the slot needs is bound as a default argument: a plain
@@ -2705,224 +2721,6 @@ class HubWindow(QMainWindow):
             self._log.append_line(f"[tools] cleared {cache}")
         else:
             self._log.append_line(f"[tools] no cache at {cache}")
-
-    def _convert_subdirectories(self) -> None:
-        """For each subdirectory of the project dir, ensure a ``data/`` folder
-        exists and move every non-YAML top-level file into it. Preps a
-        directory tree for a batch run."""
-        if not self._project_dir:
-            self._warn("Choose a project directory first.")
-            return
-        project = self._project_dir
-        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
-        if not subdirs:
-            self._log_issue(f"[convert] no subdirectories under {project}")
-            return
-
-        def _do_convert() -> str:
-            print(f"Converting {len(subdirs)} subdirectories under {project}…")
-            moved = 0
-            overwritten = 0
-            for sub in subdirs:
-                data = sub / "data"
-                if not data.exists():
-                    data.mkdir()
-                    print(f"Created: {data}")
-                for entry in sorted(sub.iterdir()):
-                    if entry.is_dir():
-                        continue
-                    if entry.suffix.lower() in (".yaml", ".yml"):
-                        continue
-                    dest = data / entry.name
-                    existed = dest.exists()
-                    if existed:
-                        dest.unlink()
-                    shutil.move(str(entry), str(dest))
-                    if existed:
-                        print(f"Overwrote: {entry.name} → {dest}")
-                        overwritten += 1
-                    else:
-                        print(f"Moved: {entry.name} → {dest}")
-                        moved += 1
-            return (
-                f"Convert complete: {moved} new, {overwritten} overwritten, "
-                f"across {len(subdirs)} subdirectories."
-            )
-
-        self._spawn_task("Convert subdirectories", _do_convert)
-
-    def _open_batch_tools(self) -> None:
-        if not self._project_dir:
-            self._warn("Choose a project directory first.")
-            return
-        existing = getattr(self, "_batch_tools_dialog", None)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            existing.activateWindow()
-            return
-        dlg = BatchToolsDialog(self)
-        dlg.setModal(False)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dlg.destroyed.connect(lambda _=None: setattr(self, "_batch_tools_dialog", None))
-        self._batch_tools_dialog = dlg
-        dlg.show()
-
-    def _rename_subdirectories(self, mode: str, text: str) -> None:
-        """Rename every immediate subdirectory of the project dir.
-
-        ``mode`` is one of ``"prepend"``, ``"append"``, or ``"remove"``.
-        ``text`` is the substring to add or remove.
-        """
-        if not self._project_dir:
-            self._warn("Choose a project directory first.")
-            return
-        if not text:
-            self._warn("Enter a non-empty substring.")
-            return
-        project = self._project_dir
-        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
-        if not subdirs:
-            self._log_issue(f"[rename] no subdirectories under {project}")
-            return
-
-        # Compute new names up front so we can detect collisions and skip
-        # no-ops before mutating the filesystem.
-        plans: list[tuple[Path, Path]] = []
-        existing = {d.name for d in subdirs}
-        seen_targets: set[str] = set()
-        for sub in subdirs:
-            old = sub.name
-            if mode == "prepend":
-                new = f"{text}{old}"
-            elif mode == "append":
-                new = f"{old}{text}"
-            elif mode == "remove":
-                new = old.replace(text, "")
-            else:
-                self._warn(f"Unknown rename mode: {mode}")
-                return
-            if not new or new == old:
-                continue
-            if new in existing or new in seen_targets:
-                self._log_issue(
-                    f"[rename] skip {old} → {new} (collides with existing name)"
-                )
-                continue
-            seen_targets.add(new)
-            plans.append((sub, sub.with_name(new)))
-
-        if not plans:
-            self._log.append_line("[rename] nothing to do.")
-            return
-
-        def _do_rename() -> str:
-            print(f"Renaming {len(plans)} subdirectories under {project}…")
-            renamed = 0
-            for src, dst in plans:
-                if dst.exists():
-                    print(f"Skipped (exists): {dst.name}")
-                    continue
-                src.rename(dst)
-                print(f"Renamed: {src.name} → {dst.name}")
-                renamed += 1
-            return f"Rename complete: {renamed} of {len(plans)} subdirectories."
-
-        self._spawn_task("Rename subdirectories", _do_rename)
-
-    def _copy_yaml_to_subdirectories(self, yaml_path: Path) -> None:
-        """Copy ``yaml_path`` into every immediate subdirectory of the project."""
-        if not self._project_dir:
-            self._warn("Choose a project directory first.")
-            return
-        src = Path(yaml_path)
-        if not src.is_file():
-            self._warn(f"YAML not found: {src}")
-            return
-        project = self._project_dir
-        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
-        if not subdirs:
-            self._log_issue(f"[copy-yaml] no subdirectories under {project}")
-            return
-
-        def _do_copy() -> str:
-            print(f"Copying {src.name} into {len(subdirs)} subdirectories…")
-            copied = 0
-            overwritten = 0
-            for sub in subdirs:
-                dest = sub / src.name
-                if dest.resolve() == src.resolve():
-                    print(f"Skipped (same file): {dest}")
-                    continue
-                existed = dest.exists()
-                shutil.copy2(src, dest)
-                if existed:
-                    print(f"Overwrote: {dest}")
-                    overwritten += 1
-                else:
-                    print(f"Copied: {dest}")
-                    copied += 1
-            return (
-                f"Copy YAML complete: {copied} new, {overwritten} overwritten "
-                f"across {len(subdirs)} subdirectories."
-            )
-
-        self._spawn_task("Copy YAML to subdirectories", _do_copy)
-
-    def _combine_summaries(self) -> None:
-        """Stack every ``*_Summary.csv`` and ``*_Summary_Facet.csv`` found in
-        ``<subdir>/analysis/`` across the project dir into a single combined
-        CSV per type, tagged with the originating subdirectory name."""
-        if not self._project_dir:
-            self._warn("Choose a project directory first.")
-            return
-        project = self._project_dir
-        subdirs = sorted(d for d in project.iterdir() if d.is_dir())
-        if not subdirs:
-            self._log_issue(f"[combine] no subdirectories under {project}")
-            return
-
-        def _do_combine() -> str:
-            import pandas as pd
-
-            flat_frames: list[pd.DataFrame] = []
-            facet_frames: list[pd.DataFrame] = []
-            for sub in subdirs:
-                analysis = sub / "analysis"
-                if not analysis.is_dir():
-                    continue
-                for csv_path in sorted(analysis.glob("*_Summary.csv")):
-                    df = pd.read_csv(csv_path)
-                    df.insert(0, "subdirectory", sub.name)
-                    flat_frames.append(df)
-                    print(f"Read: {csv_path}")
-                for csv_path in sorted(analysis.glob("*_Summary_Facet.csv")):
-                    df = pd.read_csv(csv_path)
-                    df.insert(0, "subdirectory", sub.name)
-                    facet_frames.append(df)
-                    print(f"Read: {csv_path}")
-
-            if not flat_frames and not facet_frames:
-                return "No summary CSVs found to combine."
-
-            written: list[str] = []
-            base = project.name
-            if flat_frames:
-                out = project / f"{base}_combined.csv"
-                pd.concat(flat_frames, ignore_index=True).to_csv(
-                    out, index=False, na_rep="NA"
-                )
-                print(f"Saved: {out}")
-                written.append(f"{len(flat_frames)} → {out.name}")
-            if facet_frames:
-                out = project / f"{base}_combined_facet.csv"
-                pd.concat(facet_frames, ignore_index=True).to_csv(
-                    out, index=False, na_rep="NA"
-                )
-                print(f"Saved: {out}")
-                written.append(f"{len(facet_frames)} → {out.name}")
-            return "Combine complete: " + "; ".join(written)
-
-        self._spawn_task("Combine summaries", _do_combine)
 
     def _launch_subapp(self, which: str, directory=None) -> None:
         """Launch a child app in a separate process.
@@ -3617,135 +3415,6 @@ class ExperimentConfigsDialog(QDialog):
             return
         self._hub._launch_subapp(
             "config", Path(self._project.project_directory) / selected[0])
-
-
-class BatchToolsDialog(QDialog):
-    """Secondary window with batch operations across project subdirectories."""
-
-    def __init__(self, hub: "HubWindow") -> None:
-        super().__init__(hub)
-        self._hub = hub
-        project = hub._project_dir
-        self.setWindowTitle("PyTrackingAnalysis — Batch tools")
-        self.setMinimumWidth(420)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(10)
-
-        header_row = QHBoxLayout()
-        header = QLabel(f"Project: <b>{project}</b>" if project else "Project: <i>(not set)</i>")
-        header.setWordWrap(True)
-        header_row.addWidget(header, 1)
-        header_row.addWidget(
-            HelpButton("batch_tools", tooltip="What each batch tool does")
-        )
-        outer.addLayout(header_row)
-
-        btn_convert = ActionButton(
-            "Convert subdirectories", Category.TOOLS, icon_name="batch"
-        )
-        btn_convert.setToolTip(
-            "For each subdirectory of the project dir, create a 'data/' folder "
-            "and move every non-YAML file at the top level into it. Preps the "
-            "subdirectories for a batch run."
-        )
-        btn_convert.clicked.connect(self._on_convert)
-
-        btn_prepend = ActionButton(
-            "Prepend to subdir names", Category.TOOLS, icon_name="add"
-        )
-        btn_prepend.setToolTip("Add a substring to the start of every subdirectory name.")
-        btn_prepend.clicked.connect(lambda: self._on_rename("prepend"))
-
-        btn_append = ActionButton(
-            "Append to subdir names", Category.TOOLS, icon_name="add"
-        )
-        btn_append.setToolTip("Add a substring to the end of every subdirectory name.")
-        btn_append.clicked.connect(lambda: self._on_rename("append"))
-
-        btn_remove = ActionButton(
-            "Remove from subdir names", Category.TOOLS, icon_name="remove"
-        )
-        btn_remove.setToolTip("Remove a substring from every subdirectory name.")
-        btn_remove.clicked.connect(lambda: self._on_rename("remove"))
-
-        btn_combine = ActionButton(
-            "Combine summary CSVs", Category.TOOLS, icon_name="csv"
-        )
-        btn_combine.setToolTip(
-            "Stack every analysis/*_Summary.csv and *_Summary_Facet.csv under "
-            "each subdirectory into <project>_combined.csv (and "
-            "<project>_combined_facet.csv) at the project root. Adds a "
-            "'subdirectory' column to track origin."
-        )
-        btn_combine.clicked.connect(self._on_combine)
-
-        btn_copy_yaml = ActionButton(
-            "Copy YAML to subdirs", Category.TOOLS, icon_name="config"
-        )
-        btn_copy_yaml.setToolTip(
-            "Pick a YAML file from the project directory and copy it into "
-            "every subdirectory (overwrites if already present)."
-        )
-        btn_copy_yaml.clicked.connect(self._on_copy_yaml)
-
-        for b in (btn_convert, btn_prepend, btn_append, btn_remove, btn_combine, btn_copy_yaml):
-            outer.addWidget(b)
-
-        close_row = QHBoxLayout()
-        close_row.addStretch(1)
-        btn_close = QToolButton()
-        btn_close.setText("Close")
-        btn_close.clicked.connect(self.accept)
-        close_row.addWidget(btn_close)
-        outer.addLayout(close_row)
-
-    def _on_convert(self) -> None:
-        self._hub._convert_subdirectories()
-
-    def _on_rename(self, mode: str) -> None:
-        prompts = {
-            "prepend": ("Prepend to subdir names", "Substring to prepend:"),
-            "append": ("Append to subdir names", "Substring to append:"),
-            "remove": ("Remove from subdir names", "Substring to remove:"),
-        }
-        title, label = prompts[mode]
-        text, ok = QInputDialog.getText(self, title, label)
-        if not ok:
-            return
-        text = text.strip()
-        if not text:
-            QMessageBox.warning(self, "Batch tools", "Enter a non-empty substring.")
-            return
-        self._hub._rename_subdirectories(mode, text)
-
-    def _on_combine(self) -> None:
-        self._hub._combine_summaries()
-
-    def _on_copy_yaml(self) -> None:
-        project = self._hub._project_dir
-        if project is None:
-            QMessageBox.warning(self, "Batch tools", "Choose a project directory first.")
-            return
-        yamls = sorted(
-            [p.name for p in project.iterdir()
-             if p.is_file() and p.suffix.lower() in (".yaml", ".yml")]
-        )
-        if not yamls:
-            QMessageBox.warning(
-                self, "Batch tools",
-                f"No YAML files found at the top of {project}."
-            )
-            return
-        choice, ok = QInputDialog.getItem(
-            self, "Copy YAML to subdirs",
-            "YAML file to copy into every subdirectory:",
-            yamls, 0, False,
-        )
-        if not ok or not choice:
-            return
-        self._hub._copy_yaml_to_subdirectories(project / choice)
 
 
 # ---------------------------------------------------------------------------

@@ -328,9 +328,7 @@ There are three equally valid ways to create one:
    forms for every section, bulk region generation, and a live YAML preview,
    so the file is valid by construction.
 2. **Copy an existing config** — copy a working `tracking_config.yaml` into
-   the new experiment directory and edit it.  (The Hub's **Batch tools →
-   Copy YAML** dialog, which pushed one file into every sub-directory of a
-   parent, is temporarily disabled from the Batch panel pending a rework.)
+   the new experiment directory and edit it.
    Inside a Project, **Experiment configs…** scaffolds a design-conformant
    config for every experiment directory that lacks one (and **Add
    experiment…** does it for a directory that does not exist yet).
@@ -782,8 +780,7 @@ The panels:
   Project** — an ordinary selection change, so there is no "up to batch"
   button.  A **Script** picker names the **designated Project Script**
   (default: the built-in **Report pipeline**), and **Run batch** runs it in
-  every checked Project (§8.5).  The old **Batch tools** button is parked
-  here, disabled pending a rework for the Project structure.
+  every checked Project (§8.5).
 - **Project** — two cards, **Create/Load** and **Analysis** (the panel itself is
   already titled Project, so neither card repeats it).
   **Create/Load** picks the folder (an experiment directory *or* a Project; the
@@ -1270,9 +1267,11 @@ Report, use the `Project` API (§6) or the Hub's Project view; to run many
 
 **Preparing many folders at once:** the Hub's **Batch tools** dialog (copy
 one master YAML into every sub-directory, bulk-rename sub-directories,
-convert flat layouts into the `data/` structure, combine summary CSVs) now
-sits in the Batch panel and is temporarily disabled, pending a rework for
-the Project structure.
+convert flat layouts into the `data/` structure, combine summary CSVs) was
+removed in favour of the Project workflow: **Experiment configs…** scaffolds
+a design-conformant config per replicate (§8.2), **Add experiment…** creates
+the `data/` structure for a new one, and Combined Analysis pools the summary
+CSVs (§6).
 
 ### 8.5 Batch Runs: many Projects at once
 

@@ -88,12 +88,6 @@ TOPICS: tuple[HelpTopic, ...] = (
         "batch_experiments.md",
     ),
     HelpTopic(
-        "batch_tools",
-        "Batch tools",
-        "Convert layouts, rename folders, copy YAML, combine CSVs.",
-        "batch_tools.md",
-    ),
-    HelpTopic(
         "scripts_overview",
         "Scripts and Script Editor",
         "Experiment Scripts, Project Scripts, and the visual editor.",

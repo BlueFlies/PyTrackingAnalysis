@@ -64,6 +64,79 @@ def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
         assert hub._tiles[key].is_dimmed(), key
 
 
+def test_a_dimmed_tile_actually_paints_dimmed(hub):
+    """`_dimmed` was tracked but never reached the stylesheet, so all seven
+    chips looked equally available whatever their state (user feedback
+    2026-08-24)."""
+    ## One tile compared with itself: the chips differ in corner rounding by
+    ## position, so tile-vs-tile would pass on the wrong difference.
+    tile = hub._tiles["analyze"]
+    assert tile.is_dimmed()
+    dim_style = tile.styleSheet()
+    dim_title = tile._title_lbl.styleSheet()
+    dim_icon = tile._icon_lbl.pixmap().toImage()
+
+    tile.set_dimmed(False)
+    assert tile.styleSheet() != dim_style, "the tile surface never changed"
+    assert tile._title_lbl.styleSheet() != dim_title, "the title never changed"
+    assert tile._icon_lbl.pixmap().toImage() != dim_icon, "the icon never changed"
+
+    ## Lit again it wears the live surface, and dimmed the recessed one —
+    ## the strip is one surface, not seven independently styled chips.
+    from pytrackinganalysis.apps._hub_tiles import chrome_colors
+
+    chrome = chrome_colors()
+    assert f"background: {chrome['hover']}" in tile.styleSheet()
+    assert f"background: {chrome['band']}" in dim_style
+    assert chrome["muted"] in dim_title
+
+
+def test_experiment_cards_are_dimmed_until_something_is_loaded(hub, qapp):  # noqa: F811
+    """The tiles dim, and so do the cards inside their panels: an Analyze,
+    Plots, Scripts, or AI card with no loaded experiment has nothing to act
+    on, and a greyed surface says so before the user reads the buttons."""
+    from types import SimpleNamespace
+
+    for key in ("analyze", "plots", "scripts", "ai"):
+        assert hub._cards[key].is_dimmed(), key
+    # Cards whose actions stand on their own never dim.
+    assert not hub._cards["project"].is_dimmed()
+    assert not hub._cards["tools"].is_dimmed()
+
+    hub._exp = SimpleNamespace(arena=SimpleNamespace(experiment_name="Rep1"),
+                               facet_cutoffs=None)
+    hub._scripts = [{"name": "one"}]
+    hub._ai_available = True
+    hub._refresh_tiles()
+    for key in ("analyze", "plots", "scripts", "ai"):
+        assert not hub._cards[key].is_dimmed(), key
+
+    hub._unload_experiment()
+    qapp.processEvents()
+    for key in ("analyze", "plots", "scripts", "ai"):
+        assert hub._cards[key].is_dimmed(), key
+
+
+def test_a_dimmed_card_stays_live_and_restyles_with_the_theme(hub):
+    """Dimming is presentation only — the Scripts card's Reload button is
+    how a user fixes an empty script list, so the card must not go inert."""
+    card = hub._cards["scripts"]
+    assert card.is_dimmed()
+    assert card.isEnabled()
+    assert hub._btn_refresh_scripts.isEnabled()
+
+    ## Several cues, because on the dark theme a background shift alone is
+    ## invisible: surface, a border, the title color, and the icon.
+    dimmed_style, dimmed_title = card.styleSheet(), card._title_lbl.styleSheet()
+    dimmed_icon = card._icon_lbl.pixmap().toImage()
+    card.set_dimmed(False)
+    assert card.styleSheet() != dimmed_style, "the surface never changed"
+    assert card._title_lbl.styleSheet() != dimmed_title, "the title never changed"
+    assert card._icon_lbl.pixmap().toImage() != dimmed_icon, "the icon never changed"
+    card.set_dimmed(True)
+    assert card.styleSheet() == dimmed_style
+
+
 def test_project_tile_reflects_state(hub, qapp, tmp_path):  # noqa: F811
     _make_project(tmp_path)
     hub._set_project_dir(str(tmp_path))
@@ -665,14 +738,17 @@ def test_batch_panel_has_its_own_folder_picker(hub, qapp, tmp_path,
     assert not hub._tiles["batch"].is_dimmed()
 
 
-def test_batch_tools_button_parked_in_batch_panel_disabled(hub):
+def test_batch_tools_are_gone_from_every_card(hub):
+    """Removed (2026-08-24): the dialog had been disabled since ADR-0009, and
+    its six tools iterated a Project's subdirectories by hand — work the
+    Project workflow (Experiment configs…, Project reports) now owns."""
     from PyQt6.QtWidgets import QPushButton
 
-    labels = [b.text() for b in hub._cards["batch"].findChildren(QPushButton)]
-    assert any("Batch tools" in t for t in labels)
-    assert not hub._btn_batch_tools.isEnabled()
-    tools = [b.text() for b in hub._cards["tools"].findChildren(QPushButton)]
-    assert not any("Batch tools" in t for t in tools)
+    for key in ("batch", "tools", "project"):
+        labels = [b.text() for b in hub._cards[key].findChildren(QPushButton)]
+        assert not any("Batch tools" in t for t in labels), key
+    assert not hasattr(hub, "_btn_batch_tools")
+    assert not hasattr(hub, "_convert_subdirectories")
 
 
 def test_hub_preflight_blocks_a_typoed_script_before_running(
@@ -849,9 +925,11 @@ def test_view_reports_reports_a_project_report_deleted_since_the_refresh(
 
 def test_suppress_tabs_checkbox_lives_on_the_batch_card(hub):
     """A Batch Run touches every replicate of every Project, so it is the
-    run that would bury the Output tab under hundreds of artifact tabs."""
+    run that would bury the Output tab under hundreds of artifact tabs.
+    On by default: the artifacts are all on disk either way, so tabs are the
+    thing you opt IN to (user feedback 2026-08-24)."""
     box = hub._chk_suppress_tabs
-    assert not box.isChecked()                  # opt-in
+    assert box.isChecked()
     assert box in hub._cards["batch"].findChildren(type(box))
 
 
@@ -864,6 +942,7 @@ def test_artifact_tabs_stop_when_suppressed(hub, qapp, tmp_path):  # noqa: F811
 
     artifact = tmp_path / "one.txt"
     artifact.write_text("hello", encoding="utf-8")
+    hub._chk_suppress_tabs.setChecked(False)
     before = hub._plot_dock.count()
     hub._on_worker_log(f"Saved: {artifact}\n")
     qapp.processEvents()
@@ -983,3 +1062,31 @@ def test_validate_yamls_flags_a_project_with_no_script(
     hub._validate_yaml()
     qapp.processEvents()
     assert "no Project Script" in hub._err_log.toPlainText()
+
+
+def test_panel_opens_tall_enough_for_cards_rebuilt_while_closed(hub, qapp):  # noqa: F811
+    """Plot buttons are rebuilt on load, while the Plots panel is closed. Qt
+    defers geometry updates for hidden widgets, so the panel used to reopen at
+    its pre-rebuild height with a scrollbar — it must fit all four buttons."""
+    from pytrackinganalysis.apps.hub import _PLOT_BUTTONS
+    from pytrackinganalysis.ui import Category
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    hub._open_panel("plots")                  # open once at the empty height
+    qapp.processEvents()
+    hub._close_panel()
+    qapp.processEvents()
+
+    for label, _flat, _facet in _PLOT_BUTTONS["TWOCHOICETRACKER"]:
+        btn = ActionButton(label, Category.PLOTS, icon_name="plot")
+        hub._plots_card.add_body(btn)
+        hub._plot_buttons.append(btn)
+    hub._plots_empty.setVisible(False)
+    qapp.processEvents()
+
+    hub._open_panel("plots")
+    qapp.processEvents()
+    panel = hub._panels["plots"]
+    content = panel._scroll.widget().sizeHint().height()
+    assert panel._scroll.viewport().height() >= content
+    assert panel._scroll.verticalScrollBar().maximum() == 0
