@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from .. import removals
 from ..help import make_topbar_help_button
 from .common import TaskWorker, shutdown_worker
 from ..ui import (
@@ -452,10 +453,12 @@ class QcViewerWindow(QMainWindow):
         trackers = self._exp.arena.trackers
         tracker = trackers.get(tracker_name)
         if tracker is None:
-            # Arena keys can be "region_objectid" or just the region; try a
-            # fuzzy prefix match.
+            # Arena keys can be "region_objectid" or just the region, so a
+            # region name resolves to its tracker. Matched on the underscore
+            # boundary: a bare startswith makes "T_1" pick up "T_10_0", the
+            # well next door (ADR-0010).
             for k, t in trackers.items():
-                if k == tracker_name or k.startswith(tracker_name):
+                if removals.name_in_region(k, tracker_name):
                     tracker = t
                     break
         if tracker is None:

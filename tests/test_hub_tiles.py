@@ -285,8 +285,8 @@ def test_status_panel_reports_the_project_and_loaded_experiment(hub, qapp, tmp_p
 def test_project_actions_use_three_columns(hub):
     grid = hub._project_actions_grid
     assert grid.columnCount() == 3
-    # Six focused actions over three columns — no button spans the whole card.
-    assert grid.count() == 6
+    # Focused actions over three columns — no button spans the whole card.
+    assert grid.count() == 7
     # "View reports" sits directly under the Create/Update report button.
     report_at = grid.getItemPosition(grid.indexOf(hub._btn_project_report))
     view_at = grid.getItemPosition(grid.indexOf(hub._btn_view_reports))
@@ -295,6 +295,7 @@ def test_project_actions_use_three_columns(hub):
     assert labels == [
         "Experiment configs…", "Add experiment…", "Create report",
         "Plot editor…", "AI narrative…", "View reports",
+        "Removed regions…",
     ]
 
 

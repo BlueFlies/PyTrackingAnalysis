@@ -437,11 +437,17 @@ def test_cover_lists_phases_and_regions(tmp_path):
 
 # ---- Low-Transition Exclusion accounting (ADR-0003) ------------------------
 
-def _excluded_df(rows):
+def _excluded_df(rows, reasons=None):
+    """An exclusion frame as Experiment builds it: one row per fly, with the
+    Reason column ADR-0010 added."""
     df = pd.DataFrame(rows, columns=["Name", "TrackingRegion", "Treatment",
                                      "Transitions"])
+    df["Reason"] = reasons if reasons is not None else ["Low transitions"] * len(df)
+    n_removed = sum(1 for r in df["Reason"] if str(r).startswith("Removed"))
     df.attrs.update({"min_transitions": 5, "window": (10, 70),
-                     "phase_label": "Experiment"})
+                     "phase_label": "Experiment", "removed_regions": {},
+                     "unmatched_regions": [], "n_removed": n_removed,
+                     "n_low_transitions": len(df) - n_removed})
     return df
 
 
@@ -451,7 +457,7 @@ def test_exclusion_section_lists_removed_flies():
         ["T_1_0", "T_1", "control", 2.0],
         ["T_2_0", "T_2", "chr", float("nan")],
     ])
-    blocks = report_figures._valence_exclusions(exp)
+    blocks = report_figures.build_exclusion_blocks(exp)
     assert len(blocks) == 2
     assert isinstance(blocks[0], m.Paragraph) and "2 fly(ies)" in blocks[0].text
     table = blocks[1]
@@ -465,18 +471,18 @@ def test_exclusion_section_lists_removed_flies():
 def test_exclusion_section_zero_excluded_and_off():
     exp = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
     exp.excluded_flies = _excluded_df([])
-    blocks = report_figures._valence_exclusions(exp)
+    blocks = report_figures.build_exclusion_blocks(exp)
     assert len(blocks) == 1 and "No flies were excluded" in blocks[0].text
 
     off = _excluded_df([])
     off.attrs["min_transitions"] = 0
     exp.excluded_flies = off
-    blocks = report_figures._valence_exclusions(exp)
-    assert len(blocks) == 1 and "exclusion is off" in blocks[0].text
+    blocks = report_figures.build_exclusion_blocks(exp)
+    assert len(blocks) == 1 and "Low-transition exclusion is off" in blocks[0].text
 
     # No criterion at all (Custom / attr absent): no block.
     exp2 = _FakeExp(Parameters.TrackingType.TWOCHOICETRACKER, _twochoice_summary())
-    assert report_figures._valence_exclusions(exp2) == []
+    assert report_figures.build_exclusion_blocks(exp2) == []
 
 
 def test_faceted_figures_include_transitions_and_movement():

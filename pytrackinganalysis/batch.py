@@ -23,6 +23,7 @@ import os
 import yaml
 
 from . import project as prj
+from . import removals
 
 #: The lazy Batch file: the ``script:`` designation plus centrally-held
 #: Project Scripts (the ``experiment_scripts:`` idea one level up).
@@ -324,6 +325,25 @@ def write_batch_narrative(batch_dir, text: str, provider: str, model: str,
     return path
 
 
+def apply_removal_sheet(batch_dir, log=print) -> dict:
+    """Apply the Batch's Removal Sheet, if it has one (ADR-0010).
+
+    Never fatal: an unreadable sheet is reported and the run continues, and a
+    row naming a project, experiment or region that does not exist is counted
+    in the summary rather than aborting ten Projects' worth of work.
+    """
+    root = os.path.abspath(str(batch_dir))
+    path = removals.find_sheet(root)
+    if path is None:
+        return {"results": [], "written": [], "counts": {}, "sheet": None}
+    try:
+        return removals.apply_sheet(root, sheet_path=path, log=log)
+    except Exception as err:  # noqa: BLE001
+        log(f"[removals] {os.path.basename(path)} could not be applied: {err}")
+        return {"results": [], "written": [], "counts": {}, "sheet": path,
+                "error": str(err)}
+
+
 def run_batch(batch_dir, script_name: str | None = None,
               project_names: list[str] | None = None,
               log=print) -> dict:
@@ -372,6 +392,13 @@ def run_batch(batch_dir, script_name: str | None = None,
         return results
 
     log(f"Batch Run: {len(targets)} Project(s) in {root}")
+
+    ## A Removal Sheet at the Batch root is applied before anything runs, so
+    ## an unattended run honours the experimenter's notes (ADR-0010). It is a
+    ## writer, never an overlay: the rows are stamped into each experiment's
+    ## removed_regions.yaml and nothing reads the sheet at analysis time.
+    apply_removal_sheet(root, log=log)
+
     for i, name in enumerate(targets, 1):
         project_dir = os.path.join(root, name)
 

@@ -19,13 +19,49 @@ import os
 import pandas as pd
 import yaml
 
-from . import experiment_types, windowing
+from . import experiment_types, removals, windowing
 from .io_utils import atomic_write_text
 
 PROJECT_FILENAME = "project.yaml"
 #: The per-Experiment config. A Project never has one of its own: the shared
 #: design lives in ``project.yaml`` and each replicate carries this file.
 CONFIG_FILENAME = "tracking_config.yaml"
+
+def format_excluded_cell(status) -> str:
+    """The per-replicate Excluded cell: one number, the removals in brackets.
+
+    One number, because the analysis population is ``flies - excluded`` and
+    that arithmetic must have exactly one input (ADR-0010).
+    """
+    if status["excluded"] is None:
+        return "0"
+    text = str(status["excluded"])
+    if status.get("removed"):
+        text += f" ({status['removed']} removed)"
+    if status.get("stale"):
+        text += " — re-run needed"
+    return text
+
+
+def _removal_rows(excluded_df) -> int:
+    """How many rows of a saved ``_Excluded.csv`` are experimenter removals."""
+    if "Reason" not in excluded_df.columns:
+        return 0
+    prefix = removals.REMOVAL_PREFIX
+    return int(excluded_df["Reason"].astype(str)
+               .str.startswith(prefix).sum())
+
+
+def _recorded_removed_regions(excluded_df) -> set | None:
+    """Regions a saved ``_Excluded.csv`` says were removed, or ``None`` when
+    the file predates the Reason column and cannot answer."""
+    if "Reason" not in excluded_df.columns \
+            or "TrackingRegion" not in excluded_df.columns:
+        return None
+    prefix = removals.REMOVAL_PREFIX
+    mask = excluded_df["Reason"].astype(str).str.startswith(prefix)
+    return {str(r) for r in excluded_df.loc[mask, "TrackingRegion"]}
+
 
 def is_project_dir(path) -> bool:
     return os.path.isfile(os.path.join(str(path), PROJECT_FILENAME))
@@ -437,7 +473,9 @@ class Project:
     def experiment_status(self, name: str) -> dict:
         """Cheap per-replicate status from saved artifacts (no data load)."""
         status = {"analyzed": False, "report": False, "flies": None,
-                  "excluded": None, "flagged": None,
+                  "excluded": None, "removed": None, "stale": False,
+                  "declared": len(removals.read_removals(self.experiment_dir(name))),
+                  "flagged": None,
                   "has_data": has_experiment_data(self.experiment_dir(name))}
         path = self._summary_csv(name)
         if path:
@@ -451,24 +489,50 @@ class Project:
             except Exception:  # noqa: BLE001
                 pass
         excl = self._summary_csv(name, "_Excluded.csv")
+        recorded = None
         if excl:
             try:
-                status["excluded"] = len(pd.read_csv(excl))
+                edf = pd.read_csv(excl)
+                status["excluded"] = len(edf)
+                status["removed"] = _removal_rows(edf)
+                recorded = _recorded_removed_regions(edf)
             except Exception:  # noqa: BLE001
                 pass
+        ## Stale = the declaration disagrees with what the saved analysis
+        ## recorded (ADR-0010). Compared by content, not mtime: copying a
+        ## Project between drives reorders mtimes but never the content.
+        if status["analyzed"]:
+            declared = set(removals.read_removals(self.experiment_dir(name)))
+            if recorded is None:
+                status["stale"] = bool(declared)
+            else:
+                status["stale"] = declared != recorded
         report = os.path.join(self.experiment_dir(name),
                               f"{name}_report.pdf")
         status["report"] = os.path.isfile(report)
         return status
+
+    def apply_removal_sheet(self, log=print) -> dict:
+        """Apply this Project's Removal Sheet, if it has one (ADR-0010)."""
+        return removals.apply_sheet(self.project_directory, log=log)
 
     def run_all(self, qc_cutoff: float = 0.9, make_reports: bool = True,
                 skip_analyzed: bool = False, log=print) -> list[str]:
         """Run each replicate's full analysis (and report); returns failures."""
         failures: list[str] = []
         for name in self.experiment_names:
-            if skip_analyzed and self.experiment_status(name)["analyzed"]:
-                log(f"[{name}] already analyzed — skipped")
-                continue
+            if skip_analyzed:
+                status = self.experiment_status(name)
+                ## A replicate whose declared removals are not in its saved
+                ## analysis is NOT analyzed for this purpose (ADR-0010) —
+                ## otherwise an unattended run would pool data the
+                ## experimenter has already thrown out.
+                if status["stale"]:
+                    log(f"[{name}] removals declared since the last run — "
+                        f"re-analyzing")
+                elif status["analyzed"]:
+                    log(f"[{name}] already analyzed — skipped")
+                    continue
             log(f"[{name}] running analysis…")
             try:
                 exp = self.load_experiment(name)
@@ -1003,13 +1067,13 @@ class Project:
             rep_rows.append([
                 name,
                 str(flies) if st["analyzed"] else "not analyzed",
-                str(st["excluded"]) if st["excluded"] is not None else "0",
+                format_excluded_cell(st),
                 str(flagged) if flagged is not None else "—",
                 headline or "—",
                 "yes" if st["report"] else "no",
             ])
             level = None
-            if not st["analyzed"]:
+            if not st["analyzed"] or st["stale"]:
                 level = _m.Level.ERROR
             elif flagged is not None and flies and flagged / flies > 0.5:
                 level = _m.Level.WARN
@@ -1020,10 +1084,56 @@ class Project:
                      else "PI", "Report"],
             rows=rep_rows, row_levels=rep_levels,
             title="Per-replicate summary",
-            caption="Flies counted after each replicate's own exclusion; "
-                    "amber rows have >50% low-movement flies; each replicate "
-                    "has its own full report in its directory."))
+            caption="Flies counted after each replicate's own exclusion "
+                    "(removals by the experimenter shown in brackets); amber "
+                    "rows have >50% low-movement flies; red rows are not "
+                    "analyzed, or were analyzed before their removals were "
+                    "declared; each replicate has its own full report in its "
+                    "directory."))
+
+        ## Every Excluded Fly in the Project, named with its reason (ADR-0010).
+        ## A removal no reader can see is indistinguishable from data quietly
+        ## going missing.
+        for block in self._exclusion_blocks(excluded, _m):
+            report.add(block)
         return report
+
+    def _exclusion_blocks(self, excluded, _m) -> list:
+        """The Project-level exclusion audit: one table naming every fly the
+        replicates excluded, with the reason each left the analysis. A
+        sentence when there were none — absence never needs interpreting, the
+        same rule that writes ``_Excluded.csv`` even when empty."""
+        if excluded is None or not len(excluded):
+            return [_m.Paragraph(
+                "No flies were excluded in any replicate: no regions were "
+                "removed by the experimenter, and no fly failed an automatic "
+                "criterion.")]
+        columns = ["Experiment", "Fly", "Region", "Treatment", "Reason"]
+        rows = []
+        for _, row in excluded.iterrows():
+            reason = row.get("Reason")
+            if reason is None or (isinstance(reason, float) and pd.isna(reason)):
+                ## Written before the Reason column existed (ADR-0010): say so
+                ## rather than migrating the file or implying a cause.
+                reason = "(not recorded)"
+            rows.append([str(row.get("Experiment", "")),
+                         str(row.get("Name", "")),
+                         str(row.get("TrackingRegion", "")),
+                         str(row.get("Treatment", "")),
+                         str(reason)])
+        n_removed = _removal_rows(excluded)
+        lead = f"{len(rows)} fly(ies) were excluded across the Project"
+        if n_removed:
+            lead += (f", {n_removed} of them removed by the experimenter "
+                     f"(death, escape, an empty well)")
+        lead += (". Excluded flies are absent from every figure, statistic and "
+                 "summary CSV above.")
+        return [
+            _m.Paragraph(lead),
+            _m.Table(columns=columns, rows=rows, title="Excluded flies",
+                     caption="Every fly excluded in any replicate, with the "
+                             "reason it left the analysis population."),
+        ]
 
     def create_report(self, backend: str = "reportlab",
                       qc_cutoff: float = 0.9) -> str:

@@ -13,6 +13,7 @@ from . import Arena
 from . import config_validation
 from . import experiment_types
 from . import io_utils
+from . import removals
 
 ## The rig spellings the config accepts. config_validation owns this table so
 ## that the checker and the loader can never disagree about which rigs exist —
@@ -211,17 +212,13 @@ class Experiment:
         self.facet_cutoffs: tuple | None = self.experiment_type.resolve_facet_cutoffs(
             self.config.get('global', {}))
 
-        ## Low-Transition Exclusion (ADR-0003): the type decides who is out
-        ## (None = the type has no such criterion), and Arena enforces it once
-        ## so plots, stats and CSVs can never disagree about the population.
-        ## Computed eagerly at load — interactive arena calls must be filtered
-        ## too, not just the pipeline entry points.
-        self.excluded_flies = self.experiment_type.compute_exclusions(self)
-        if self.excluded_flies is not None and len(self.excluded_flies):
-            self.arena.set_excluded_trackers(self.excluded_flies['Name'])
-            print(f"Excluded {len(self.excluded_flies)} fly(ies): fewer than "
-                  f"{self.excluded_flies.attrs.get('min_transitions')} transitions "
-                  f"during the {self.excluded_flies.attrs.get('phase_label')} phase.")
+        ## Excluded Flies: the Experiment Type's own criterion (ADR-0003, None
+        ## when it has none) merged with the experimenter's declared Removed
+        ## Regions (ADR-0010). One list, enforced once by Arena, so plots,
+        ## stats and CSVs can never disagree about the population. Computed
+        ## eagerly at load — interactive arena calls must be filtered too, not
+        ## just the pipeline entry points.
+        self.refresh_exclusions(announce=True)
 
         ## Low-Movement Flag: reported, never removed. Computed after the
         ## exclusion so the >50% experiment-level rule describes the analysis
@@ -237,6 +234,188 @@ class Experiment:
                 note += (" More than half of the flies are flagged — the "
                          "experiment itself is potentially an issue.")
             print(note)
+
+    # ------------------------------------------------------------------
+    # Excluded Flies: type criterion + experimenter-declared removals
+    # (ADR-0003, ADR-0010)
+    # ------------------------------------------------------------------
+
+    def read_removed_regions(self) -> dict:
+        """The experimenter's declared Removed Regions, ``{region: reason}``."""
+        return removals.read_removals(self.project_directory)
+
+    def write_removed_regions(self, declared: dict) -> str | None:
+        """Persist the declaration and re-apply exclusions immediately.
+
+        Re-applying in memory is what makes the removals window feel real: the
+        Arena's excluded set was computed at load, so without this a fly the
+        user just removed would keep appearing in plots until the next full
+        analysis (ADR-0010).
+        """
+        path = removals.write_removals(self.project_directory, declared)
+        self.refresh_exclusions()
+        return path
+
+    def refresh_exclusions(self, announce: bool = False) -> None:
+        """Recompute the exclusion list and hand it to Arena."""
+        self.excluded_flies = self._build_exclusions()
+        excluded = self.excluded_flies
+        names = excluded['Name'] if excluded is not None and len(excluded) else []
+        self.arena.set_excluded_trackers(names)
+        if announce:
+            for line in self.exclusion_notes():
+                print(line)
+
+    def exclusion_notes(self) -> list:
+        """Human-readable lines about the current exclusions: what was removed
+        and why, plus a warning per declaration that matched no tracker."""
+        excluded = getattr(self, 'excluded_flies', None)
+        lines = []
+        if excluded is not None and len(excluded):
+            parts = []
+            attrs = excluded.attrs
+            n_removed = attrs.get('n_removed', 0)
+            n_low = attrs.get('n_low_transitions', 0)
+            if n_removed:
+                parts.append(f"{n_removed} removed by the experimenter")
+            if n_low:
+                parts.append(f"{n_low} with fewer than "
+                             f"{attrs.get('min_transitions')} transitions during "
+                             f"the {attrs.get('phase_label')} phase")
+            detail = f": {', '.join(parts)}" if parts else ""
+            lines.append(f"Excluded {len(excluded)} fly(ies){detail}.")
+        for region in (excluded.attrs.get('unmatched_regions', [])
+                       if excluded is not None else []):
+            ## Loud, never fatal (ADR-0010): a stale note must not kill an
+            ## unattended batch, but nobody may assume a fly was removed when
+            ## nothing matched.
+            lines.append(f"Warning: removed region {region} matches no tracker "
+                         f"in this experiment (declared in "
+                         f"{removals.REMOVALS_FILENAME}).")
+        return lines
+
+    def exclusion_summary(self) -> str:
+        """One sentence naming the analysis population's losses and their
+        causes — the shared wording for Stats.txt and the report cover."""
+        excluded = getattr(self, 'excluded_flies', None)
+        if excluded is None:
+            return "none (no exclusion criterion, no regions removed)"
+        attrs = excluded.attrs
+        threshold = attrs.get('min_transitions')
+        phase = attrs.get('phase_label', 'Primary')
+        n_removed = attrs.get('n_removed', 0)
+        n_low = attrs.get('n_low_transitions', 0)
+        if not len(excluded):
+            if threshold:
+                return (f"none — every fly made at least {threshold} transitions "
+                        f"during the {phase} phase, and no regions were removed")
+            if threshold is not None:
+                return ("none (min_transitions = 0, low-transition exclusion "
+                        "off; no regions removed)")
+            return "none (no regions removed)"
+        parts = []
+        if n_removed:
+            parts.append(f"{n_removed} removed by the experimenter")
+        if n_low:
+            parts.append(f"{n_low} with fewer than {threshold} transitions "
+                         f"during the {phase} phase")
+        return (f"{len(excluded)} fly(ies) — {'; '.join(parts)} "
+                f"(see _Excluded.csv)")
+
+    def _build_exclusions(self):
+        """Merge the type's exclusions with the declared Removed Regions.
+
+        One row per fly (ADR-0010): a fly caught by both criteria appears once,
+        its ``Reason`` naming both with the experimenter's observation first —
+        an observation outranks an inferred rule.
+        """
+        import pandas as pd
+
+        type_frame = self.experiment_type.compute_exclusions(self)
+        declared = self.read_removed_regions()
+        if type_frame is None and not declared:
+            return None
+
+        if type_frame is not None:
+            columns = [c for c in type_frame.columns if c != 'Reason']
+        else:
+            ## Custom Experiments have no transition criterion, so no column
+            ## for one — the file is narrower, never falsely empty.
+            columns = ['Name', 'TrackingRegion', 'Treatment']
+        rows = []
+        by_name = {}
+        if type_frame is not None:
+            for _, row in type_frame.iterrows():
+                record = {c: row.get(c) for c in columns}
+                record['Reason'] = removals.LOW_TRANSITION_REASON
+                rows.append(record)
+                by_name[str(record.get('Name'))] = record
+
+        expanded = removals.expand_regions(declared, self.arena.trackers.keys())
+        transitions = self._primary_transitions(columns, type_frame)
+        n_removed = 0
+        for region, names in expanded.items():
+            reason = f"{removals.REMOVAL_PREFIX}: {declared[region]}"
+            for name in names:
+                n_removed += 1
+                record = by_name.get(name)
+                if record is not None:
+                    ## Both criteria fired: one row, both causes, the
+                    ## experimenter's first.
+                    record['Reason'] = f"{reason}; {record['Reason']}"
+                    continue
+                record = {c: None for c in columns}
+                record['Name'] = name
+                record['TrackingRegion'] = region
+                record['Treatment'] = self._tracker_treatment(name)
+                if 'Transitions' in columns:
+                    record['Transitions'] = transitions.get(name)
+                record['Reason'] = reason
+                rows.append(record)
+                by_name[name] = record
+
+        frame = pd.DataFrame(rows, columns=columns + ['Reason'])
+        if type_frame is not None:
+            frame.attrs.update(dict(type_frame.attrs))
+        frame.attrs['removed_regions'] = dict(declared)
+        frame.attrs['unmatched_regions'] = [region for region, names
+                                            in expanded.items() if not names]
+        frame.attrs['n_removed'] = n_removed
+        frame.attrs['n_low_transitions'] = len(frame) - n_removed
+        return frame
+
+    def _primary_transitions(self, columns, type_frame) -> dict:
+        """``{tracker name: Transitions}`` in the Primary Phase, for the audit.
+
+        A removed fly's transition count is worth recording even though it was
+        not what removed it. The summary is already cached from the type's own
+        exclusion pass, so this is a lookup rather than a second computation;
+        with no criterion (or the threshold off) nothing was computed and the
+        column stays NA rather than paying for it here.
+        """
+        if 'Transitions' not in columns or type_frame is None:
+            return {}
+        if not type_frame.attrs.get('min_transitions'):
+            return {}
+        window = type_frame.attrs.get('window')
+        if window is None:
+            return {}
+        try:
+            summary = self.arena.summarize(range_minutes=tuple(window),
+                                           include_excluded=True)
+            return dict(zip(summary['Name'].astype(str),
+                            summary['Transitions']))
+        except Exception:  # noqa: BLE001 — the audit must not break a load
+            return {}
+
+    def _tracker_treatment(self, name: str) -> str:
+        """The treatment of a tracker, read from its own region design."""
+        tracker = self.arena.trackers.get(name)
+        design = getattr(tracker, 'tracking_region_design', None)
+        try:
+            return str(design['Treatment'].iloc[0])
+        except Exception:  # noqa: BLE001
+            return ''
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -948,18 +1127,17 @@ class Experiment:
             print(f"Experiment type : {self.experiment_type.display_name}")
         print(f"Tracking type   : {self.parameters.get_tracking_type().name}")
 
-        ## Low-Transition Exclusion accounting (ADR-0003): the reader of every
-        ## p-value below must know the population it was computed on.
+        ## Exclusion accounting (ADR-0003, ADR-0010): the reader of every
+        ## p-value below must know the population it was computed on, and by
+        ## whose rule each fly left it. Rendered from the exclusion frame, not
+        ## from min_transitions — a Custom Experiment can now have exclusions
+        ## with no threshold in sight.
         excluded = getattr(self, 'excluded_flies', None)
         if excluded is not None:
-            threshold = excluded.attrs.get('min_transitions')
-            phase = excluded.attrs.get('phase_label', 'Primary')
-            if threshold:
-                print(f"Excluded        : {len(excluded)} fly(ies) with fewer than "
-                      f"{threshold} transitions during the {phase} phase "
-                      f"(min_transitions = {threshold}; see _Excluded.csv).")
-            else:
-                print("Excluded        : none (min_transitions = 0, exclusion off).")
+            print(f"Excluded        : {self.exclusion_summary()}")
+            for region in excluded.attrs.get('unmatched_regions', []):
+                print(f"                  warning: removed region {region} "
+                      f"matches no tracker in this experiment.")
 
         flagged = getattr(self, 'flagged_flies', None)
         if flagged is not None and flagged.attrs.get('min_movement'):
@@ -1592,6 +1770,12 @@ class Experiment:
         intro = self.experiment_type.report_intro()
         if intro:
             report.add(_m.Paragraph(intro))
+        ## The analysis population comes first: who was excluded and why,
+        ## before any result computed from what remained (ADR-0003, ADR-0010).
+        ## Type-independent, because an experimenter can remove a region in a
+        ## Custom Experiment too.
+        for block in report_figures.build_exclusion_blocks(self):
+            report.add(block)
         # Type-specific sections lead (ADR-0002) — e.g. Valence's headline
         # Experiment-phase PI, PI-over-time, and persistence blocks. Empty for
         # a Custom Experiment.
@@ -1814,7 +1998,17 @@ class Experiment:
                              f"{sum(len(t.rawdata) for t in trackers.values()):,}"))
         excluded = getattr(self, 'excluded_flies', None)
         if excluded is not None:
-            overview.append(("Excluded flies", len(excluded)))
+            ## One number, with the breakdown beside it: the analysis
+            ## population is flies - excluded, and that arithmetic must have
+            ## exactly one input (ADR-0010).
+            attrs = excluded.attrs
+            parts = []
+            if attrs.get('n_removed'):
+                parts.append(f"{attrs['n_removed']} removed")
+            if attrs.get('n_low_transitions'):
+                parts.append(f"{attrs['n_low_transitions']} low transitions")
+            detail = f" ({', '.join(parts)})" if parts else ""
+            overview.append(("Excluded flies", f"{len(excluded)}{detail}"))
         flagged = getattr(self, 'flagged_flies', None)
         if flagged is not None and flagged.attrs.get('min_movement'):
             overview.append(("Low-movement flagged", len(flagged)))

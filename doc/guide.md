@@ -17,7 +17,14 @@
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
 8. [Projects: replicates and combined analysis](#8-projects-replicates-and-combined-analysis)
-9. [Quick reference](#9-quick-reference)
+9. [Removed regions: excluding flies you observed](#9-removed-regions-excluding-flies-you-observed)
+   - [What a removal means](#91-what-a-removal-means)
+   - [Declaring a removal](#92-declaring-a-removal)
+   - [What a removal does to the analysis](#93-what-a-removal-does-to-the-analysis)
+   - [How removals are reported](#94-how-removals-are-reported)
+   - [Worked examples](#95-worked-examples)
+   - [Rules of thumb](#96-rules-of-thumb)
+10. [Quick reference](#10-quick-reference)
 
 > Scripts (saved analysis recipes) and the visual Script Editor have their own
 > dedicated guide: **[scripts_guide.md](scripts_guide.md)**.
@@ -231,6 +238,7 @@ Projects section below.)
 ```
 MyExperiment/                        ← experiment directory (pass this to the UI)
 ├── tracking_config.yaml             ← experiment configuration (required)
+├── removed_regions.yaml             ← regions you removed from the analysis (optional, §9)
 ├── data/                            ← DTrack export files (required)
 │   ├── ExperimentName.xlsx          ← main DTrack workbook
 │   ├── ExperimentName_Data_1.csv    ← per-tracker CSV, one per tracking region
@@ -405,6 +413,15 @@ Rules for a typed experiment:
   analysed flies are flagged, the whole experiment is noted as potentially an
   issue on the report cover and in `*_Stats.txt`. `min_movement: 0` turns the
   flagging off.
+- **Removed regions** (any experiment type, Valence or Custom): tracking
+  regions *you* declare out of the analysis — a fly that died partway through,
+  escaped, or a well that was empty. Nothing in the data reveals these, so you
+  enter them by hand: in the Hub (**Project → Removed regions…**), by editing
+  `removed_regions.yaml` at the experiment directory's root, or in bulk from a
+  `removed_regions.csv` spreadsheet that a Batch Run applies before it starts.
+  Every fly in a removed region is excluded exactly as an automatically
+  excluded one is, and is listed with your reason in both reports and in
+  `*_Excluded.csv`. **§9 covers this in full**; see also `docs/adr/0010`.
 - A typed config is validated **at load** and **fails hard** on any violation
   (wrong rig, missing Light/NoLight, a disallowed override), rather than
   crashing mid-analysis.
@@ -1125,11 +1142,16 @@ outputs to the Project root — see the last table below).
 | `*_experiment_summary.txt` | Rig settings, parameters, a formatted description of the experimental design (factors, region assignments, non-unit multipliers, counting regions, cutoffs), data quality overview, per-tracker table |
 | `*_Summary.csv` | Per-tracker summary statistics (one row per tracker). For Valence, a `LowMovementFlag` column marks flies flagged by the low-movement check (they remain in the data) |
 | `*_Summary_Facet.csv` | Same, split into the time phases defined by `facet_cutoffs` |
-| `*_Excluded.csv` | (Valence) Flies removed by the low-transition exclusion — name, region, treatment, and transition count in the primary phase. Written even when no fly was excluded, so absence never needs interpreting |
+| `*_Excluded.csv` | Every fly left out of the analysis — name, region, treatment, transition count in the primary phase (Valence), and a `Reason`: your own removal (`Removed: dead at ~20 min`), the low-transition criterion, or both on one row. Written even when no fly was excluded, so absence never needs interpreting |
 | `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample **Welch's** t-test (unequal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more. Each line carries both groups' N, mean and SD, and any trackers dropped for having no numeric value in the window are counted explicitly. Faceted runs append a note stating how many uncorrected tests were run and the Bonferroni-adjusted threshold. Pass `equal_var=True` to `run_pairwise_comparisons` for the classic Student's test. |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
 | `*_AI_Summary.txt` | (Optional) The saved AI Summary; provenance (provider, model, date) on the first line. The report embeds it while this file exists; **every `run_analysis()` deletes it** so it can never describe a stale run |
 | `<name>_report.pdf` | **Written to the experiment directory root** (beside `tracking_config.yaml`), named and titled after that directory. Multi-page PDF: cover with status lines → notes and AI Summary (when present) → analysis figures (per-phase when faceted) → statistical-comparisons table → structured experiment summary → QC figures (data quality plus per-tracker transitions/min and movement bars) |
+
+The experiment directory root also holds two **inputs** you may edit by hand:
+`tracking_config.yaml` (the design) and, when you have declared any,
+`removed_regions.yaml` (the regions you removed — §9.2.2).  Neither is
+regenerated by a run.
 
 ### `qc/` — data quality
 
@@ -1329,7 +1351,427 @@ batch-level analysis outputs exist.
 
 ---
 
-## 9. Quick reference
+## 9. Removed regions: excluding flies you observed
+
+Some flies are lost in ways no automatic criterion can detect.  A fly dies
+forty minutes into a seventy-minute recording, escapes while the plate is
+loaded, or the well was empty from the start.  The tracker keeps producing
+rows regardless — a corpse is still a blob with a position — so the pipeline
+has no way to know.  Only the person at the rig knows, which is why a
+**Removed Region** is declared by hand.
+
+Two automatic mechanisms already act on the analysis population, and a removal
+is a third, deliberately different thing:
+
+| Mechanism | Who decides | Effect |
+|-----------|-------------|--------|
+| **Low-transition exclusion** (§4.2) | The pipeline, from `min_transitions` | Removes the fly from every result |
+| **Low-movement flag** (§4.2) | The pipeline, from `min_movement` | Reports the fly; **never** removes it |
+| **Removed region** | You, from what you saw | Removes every fly in the region from every result |
+
+Removals are **not** a Valence feature.  The low-transition exclusion is
+Valence policy, but a dead fly is a fact about the recording, so a removal
+applies to any experiment type — `TRACKER`, `TWOCHOICECOUNTER`, a Custom
+experiment with no type at all.
+
+### 9.1 What a removal means
+
+**The unit is the tracking region, not the fly.**  You tick `T_14`, not
+`T_14_0`.  A region is what you actually observe at the rig, it is already the
+addressable key in `tracking_regions:`, and it survives a DTrack re-export
+that renumbers object IDs.  Every tracker in the region goes: for the usual
+one-fly-per-well plate that is exactly one, and for a counter-class experiment
+(where a "tracker" is the region itself) it is the counter.  A well holding
+two animals loses both — the well is what you declared dead.
+
+Region matching is on the underscore boundary, so `T_1` removes `T_1` and
+`T_1_0` but never `T_10_0`, the well next door.
+
+**Removal is all-or-nothing.**  There is no "exclude only after minute 45".  A
+dead animal still registers as occupancy wherever it died, so its Preference
+Index is dragged toward ±1 and its Transitions count collapses — the numbers
+are unreliable for the *whole* recording, not just the tail.  Censoring at a
+time of death would also give different flies different observation windows,
+which would silently compare sixty-minute flies against thirty-five-minute
+ones in the pooled tests and the mixed model.
+
+**Every removal carries a reason.**  Free text, in your words: `dead at ~20
+min`, `escaped during transfer`, `well flooded`, `never loaded`.  A removal
+entered without a reason is recorded as `Undefined` rather than as nothing,
+because the reason is what makes the audit trail readable six months later.
+
+### 9.2 Declaring a removal
+
+Three ways in, one source of truth.  The Hub window and the removal sheet both
+end up writing the same file: `removed_regions.yaml` inside the experiment
+directory.
+
+#### 9.2.1 The Hub: Project → Removed regions…
+
+The everyday path.  Select the Project, open the **Project** tile, and press
+**Removed regions…** in the Analysis card.  (From a Batch, **right-click** a
+row in the projects table and choose *Removed regions in …* — double-click is
+already taken: it selects that Project.)
+
+The window lists every tracking region of every replicate in the Project:
+
+| Column | Meaning |
+|--------|---------|
+| **Remove** | Tick to remove; already-declared regions open ticked |
+| **Experiment** | The replicate directory name |
+| **Region** | The region key as `tracking_config.yaml` spells it |
+| **Treatment** | That region's `experimental_factors`, so you can see what you are dropping |
+| **Data** | `no data` when the replicate has been analyzed and that region produced no tracker at all — an empty well.  Blank for a replicate that has not been analyzed (nothing is known yet), and blank for a region that produced a fly, *including one that is currently excluded* |
+| **Reason** | Free text, editable.  Ticked and left blank ⇒ `Undefined` |
+
+Use **Filter** to narrow to one replicate (`Rep3`) or one region (`T_14`), and
+**Show removed only** to review what is already declared.  Only regions the
+config declares are listed — the config's plate is the addressable set, and
+reading it costs no raw-data parsing, so a Project of eighty replicates opens
+instantly.
+
+**Save** writes one `removed_regions.yaml` per replicate you changed, and logs
+each file in the Hub output.  **Cancel** discards everything.  Un-ticking a
+region deletes its declaration — that is the only way to un-remove a fly, and
+it is deliberately an explicit act.
+
+If the experiment you have loaded in the Hub is one of the ones you changed,
+its Arena is re-filtered immediately: press a plot button straight afterwards
+and the removed fly is already gone.  Saved results on disk are a separate
+matter — see §9.3.4.
+
+#### 9.2.2 The file: `removed_regions.yaml`
+
+The declaration lives at the **experiment directory root**, beside
+`tracking_config.yaml`:
+
+```
+Rep3/
+├── tracking_config.yaml      ← the design specification
+├── removed_regions.yaml      ← what happened during the run
+├── data/
+└── analysis/
+```
+
+```yaml
+# Tracking regions the experimenter removed from the analysis (ADR-0010).
+removed_regions:
+  T_14: dead at ~20 min
+  T_22: escaped during transfer
+  T_31: Undefined
+```
+
+Rules:
+
+- The keys must be region names exactly as `tracking_config.yaml` spells them.
+  A key matching no region is **warned about and ignored** — never fatal (§9.3.5).
+- A value may be omitted (`T_31:`); it reads back as `Undefined`.
+- Deleting the file, or removing every entry from it, un-removes everything.
+  The Hub deletes the file when you untick the last region, so a sidecar never
+  outlives what it declared.
+- The file travels with the recording.  Move `Rep3` into another Project, copy
+  it to another machine, and its removals come with it.
+
+It is deliberately **not** part of `tracking_config.yaml`.  That file is the
+design specification — what the experiment *is* — and is validated against the
+Project's shared `design:` section.  How a particular run turned out is a
+different kind of fact, and mixing the two would mean every dead fly edits the
+design.
+
+Editing this file by hand is fully supported: the window and the file are the
+same thing, and nothing caches it between runs.
+
+#### 9.2.3 The removal sheet: many projects at once
+
+When you run ten Projects through a Batch, opening ten windows is not the
+workflow.  Keep the notes where lab notes already live — a spreadsheet — and
+let the app distribute them.
+
+Put `removed_regions.csv` (or `.xlsx`) at the **batch folder** root, or at a
+**Project** root:
+
+| project | experiment | region | reason |
+|---------|-----------|--------|--------|
+| Starved2026 | Rep3 | T_14 | dead at ~20 min |
+| Starved2026 | Rep3 | T_22 | escaped |
+| Fed2026 | Rep1 | T_2 | well never loaded |
+
+- `project` is needed only at a batch folder; at a Project root, omit it (a
+  present-but-ignored column is fine too).  It is the Project's path
+  *relative to the batch folder*, so a Project sitting under grouping folders
+  is written the way the Batch itself names it — `Sept2026/ProjA` — and a
+  top-level one is just `ProjA`.
+- Headers are matched case-insensitively and ignoring spaces and underscores,
+  and common synonyms are accepted: `replicate` for `experiment`, `tracking
+  region` / `well` / `tube` for `region`, `note` / `comment` for `reason`.
+- A blank or missing `reason` becomes `Undefined`.
+- A sheet missing the `experiment` or `region` column is rejected outright —
+  an unparseable sheet is a mistake worth stopping for.
+
+**The sheet is a writer, not a second source of truth.**  Applying it stamps
+its rows into each experiment's `removed_regions.yaml`; nothing reads the
+sheet at analysis time.  That is what keeps a Project reproducible: copy it to
+another drive without the spreadsheet and it still knows which flies you
+removed and why.  (An overlay read at analysis time would silently return
+those flies to the results, with nothing in the Project recording that they
+were ever out.)
+
+It is applied at exactly three moments, all of them deliberate:
+
+1. **At the start of a Batch Run**, before the first Project script runs, so
+   an unattended overnight run honours the notes you left.
+2. When you press **Apply removal sheet…** in the Batch panel (the small
+   button beside *Choose batch folder…*; it stays greyed out until the chosen
+   folder actually holds a sheet).
+3. When you open **Removed regions…** on a Project that has a sheet at its
+   root — you are asked first.
+
+Selecting a folder never applies anything on its own.  Browsing to a
+colleague's batch folder must not rewrite eighty of their experiment
+directories.
+
+**Merge rules.**  Applying is additive and safe to repeat:
+
+| Situation | What happens | Reported as |
+|-----------|--------------|-------------|
+| Region not yet declared | Written with the sheet's reason | `applied` |
+| Already declared, same reason | Nothing | `already declared` |
+| Already declared, different reason | **The standing reason is kept** | `conflict` |
+| Row names a project / experiment / region that does not exist | Nothing | `unknown project` / `unknown experiment` / `unknown region` |
+| Row missing an experiment or region | Nothing | `incomplete` |
+
+The standing declaration wins because the sheet is re-applied on *every* Batch
+Run: letting the sheet win would keep resetting a wording you refined in the
+window.  Conflicts are reported loudly — in the Hub they also raise a warning
+dialog — so a disagreement is never silent.  Deleting a row from the sheet
+does **not** un-remove anything; untick it in the window instead.
+
+Nothing in this path is ever fatal.  A row that matches nothing is counted and
+logged; a sheet that cannot be read at all is reported and the Batch Run
+continues.  One stale note must not kill ten Projects' worth of overnight work.
+
+### 9.3 What a removal does to the analysis
+
+#### 9.3.1 One choke point
+
+Removed flies are merged with whatever the experiment type's own criterion
+excluded, and the combined set of tracker names is handed to `Arena` once, at
+load.  `summarize()` and `summarize_facet()` drop those rows on the way out,
+and every consumer — plots, statistics, CSVs — reads through those two
+methods.  There is no second place to forget, and no way for a figure and a
+table to disagree about who was in the analysis.
+
+**Filtered** (the removed fly is absent):
+
+- `*_Summary.csv` and `*_Summary_Facet.csv`
+- every plot the Hub or the API draws, and the report's analysis figures
+- `*_Stats.txt` — the pairwise tests are computed on the kept flies only
+- the Project's Combined Analysis, which stacks the replicates' *filtered*
+  summaries, and therefore the pooled statistics, the mixed model, and the
+  publication figures rendered from them
+
+**Not filtered** (the removed fly is still shown):
+
+- everything under `qc/`, the QC figures in the report, and the QC Viewer.
+  Quality control describes the *recording*, not the analysis population — if
+  a well tracked badly you still want to see it
+- the per-tracker QC bars in the report, which deliberately show every tracker
+- the exclusion audit itself (§9.4)
+
+#### 9.3.2 Interaction with the automatic criteria
+
+- The two are independent.  `min_transitions: 0` turns the low-transition
+  exclusion off; your removals still apply.  Off means off for the *policy*,
+  not for you.
+- A fly caught by both appears **once**, with a reason naming both causes,
+  the observation first: `Removed: dead at ~20 min; Low transitions`.  Counts
+  never double.
+- The **low-movement flag** is computed on the analysis population *after*
+  exclusions, so removed flies are not flagged and do not count toward the
+  ">50 % of flies flagged ⇒ the experiment is potentially an issue" rule.
+  Removing three dead wells therefore makes that rule stricter, not laxer.
+- A **Custom** experiment has no automatic criterion at all and produced no
+  `*_Excluded.csv` before; declare a removal and it gets one, with a narrower
+  schema (no `Transitions` column, because nothing computes transitions
+  there).  An experiment with no removals declared is untouched.
+
+#### 9.3.3 Fly counts
+
+`Flies` in the replicate table and the reports is the count *after*
+exclusions — the analysis population.  The arithmetic is always
+`analyzed = tracked − excluded`, and `excluded` is one number covering both
+causes (§9.4).
+
+#### 9.3.4 Removals declared after an analysis
+
+Declaring a removal does not rewrite results that are already on disk.  The
+pipeline notices:
+
+- A replicate is **stale** when the regions in its `removed_regions.yaml`
+  disagree with the removal rows in its saved `*_Excluded.csv`.  This is a
+  content comparison, not a timestamp one, so it survives copying a Project
+  between drives.
+- The Hub's replicate table shows `re-run needed` in the **Excluded** column,
+  and the Project report marks the row red.
+- A Project Script step told to **skip analyzed replicates** re-runs a stale
+  one anyway, and says why in the log.  Without that, an unattended run with
+  `skip_analyzed: true` would happily pool data you had already thrown out.
+- The Hub's **Create/Update report** and the default `batch` script re-analyze
+  every replicate regardless, so in the ordinary batch workflow the removals
+  are picked up on the next run with nothing to remember.
+
+The loaded experiment in the Hub is the exception that needs no re-run: saving
+the removals window re-filters its Arena in memory immediately.
+
+#### 9.3.5 Declarations that match nothing
+
+A region in `removed_regions.yaml` that is not a region of that experiment —
+a typo, or a plate that changed under an old note — removes nothing.  It is
+reported everywhere it matters and aborts nothing:
+
+- a warning line when the experiment loads, and in the `*_Stats.txt` preamble
+- a footnote in the experiment report: *"T_40 was declared removed but matches
+  no tracking region in this experiment — nothing was excluded for it."*
+- for sheets, a per-row `unknown region` (or `unknown experiment` / `unknown
+  project`) in the application log, with the totals summarised on one line
+
+The report footnote matters more than the log line: after an overnight batch,
+the report is the artifact anyone actually reads.
+
+### 9.4 How removals are reported
+
+Nothing is removed quietly.  A removal that no reader can see is
+indistinguishable from data going missing, so the audit runs from the console
+line at load all the way to the Project report.
+
+**At load, and in the Hub output:**
+
+```
+Excluded 4 fly(ies): 3 removed by the experimenter, 1 with fewer than 5 transitions during the Experiment phase.
+Warning: removed region T_40 matches no tracker in this experiment (declared in removed_regions.yaml).
+```
+
+**`analysis/<name>_Excluded.csv`** — one row per fly, written even when empty
+so its absence never needs interpreting:
+
+| Name | TrackingRegion | Treatment | Transitions | Reason |
+|------|----------------|-----------|-------------|--------|
+| `T_14_0` | `T_14` | Starved | 2 | `Removed: dead at ~20 min; Low transitions` |
+| `T_22_0` | `T_22` | Control | 31 | `Removed: escaped during transfer` |
+| `T_5_0` | `T_5` | Starved | 1 | `Low transitions` |
+
+The `Reason` grammar is worth knowing:
+
+- `Removed: <your text>` — your declaration.  The `Removed:` prefix is what
+  keeps a reason of `Undefined` from being mistaken for a machine verdict.
+- `Low transitions` — the automatic Valence criterion; the `Transitions`
+  column holds the count that failed, or `no data` when the fly had none in
+  the primary phase.
+- `Removed: …; Low transitions` — both applied, your observation first,
+  because an observation outranks an inferred rule ("I saw it dead" explains
+  "few transitions", not the other way round).
+- A Custom experiment's file has no `Transitions` column at all.
+- Files written before this feature existed have no `Reason` column; they read
+  as `(not recorded)` where one is needed, rather than being rewritten.
+
+**`analysis/<name>_Stats.txt`**, in the preamble that orients the reader
+before any p-value:
+
+```
+Excluded        : 4 fly(ies) — 3 removed by the experimenter; 1 with fewer than 5 transitions during the Experiment phase (see _Excluded.csv)
+                  warning: removed region T_40 matches no tracker in this experiment.
+```
+
+**The experiment report** (`<name>_report.pdf`):
+
+- the cover's Data overview reads `Excluded flies: 4 (3 removed, 1 low
+  transitions)`
+- an **Excluded flies** section opens the Analysis part of the report, before
+  any result computed from the flies that remained: a sentence giving the
+  counts by cause, then a table of `Fly | Region | Treatment | Transitions
+  (phase) | Reason`, then a footnote per unmatched declaration
+- with the low-transition exclusion off and removals present, the section says
+  so explicitly rather than claiming nothing was excluded
+- QC figures further down still show every tracker, removed ones included
+
+**The Project report** (`<project>_report.pdf`):
+
+- the **Per-replicate summary** table's `Excluded` cell reads `7 (4 removed)`,
+  and `re-run needed` when a replicate's declarations have not reached its
+  saved analysis; such rows are marked red
+- an **Excluded flies** table lists *every* excluded fly across the Project —
+  `Experiment | Fly | Region | Treatment | Reason` — so one page answers "what
+  did we lose, where, and why"
+- when nothing was excluded anywhere, one sentence says so
+
+**The Hub**: the replicate table's `Excluded` column carries the same
+`7 (4 removed)` / `re-run needed` text as the report.
+
+**AI summaries**: `*_Excluded.csv` is part of what an AI Summary is given, so
+the reasons reach the experiment narrative, and through each Project's
+narrative, the Batch AI Narrative — which is why it can say *why* a Project
+lost flies, not just how many.
+
+### 9.5 Worked examples
+
+**One dead fly in one replicate**
+
+1. Project tile → **Removed regions…**
+2. Filter to `Rep3`, tick `T_14`, type `dead at ~20 min`, **Save**.
+3. Press **Create/Update report** (or run the Project's `batch` script).  The
+   replicate is re-analyzed, the fly is gone from every figure and statistic,
+   and both reports name it.
+
+**Ten Projects from lab notes**
+
+1. In Excel, list every loss as `project, experiment, region, reason`; save as
+   `removed_regions.csv` at the batch folder.
+2. Batch tile → **Choose batch folder…**.  The log reports the sheet and its
+   row count; nothing is written yet.
+3. Either press **Apply removal sheet…** to write the declarations now and
+   inspect them, or just press **Run batch** — the sheet is applied first
+   automatically.
+4. Read the `[removals]` lines: `applied`, `already declared`, `conflict`,
+   and any `unknown …` rows that matched nothing.
+
+**Undoing a removal**
+
+Open **Removed regions…**, untick the region, **Save**, then re-run the
+analysis.  Deleting the row from the removal sheet does nothing — the sheet
+only ever adds.
+
+**Auditing what is currently removed**
+
+Every declaration is a small YAML file at a known path, so the whole batch is
+one command away:
+
+```bash
+# Every declaration in a batch folder, file by file
+grep -r -A20 "^removed_regions:" --include=removed_regions.yaml .
+
+# Or read the audit the last analysis produced
+column -s, -t < Starved2026/Rep3/analysis/Rec_Excluded.csv
+```
+
+### 9.6 Rules of thumb
+
+- **Removing flies changes published numbers.**  That is the point, and it is
+  why every removal is written down with a reason in three places.  Re-run the
+  analysis after declaring one; the reports will tell you if you forgot.
+- **Do not use removals for problems the pipeline can already see.**  A badly
+  tracked well is a quality-control matter (`qc/`, the low-movement flag); a
+  fly that simply sat still is what `min_transitions` is for.  Removals are
+  for facts only you have: death, escape, an empty well, a mis-loaded plate.
+- **Write the reason as you would in a lab notebook.**  `dead at ~20 min,
+  tube leaked` is worth far more in a year than `dead`, and it costs nothing.
+- **Region names must match the config exactly** — copy them from the window
+  or the config, not from memory.
+- **A removal is not censoring.**  If you genuinely need "the first forty
+  minutes of this fly", that is a facet-window question, not a removal.
+
+---
+
+## 10. Quick reference
 
 ### Starting the UI
 

@@ -70,6 +70,13 @@ TOPICS: tuple[HelpTopic, ...] = (
         "project_actions.md",
     ),
     HelpTopic(
+        "removed_regions",
+        "Removed regions",
+        "Declare flies that died, escaped, or were never loaded, and see how "
+        "they are excluded and reported.",
+        "removed_regions.md",
+    ),
+    HelpTopic(
         "batch_run",
         "Batch runs",
         "Run a designated Project Script in every Project of a folder.",

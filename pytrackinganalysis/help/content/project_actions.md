@@ -8,7 +8,7 @@ The table shows each configured replicate plus any data-looking folder that is s
 
 - **Config** is `yes` or `missing`.
 - **Flies** is the analyzed fly count, `not analyzed`, or `no data`.
-- **Excluded** and **Flagged** show Valence quality results when available.
+- **Excluded** counts the flies left out of the analysis, with the experimenter's own removals in brackets (`7 (4 removed)`), and says `re-run needed` when removals were declared after the last run. **Flagged** shows the low-movement count.
 - **Report** shows whether the per-replicate PDF exists.
 
 Double-click a configured row to load that replicate and run QC. Double-click a missing-config row to create its config from the Project design.
@@ -32,8 +32,60 @@ Use the other Project actions around that full refresh:
 - **Plot editor...** - open the Project-level publication figure editor after a report refresh has created combined faceted data. Save plot specs, then click **Update report** to rebuild the PDF with those specs.
 - **AI narrative...** - write a Project AI narrative from the current Combined Analysis and rebuild the Project report so the narrative is embedded. The prose is also saved as `analysis/ai_narrative.md` for later searching.
 - **View reports** - open the Project report and every per-replicate report at once, each handed to your desktop's PDF viewer. Enabled only when both kinds exist; the tooltip says which half is missing when it does not.
+- **Removed regions...** - declare tracking regions to leave out of the analysis. See below.
 
 Rebuilding Combined Analysis deletes any saved Project AI narrative because the narrative describes one specific combined result. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh if you want AI prose in the PDF.
+
+## Removed regions
+
+Some flies are lost in ways no automatic criterion can see: the fly died partway through, escaped during transfer, or the well was empty from the start. Only you know, so you enter it by hand.
+
+**Removed regions...** opens a checklist of every tracking region of every replicate in the Project. Tick a region, type why, and Save. The reason is free text; a ticked region with nothing typed is recorded as `Undefined`.
+
+The **Data** column says `no data` for a region that produced no tracker at all in the replicate's last analysis - an empty well, or one the recording never picked up. It stays blank for a replicate that has not been analyzed yet (nothing is known), and a region that is merely excluded is not `no data`: it had a fly, and the analysis says why it left.
+
+What a removal does:
+
+- Every fly in that region is excluded from figures, summary measures, statistics and the summary CSVs - the same treatment as a fly failing an automatic criterion.
+- Each one is listed with its reason in the experiment report, in `analysis/<name>_Excluded.csv`, and in the Project report's **Excluded flies** table.
+- Quality-control output still shows it: QC describes the recording, not the analysis population.
+- Removal is all-or-nothing. A dead fly still registers as occupancy wherever it died, so its numbers are unreliable throughout - there is no "exclude only after minute 45".
+
+The declaration is saved as `removed_regions.yaml` at the experiment's own directory root, so it travels with the recording:
+
+```yaml
+removed_regions:
+  T_14: dead at ~20 min
+  T_22: escaped during transfer
+```
+
+It is deliberately not part of `tracking_config.yaml`: that file is the design specification, and how a run turned out is not design. Edit the file by hand if you prefer - the window and the file are the same thing.
+
+Removals declared after a replicate was analyzed do not change results until it is analyzed again. The replicate table says `re-run needed`, and a Project Script that skips analyzed replicates re-runs those anyway.
+
+## Removal sheets
+
+For many replicates at once, keep the notes in a spreadsheet. Put `removed_regions.csv` (or `.xlsx`) at the **batch folder** - or at a Project root - with these columns:
+
+| project | experiment | region | reason |
+|---------|-----------|--------|--------|
+| Starved2026 | Rep3 | T_14 | dead at ~20 min |
+| Starved2026 | Rep3 | T_22 | escaped |
+
+`project` is only needed at a batch folder. A missing `reason` becomes `Undefined`.
+
+Applying the sheet writes its rows into each experiment's `removed_regions.yaml`; nothing reads the sheet at analysis time, so a Project keeps its removals wherever you copy it. It is applied:
+
+- automatically at the start of a **Batch run**, before any Project script runs;
+- when you press **Apply removal sheet...** in the Batch panel, or open **Removed regions...** on a Project that has one.
+
+Selecting a folder never applies anything on its own - browsing a colleague's batch folder must not rewrite their experiments.
+
+Applying is additive and safe to repeat. A region already declared keeps the reason it has: if the sheet gives a different reason, the row is reported as a **conflict** and the standing reason is kept, so a wording you refined in the window is never reset by the spreadsheet. To un-remove a region, untick it in the window - deleting the row from the sheet does not.
+
+Every row is reported: `applied`, `already declared`, `conflict`, or one of `unknown project` / `unknown experiment` / `unknown region` when the name matches nothing. Nothing here ever aborts a run - a stale note must not kill an overnight batch - so check the log for rows that did nothing.
+
+The **Removed regions** help topic covers all of this in detail: what a removal does to the analysis, how it interacts with the automatic checks, when a replicate needs re-running, and every place a removal is reported.
 
 ## Project scripts
 

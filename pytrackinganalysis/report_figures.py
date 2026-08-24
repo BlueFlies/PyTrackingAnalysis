@@ -788,7 +788,6 @@ def build_valence_sections(experiment) -> list:
     no report.
     """
     blocks: list = []
-    blocks += _valence_exclusions(experiment)
     blocks += _valence_movement_flags(experiment)
     blocks += _valence_headline(experiment)
     blocks += _valence_pi_over_time(experiment)
@@ -851,43 +850,83 @@ def _valence_movement_flags(experiment) -> list:
     return blocks
 
 
-def _valence_exclusions(experiment) -> list:
-    """Accounting for the Low-Transition Exclusion (ADR-0003): a sentence, and
-    a table of the removed flies when there are any. Placed first so the reader
-    knows the population before any result."""
+def build_exclusion_blocks(experiment) -> list:
+    """Accounting for the Excluded Flies (ADR-0003, ADR-0010): a sentence, a
+    table naming every excluded fly with its reason, and a footnote per
+    declared region that matched no tracker.
+
+    Rendered for every Experiment Type, not just the ones with an automatic
+    criterion: an experimenter can remove a region in a Custom Experiment, and
+    a removal no reader can see is indistinguishable from data quietly going
+    missing. Placed before any result so the reader knows the population first.
+    """
     excluded = getattr(experiment, "excluded_flies", None)
     if excluded is None:
         return []
-    threshold = excluded.attrs.get("min_transitions")
-    phase = excluded.attrs.get("phase_label", "Primary")
-    if not threshold:
+    attrs = excluded.attrs
+    threshold = attrs.get("min_transitions")
+    phase = attrs.get("phase_label", "Primary")
+    n_removed = attrs.get("n_removed", 0)
+    n_low = attrs.get("n_low_transitions", 0)
+    unmatched = list(attrs.get("unmatched_regions", []))
+
+    def footnotes() -> list:
         return [m.Paragraph(
-            "Low-transition exclusion is off (min_transitions = 0): every fly "
-            "is included in the results below.")]
+            f"{region} was declared removed but matches no tracking region in "
+            f"this experiment — nothing was excluded for it.")
+            for region in unmatched]
+
     if len(excluded) == 0:
-        return [m.Paragraph(
-            f"No flies were excluded: every fly made at least {threshold} "
-            f"transitions during the {phase} phase (min_transitions = "
-            f"{threshold}).")]
+        if threshold:
+            text = (f"No flies were excluded: every fly made at least "
+                    f"{threshold} transitions during the {phase} phase "
+                    f"(min_transitions = {threshold}), and no regions were "
+                    f"removed by the experimenter.")
+        elif threshold is not None:
+            text = ("Low-transition exclusion is off (min_transitions = 0) and "
+                    "no regions were removed: every fly is included in the "
+                    "results below.")
+        else:
+            text = ("No regions were removed: every fly is included in the "
+                    "results below.")
+        return [m.Paragraph(text)] + footnotes()
+
+    causes = []
+    if n_removed:
+        causes.append(f"{n_removed} removed by the experimenter")
+    if n_low:
+        causes.append(f"{n_low} with fewer than {threshold} transitions during "
+                      f"the {phase} phase")
+    lead = (f"{len(excluded)} fly(ies) were excluded from all figures, summary "
+            f"measures, statistics, and data files: {'; '.join(causes)}. "
+            f"See the _Excluded.csv output.")
+
+    has_transitions = "Transitions" in excluded.columns
+    columns = ["Fly", "Region", "Treatment"]
+    if has_transitions:
+        columns.append(f"Transitions ({phase})")
+    columns.append("Reason")
     rows = []
     for _, row in excluded.iterrows():
-        t = pd.to_numeric(pd.Series([row.get("Transitions")]), errors="coerce").iloc[0]
-        rows.append([str(row.get("Name", "")),
-                     str(row.get("TrackingRegion", "")),
-                     str(row.get("Treatment", "")),
-                     "no data" if pd.isna(t) else f"{t:g}"])
+        cells = [str(row.get("Name", "")),
+                 str(row.get("TrackingRegion", "")),
+                 str(row.get("Treatment", ""))]
+        if has_transitions:
+            t = pd.to_numeric(pd.Series([row.get("Transitions")]),
+                              errors="coerce").iloc[0]
+            cells.append("no data" if pd.isna(t) else f"{t:g}")
+        cells.append(str(row.get("Reason", "")))
+        rows.append(cells)
+    caption = ("Why each fly left the analysis population; a reason naming "
+               "both causes means the experimenter removed a fly that also "
+               "failed the automatic criterion.")
+    if has_transitions:
+        caption += " 'no data' means the fly had no occupancy data in the phase."
     return [
-        m.Paragraph(
-            f"{len(excluded)} fly(ies) were excluded from all figures, summary "
-            f"measures, statistics, and data files: fewer than {threshold} "
-            f"transitions during the {phase} phase (min_transitions = "
-            f"{threshold}; see the _Excluded.csv output)."),
-        m.Table(
-            columns=["Fly", "Region", "Treatment", f"Transitions ({phase})"],
-            rows=rows, title="Excluded flies",
-            caption="Flies failing the low-transition criterion; 'no data' "
-                    "means the fly had no occupancy data in the phase."),
-    ]
+        m.Paragraph(lead),
+        m.Table(columns=columns, rows=rows, title="Excluded flies",
+                caption=caption),
+    ] + footnotes()
 
 
 def _primary_phase(windows, labels):

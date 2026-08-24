@@ -6,11 +6,18 @@ This glossary fixes the domain language; it is not a spec.
 ## Language
 
 **Batch**:
-A directory whose immediate subdirectories holding a `project.yaml` are its
-Projects — the same structural rule a Project applies to its Experiments, one
-level up. Only existing Projects qualify: a **Batch Run** (one execution of
+A directory with at least one Project anywhere beneath it. Discovery is
+**recursive and prunes at each Project**: the walk descends until it finds a
+Project — `project.yaml` plus at least one Experiment Directory — and never
+looks inside one, because a Project's subdirectories are its Experiments by
+definition. Projects therefore need not be immediate children, and grouping
+folders (`Sept2026/`, `Archive/2025/`) are transparent. A **Member** is
+identified by its **path relative to the Batch root** (`Sept2026/ProjA`; a
+top-level Project is just `ProjA`), which is what `batch.yaml`, a Removal
+Sheet's `project` column, and a Batch Run's target list all name. Only
+existing Projects qualify: a **Batch Run** (one execution of
 batch mode over a Batch) never creates or upgrades a `project.yaml`, and
-children that are not Projects are skipped with a log line. Purely a
+directories that are not Projects are skipped with a log line. Purely a
 processing convenience: it exists to run many Projects unattended, it is not
 itself a Project and holds no analysis outputs of its own, it never pools
 results across Projects (each Project has its own design; there is no
@@ -42,6 +49,25 @@ _Avoid_: batch parent, parent directory
 One recording's directory — `tracking_config.yaml`, `data/`, `analysis/`,
 `qc/`, its own report — either standalone or as a replicate inside a Project.
 (Formerly called the "project directory".)
+
+**Unfiled Recording**:
+An Experiment Directory whose DTrack export sits loose at its root instead of
+inside `data/`, where the loader looks. The data is intact — only its filing
+is wrong — so **filing** it (moving the `.xlsx`/`.csv` into `data/`, any other
+loose file into `extra_files/`, and never a `.yaml`, which at an experiment
+root is configuration or declaration) makes it loadable with nothing lost.
+_Avoid_: malformed, non-compliant, unconverted, needs conversion
+
+**Blocked Member**:
+A Batch Member a Batch Run cannot use as it stands: it holds an Unfiled
+Recording, a recording with no `tracking_config.yaml`, or an Experiment
+Directory with no recording at all. Blocked is a property of the Member, the
+reason is per Experiment Directory, and each reason names its own fix — file
+the recording, scaffold the config, or supply the missing data. A Batch Run
+reports Blocked Members before it starts rather than failing on them one by
+one an hour in.
+_Avoid_: invalid project, broken project (nothing is broken — the run just
+cannot use it yet)
 
 **Replicate**:
 An Experiment inside a Project. Every replicate's resolved config is

@@ -32,6 +32,15 @@ Omitting it is a *Custom* experiment — the
 freeform, `tracking_type`-driven behavior, unchanged. See the
 [user guide](doc/guide.md) §4.1 and `docs/adr/`.
 
+**Removed regions** cover the losses no automatic check can see — a fly that
+died partway through, escaped, or a well that was never loaded. Declare them
+per experiment in `removed_regions.yaml` (from the Hub's **Removed regions…**
+checklist, or by hand), or in bulk from a `removed_regions.csv` spreadsheet
+that a Batch Run applies before it starts. Every fly in a removed region
+leaves the analysis population with your reason recorded beside it in
+`*_Excluded.csv` and in both reports. See the [user guide](doc/guide.md) §9
+and `docs/adr/0010`.
+
 ## Installation
 
 Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/).
@@ -93,6 +102,9 @@ Experiment results are written into each replicate's own `analysis/` and
 - **[Scripts & the Script Editor](doc/scripts_guide.md)** — saved analysis
   recipes: authoring them visually, every available action and its
   parameters, faceting rules, Project Scripts, and legacy batch migration.
+- In-app help (the **?** buttons) covers the same ground topic by topic —
+  including **Removed regions**, which documents declaring a removal, what it
+  does to the analysis, and everywhere it is reported.
 
 ## Tests
 

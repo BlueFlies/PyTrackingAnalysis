@@ -48,6 +48,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QRadioButton,
@@ -659,6 +660,16 @@ class HubWindow(QMainWindow):
             "Have an AI provider write the project narrative from the "
             "Combined Analysis and rebuild the Project report to embed it.")
         btn_ai.clicked.connect(self._project_ai_narrative)
+        btn_removals = ActionButton("Removed regions…", Category.TOOLS,
+                                    icon_name="clear")
+        btn_removals.setToolTip(
+            "Declare tracking regions the experimenter removed from the "
+            "analysis — a dead or escaped fly, an empty well. Every fly in a "
+            "removed region is excluded from figures, statistics and the "
+            "summary CSVs, and named with its reason in the reports. See the "
+            "'Removed regions' help topic.")
+        btn_removals.clicked.connect(self._project_removed_regions)
+        self._btn_removals = btn_removals
 
         ## Three equal columns: setup on the left, the full Project refresh in
         ## the middle, and downstream review/AI actions after it.
@@ -668,7 +679,8 @@ class HubWindow(QMainWindow):
         ## Six across two rows of three. The order puts "View reports"
         ## directly under the Create/Update report button it follows from.
         for i, btn in enumerate((btn_configs, btn_add, btn_report,
-                                 btn_plots, btn_ai, btn_view_reports)):
+                                 btn_plots, btn_ai, btn_view_reports,
+                                 btn_removals)):
             grid.addWidget(btn, i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
@@ -795,7 +807,8 @@ class HubWindow(QMainWindow):
             else:
                 flies = "not analyzed" if st["has_data"] else "no data"
             values = [name, "yes", flies,
-                      str(st["excluded"]) if st["excluded"] is not None else "—",
+                      prj.format_excluded_cell(st) if st["excluded"] is not None
+                      else ("re-run needed" if st["stale"] else "—"),
                       str(st["flagged"]) if st["flagged"] is not None else "—",
                       "yes" if st["report"] else "no"]
             for col, value in enumerate(values):
@@ -1053,6 +1066,88 @@ class HubWindow(QMainWindow):
 
         self._spawn_task("AI narrative", _do)
 
+    def _project_removed_regions(self, project_dir=None) -> None:
+        """Open the removals window on a Project (ADR-0010).
+
+        *project_dir* lets the Batch panel open it for a Project other than
+        the selected one; without it the current selection is used.
+        """
+        from .removals_dialog import RemovalsDialog
+
+        root = Path(project_dir) if project_dir else self._project_root()
+        if root is None:
+            self._warn("Select a Project first — removals are declared per "
+                       "replicate, and a Project is what lists them.")
+            return
+        ## A Removal Sheet at the Project root is offered here — the explicit
+        ## act ADR-0010 requires, at the moment the user is looking at exactly
+        ## what it would change.
+        if self._removal_sheet_note(root) is not None:
+            self._apply_removal_sheet(root, "project")
+        dialog = RemovalsDialog(str(root), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        changed = dialog.changed_experiments
+        if not changed:
+            self._log.append_line("[removals] nothing changed.")
+            return
+        for path in dialog.written:
+            self._log.append_line(f"Saved: {path}")
+        self._log.append_line(
+            f"[removals] updated {len(changed)} replicate(s): "
+            + ", ".join(changed)
+            + ". Re-run the analysis for the change to reach saved results.")
+        ## The loaded experiment's Arena was filtered at load, so re-apply now
+        ## — otherwise a fly the user just removed keeps appearing in plots
+        ## until the next full analysis (ADR-0010).
+        exp = self._exp
+        if exp is not None:
+            loaded = os.path.normpath(str(exp.project_directory))
+            if any(os.path.normpath(os.path.join(str(root), name)) == loaded
+                   for name in changed):
+                try:
+                    exp.refresh_exclusions()
+                    for line in exp.exclusion_notes():
+                        self._log.append_line(line)
+                except Exception as err:  # noqa: BLE001
+                    self._log_issue(f"[removals] could not re-apply: {err}")
+        self._refresh_project_view()
+        self._refresh_tiles()
+
+    def _apply_removal_sheet(self, root, label: str) -> None:
+        """Apply a Removal Sheet found at *root* (a Batch or Project), after
+        confirming — applying writes into every experiment it names."""
+        from .. import removals as removals_mod
+
+        sheet = removals_mod.find_sheet(str(root))
+        if sheet is None:
+            self._warn(
+                f"No removal sheet in this {label}. Add a "
+                f"{removals_mod.SHEET_STEM}.csv with project, experiment, "
+                f"region and reason columns.")
+            return
+        answer = QMessageBox.question(
+            self, "Apply removal sheet",
+            f"Apply {os.path.basename(sheet)} to the experiments it names?\n\n"
+            "Declarations already in place are kept; a row whose reason "
+            "differs is reported as a conflict, not overwritten.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = removals_mod.apply_sheet(
+                str(root), sheet_path=sheet, log=self._log.append_line)
+        except Exception as err:  # noqa: BLE001
+            self._log_issue(f"[removals] {os.path.basename(sheet)}: {err}")
+            self._warn(f"The removal sheet could not be read:\n{err}")
+            return
+        conflicts = result["counts"].get("conflict", 0)
+        if conflicts:
+            self._warn(
+                f"{conflicts} row(s) conflict with declarations already in "
+                "place — the existing reasons were kept. See the log.")
+        self._refresh_project_view()
+        self._refresh_tiles()
+
     def _project_add_experiment(self) -> None:
         from .. import project as prj
 
@@ -1220,6 +1315,29 @@ class HubWindow(QMainWindow):
         btn_pick_batch.clicked.connect(self._pick_batch_dir)
         pick_row.addWidget(btn_pick_batch)
         pick_row.addStretch(1)
+        ## Right of the folder picker on the same row, and deliberately small:
+        ## a secondary action on the folder you just chose, not a peer of Run
+        ## batch. Enabled only when that folder actually holds a sheet.
+        self._btn_batch_removals = ActionButton(
+            "Apply removal sheet…", Category.TOOLS, icon_name="clear")
+        self._btn_batch_removals.setToolTip(
+            "Read removed_regions.csv at the batch folder and write its rows "
+            "into each experiment's removed_regions.yaml. A Batch Run applies "
+            "it automatically before running; this is for applying it now. "
+            "Declarations already in place are kept.")
+        self._btn_batch_removals.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                               QSizePolicy.Policy.Fixed)
+        font = self._btn_batch_removals.font()
+        font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
+        self._btn_batch_removals.setFont(font)
+        self._btn_batch_removals.setStyleSheet(
+            self._btn_batch_removals.styleSheet().replace(
+                "padding: 6px 12px;", "padding: 3px 8px;"))
+        self._btn_batch_removals.setIconSize(QSize(13, 13))
+        self._btn_batch_removals.clicked.connect(
+            lambda: self._apply_removal_sheet(self._batch_root(), "batch folder"))
+        pick_row.addWidget(self._btn_batch_removals, 0,
+                           Qt.AlignmentFlag.AlignRight)
         card.add_body(pick_row)
         self._batch_empty = QLabel(
             "Choose a batch folder — one whose subdirectories are Projects — "
@@ -1246,9 +1364,17 @@ class HubWindow(QMainWindow):
             "select that Project.")
         self._batch_table.itemDoubleClicked.connect(
             self._open_selected_batch_project)
+        ## Right-click, not double-click: double-click already means "select
+        ## this Project" (ADR-0009), so the removals window takes the gesture
+        ## that is free.
+        self._batch_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self._batch_table.customContextMenuRequested.connect(
+            self._batch_table_menu)
         card.add_body(self._batch_table)
         hint = QLabel("Double-click a project to select it — the strip "
-                      "switches to that Project.")
+                      "switches to that Project. Right-click for its removed "
+                      "regions.")
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
         card.add_body(hint)
 
@@ -1308,10 +1434,52 @@ class HubWindow(QMainWindow):
         card.add_body(self._chk_suppress_tabs)
 
         for w in (self._batch_table, self._batch_script_combo,
-                  self._btn_run_batch, self._chk_batch_narrative):
+                  self._btn_run_batch, self._chk_batch_narrative,
+                  self._btn_batch_removals):
             w.setEnabled(False)
         self._cards["batch"] = card
         self._cards_lay.addWidget(card)
+
+    def _removal_sheet_note(self, root) -> str | None:
+        """Log the Removal Sheet at *root* the first time it is seen, and
+        return its path — the report half of "report, never apply"."""
+        from .. import removals as removals_mod
+
+        if root is None:
+            return None
+        sheet = removals_mod.find_sheet(str(root))
+        if sheet is None:
+            return None
+        if getattr(self, "_noted_removal_sheet", None) != sheet:
+            self._noted_removal_sheet = sheet
+            try:
+                rows = len(removals_mod.read_sheet(sheet))
+                self._log.append_line(
+                    f"[removals] {os.path.basename(sheet)} found: {rows} row(s). "
+                    f"'Apply removal sheet…' writes them into the experiments; "
+                    f"a Batch Run applies it automatically.")
+            except Exception as err:  # noqa: BLE001
+                self._log_issue(
+                    f"[removals] {os.path.basename(sheet)} could not be read: {err}")
+        return sheet
+
+    def _batch_table_menu(self, point) -> None:
+        """Right-click on a project row: its removals window (ADR-0010)."""
+        root = self._batch_root()
+        if root is None:
+            return
+        item = self._batch_table.itemAt(point)
+        if item is None:
+            return
+        name_item = self._batch_table.item(item.row(), 0)
+        if name_item is None:
+            return
+        name = name_item.text().strip()
+        menu = QMenu(self)
+        action = menu.addAction(f"Removed regions in {name}…")
+        chosen = menu.exec(self._batch_table.viewport().mapToGlobal(point))
+        if chosen is action:
+            self._project_removed_regions(Path(root) / name)
 
     def _pick_batch_dir(self) -> None:
         """The Batch panel's own way in: pick the parent directory, and every
@@ -1367,6 +1535,11 @@ class HubWindow(QMainWindow):
         for w in (self._batch_table, self._batch_script_combo,
                   self._btn_run_batch, self._chk_batch_narrative):
             w.setEnabled(live)
+        ## Selecting a Batch REPORTS its Removal Sheet; it never applies one.
+        ## Browsing to a colleague's batch folder must not silently rewrite
+        ## eighty experiment directories (ADR-0010).
+        self._btn_batch_removals.setEnabled(
+            live and self._removal_sheet_note(root) is not None)
         if not live:
             self._batch_table.setRowCount(0)
             self._batch_script_combo.blockSignals(True)

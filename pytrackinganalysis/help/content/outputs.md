@@ -11,7 +11,7 @@ For one loaded replicate, results are written relative to that Experiment Direct
 - `*_experiment_summary.txt` - rig, design, quality overview, and per-tracker table.
 - `*_Summary.csv` - per-tracker summary statistics after any exclusions.
 - `*_Summary_Facet.csv` - the same summaries split by `facet_cutoffs`.
-- `*_Excluded.csv` - for Valence, flies removed by the low-transition exclusion.
+- `*_Excluded.csv` - every fly left out of the analysis, with a `Reason` column: the experimenter's own removal (`Removed: dead at ~20 min`), the Valence low-transition criterion, or both on one row.
 - `*_Stats.txt` - faceted pairwise comparisons across treatments.
 - `*_Stats_flat.txt` - flat pairwise comparisons when run without faceting.
 - `*_plot_*.png` - saved experiment-level figures.
