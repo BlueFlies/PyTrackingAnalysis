@@ -314,7 +314,10 @@ class TilePanel(QFrame):
         panel never runs past *max_bottom* or the parent's right edge."""
         parent = self.parentWidget()
         width = min(self._panel_width, parent.width() - 16)
-        height = max(120, min(self._content_height(), max_bottom - y))
+        available_height = max(0, max_bottom - y)
+        height = min(self._content_height(), available_height)
+        if available_height >= 120:
+            height = max(120, height)
         x = max(8, min(x, parent.width() - width - 8))
         self.setGeometry(x, y, width, height)
         self.raise_()

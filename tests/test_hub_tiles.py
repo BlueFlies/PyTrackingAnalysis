@@ -368,6 +368,20 @@ def test_project_panel_uses_available_height_to_fit_content(
     assert scroll.verticalScrollBar().maximum() == 0
 
 
+def test_tile_panel_respects_bottom_bound_on_short_windows(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    hub.resize(900, 260)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("project")
+    qapp.processEvents()
+
+    central = hub.centralWidget()
+    panel = hub._panels["project"]
+    assert panel.y() + panel.height() <= central.height() - 8
+
+
 def test_cards_live_inside_panels_and_stay_functional(hub):
     # The full existing cards moved into panels — handlers and widgets intact.
     project_panel = hub._panels["project"]
@@ -713,6 +727,56 @@ def test_replicate_double_click_opens_analyze_after_load_finishes(
     assert not hub._panels["project"].isVisible()
     assert hub._tiles["analyze"]._active
     assert not hub._tiles["project"]._active
+
+
+def test_failed_replicate_load_does_not_open_analyze_for_stale_experiment(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    from types import SimpleNamespace
+
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    hub._exp = SimpleNamespace(
+        project_directory=str(tmp_path / "Rep1"),
+        arena=SimpleNamespace(experiment_name="Rep1"),
+        facet_cutoffs=None,
+        parameters=SimpleNamespace(
+            get_tracking_type=lambda: SimpleNamespace(name="TWOCHOICETRACKER")),
+    )
+    qapp.processEvents()
+    hub._open_panel("project")
+    qapp.processEvents()
+
+    pending: dict = {}
+
+    def _fake_spawn(label, task, on_ok, on_fail, **kwargs):
+        pending.update({
+            "label": label,
+            "on_fail": on_fail,
+            "worker": SimpleNamespace(task_name=label),
+        })
+        return True
+
+    warnings: list[str] = []
+    monkeypatch.setattr(hub, "_spawn_task_with_callbacks", _fake_spawn)
+    monkeypatch.setattr(hub, "_warn", warnings.append)
+
+    row = next(r for r in range(hub._exp_table.rowCount())
+               if hub._exp_table.item(r, 0).text() == "Rep2")
+    hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
+    qapp.processEvents()
+
+    assert pending["label"] == "Load + QC"
+    assert hub._open_panel_key is None
+
+    pending["on_fail"]("boom")
+    hub._on_task_finished(pending["worker"])
+    qapp.processEvents()
+
+    assert warnings == ["Failed to load experiment — see Output for details."]
+    assert hub._open_panel_key is None
+    assert not hub._panels["analyze"].isVisible()
+    assert not hub._tiles["analyze"]._active
+    assert hub._exp.project_directory == str(tmp_path / "Rep1")
 
 
 def test_create_project_lives_on_the_project_card(hub):

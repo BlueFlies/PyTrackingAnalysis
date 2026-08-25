@@ -295,6 +295,7 @@ class HubWindow(QMainWindow):
             self._panels[key] = panel
         self._open_panel_key: str | None = None
         self._batch_panel_root: Path | None = None
+        self._load_qc_ready_to_open_analyze = False
         ## App-level filter: a click outside the open panel (and outside the
         ## strip) closes it; the click itself is NOT swallowed. A dedicated
         ## QObject (never the window itself) — see ClickAwayFilter.
@@ -2545,6 +2546,7 @@ class HubWindow(QMainWindow):
             if result_holder:
                 self._exp = result_holder[0]
                 self._on_experiment_ready()
+                self._load_qc_ready_to_open_analyze = True
                 # Launch the QC viewer so it picks up the freshly-saved qc/
                 # artifacts — of the experiment just loaded, which is not the
                 # selected directory (that stays on the Project).
@@ -2552,6 +2554,8 @@ class HubWindow(QMainWindow):
             self._log.append_line(msg)
 
         def _on_fail(msg: str) -> None:
+            self._open_analyze_after_load = False
+            self._load_qc_ready_to_open_analyze = False
             self._log_issue(msg)
             self._warn("Failed to load experiment — see Output for details.")
 
@@ -2559,11 +2563,13 @@ class HubWindow(QMainWindow):
         # Don't pop QC artifacts as Hub tabs — the QC viewer (auto-launched on
         # success) is the canonical surface for them.
         self._open_analyze_after_load = bool(open_analyze)
+        self._load_qc_ready_to_open_analyze = False
         started = self._spawn_task_with_callbacks(
             "Load + QC", _do_load_and_qc, _on_ok, _on_fail, surface_artifacts=False,
         )
         if not started:
             self._open_analyze_after_load = False
+            self._load_qc_ready_to_open_analyze = False
         return bool(started)
 
     def _on_experiment_ready(self) -> None:
@@ -2986,11 +2992,13 @@ class HubWindow(QMainWindow):
     def _on_task_finished(self, worker: TaskWorker) -> None:
         open_analyze = (
             self._open_analyze_after_load
+            and self._load_qc_ready_to_open_analyze
             and getattr(worker, "task_name", None) == "Load + QC"
             and self._exp is not None
         )
         if getattr(worker, "task_name", None) == "Load + QC":
             self._open_analyze_after_load = False
+            self._load_qc_ready_to_open_analyze = False
         if self._worker is worker:
             self._worker = None
         self._progress.setVisible(False)
