@@ -628,17 +628,91 @@ def test_double_clicking_a_replicate_loads_it(hub, qapp, tmp_path, monkeypatch):
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
     loaded: list = []
-    monkeypatch.setattr(type(hub), "_load_experiment",
-                        lambda self, directory=None: loaded.append(str(directory)))
+
+    def _fake_load(self, directory=None, *, open_analyze=False):
+        loaded.append((str(directory), open_analyze))
+
+    monkeypatch.setattr(type(hub), "_load_experiment", _fake_load)
 
     row = next(r for r in range(hub._exp_table.rowCount())
                if hub._exp_table.item(r, 0).text() == "Rep2")
     hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
 
-    assert loaded == [str(tmp_path / "Rep2")]
+    assert loaded == [(str(tmp_path / "Rep2"), True)]
     # The row that was double-clicked is the load target; the selection is
     # still the Project, so its actions keep working on the whole set.
     assert str(hub._project_dir) == str(tmp_path)
+
+
+def test_replicate_double_click_opens_analyze_after_load_finishes(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("project")
+    qapp.processEvents()
+
+    completed: list[str] = []
+
+    class _FakeExperiment:
+        facet_cutoffs = None
+
+        def __init__(self, project_directory, config_path=None):
+            self.project_directory = str(project_directory)
+            self.config_path = config_path
+            self.arena = SimpleNamespace(
+                experiment_name=Path(project_directory).name)
+            self.parameters = SimpleNamespace(
+                get_tracking_type=lambda: SimpleNamespace(name="TWOCHOICETRACKER"))
+
+        def run_qc(self):
+            completed.append("qc")
+
+        def __str__(self):
+            return "fake experiment"
+
+    pending: dict = {}
+
+    def _fake_spawn(label, task, on_ok, on_fail, **kwargs):
+        pending.update({
+            "label": label,
+            "task": task,
+            "on_ok": on_ok,
+            "worker": SimpleNamespace(task_name=label),
+        })
+        return True
+
+    monkeypatch.setattr(hub_mod.ExperimentMod, "Experiment", _FakeExperiment)
+    monkeypatch.setattr(hub, "_spawn_task_with_callbacks", _fake_spawn)
+    monkeypatch.setattr(hub, "_launch_subapp", lambda *a, **k: None)
+
+    row = next(r for r in range(hub._exp_table.rowCount())
+               if hub._exp_table.item(r, 0).text() == "Rep2")
+    hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
+    qapp.processEvents()
+
+    assert pending["label"] == "Load + QC"
+    assert hub._open_panel_key is None
+    assert not hub._panels["project"].isVisible()
+    assert not hub._panels["analyze"].isVisible()
+
+    msg = pending["task"]()
+    pending["on_ok"](msg)
+    hub._on_task_finished(pending["worker"])
+    qapp.processEvents()
+
+    assert completed == ["qc"]
+    assert hub._exp.project_directory == str(tmp_path / "Rep2")
+    assert hub._open_panel_key == "analyze"
+    assert hub._panels["analyze"].isVisible()
+    assert not hub._panels["project"].isVisible()
+    assert hub._tiles["analyze"]._active
+    assert not hub._tiles["project"]._active
 
 
 def test_create_project_lives_on_the_project_card(hub):

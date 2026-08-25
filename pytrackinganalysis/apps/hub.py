@@ -159,6 +159,7 @@ class HubWindow(QMainWindow):
         self._exp: ExperimentMod.Experiment | None = None
         self._project_dir: Path | None = None
         self._worker: TaskWorker | None = None
+        self._open_analyze_after_load = False
         # (app_name, Popen) for child apps launched from the Tools card. They run
         # independently of the Hub; tracked only so an immediate failure is visible.
         self._subapps: list[tuple[str, object]] = []
@@ -974,7 +975,8 @@ class HubWindow(QMainWindow):
             return
         ## The table is the only way to load an experiment (ADR-0008). The
         ## selection stays on the Project — only the loaded experiment moves.
-        self._load_experiment(target)
+        if self._load_experiment(target, open_analyze=True):
+            self._close_panel()
 
     def _create_replicate_config(self, name: str):
         """Scaffold *name*'s tracking_config.yaml from the project design.
@@ -2505,7 +2507,9 @@ class HubWindow(QMainWindow):
     # Behaviour — loading an Experiment
     # ==================================================================
 
-    def _load_experiment(self, directory: str | Path | None = None) -> None:
+    def _load_experiment(
+            self, directory: str | Path | None = None, *,
+            open_analyze: bool = False) -> bool:
         """Load *directory* as the current experiment (the replicates table
         passes the row's directory). Without one, fall back to the selected
         directory — the standalone-experiment path, which the Hub itself no
@@ -2515,13 +2519,13 @@ class HubWindow(QMainWindow):
         target = Path(directory) if directory is not None else self._project_dir
         if target is None:
             self._warn("Choose a project directory first.")
-            return
+            return False
         if prj.is_project_dir(target):
             self._warn(
                 "This is a Project directory. Double-click a replicate in the "
                 "Experiments table to load it, or use the Project actions."
             )
-            return
+            return False
         project_dir = target
         # Experiments always use the canonical tracking_config.yaml (the
         # Project card no longer offers alternate YAML pickers).
@@ -2554,9 +2558,13 @@ class HubWindow(QMainWindow):
         self._log.append_line(f"Loading experiment from {project_dir}…")
         # Don't pop QC artifacts as Hub tabs — the QC viewer (auto-launched on
         # success) is the canonical surface for them.
-        self._spawn_task_with_callbacks(
+        self._open_analyze_after_load = bool(open_analyze)
+        started = self._spawn_task_with_callbacks(
             "Load + QC", _do_load_and_qc, _on_ok, _on_fail, surface_artifacts=False,
         )
+        if not started:
+            self._open_analyze_after_load = False
+        return bool(started)
 
     def _on_experiment_ready(self) -> None:
         # Enable single-mode analysis buttons (including the new dynamic ones).
@@ -2829,14 +2837,14 @@ class HubWindow(QMainWindow):
         on_ok: Callable[[str], None],
         on_fail: Callable[[str], None],
         surface_artifacts: bool = True,
-    ) -> None:
+    ) -> bool:
         ## A panel closes on a click and nothing else: launching a task used to
         ## close it, which pulled the rest of the card away from a user working
         ## down it. The busy state greys the cards in place instead, and the
         ## output is one click on the background away.
         if self._worker is not None and self._worker.isRunning():
             self._warn("Another task is already running.")
-            return
+            return False
         self._progress.setVisible(True)
         self._set_busy(True)
         # Whether ``Saved: <path>`` lines from this task should appear as
@@ -2850,6 +2858,7 @@ class HubWindow(QMainWindow):
         worker.finished.connect(lambda: self._on_task_finished(worker))
         self._worker = worker
         worker.start()
+        return True
 
     def _discard_figures(self, titled_figures: list, source: str) -> bool:
         """When tabs are suppressed, close *titled_figures* and say so.
@@ -2975,6 +2984,13 @@ class HubWindow(QMainWindow):
         )
 
     def _on_task_finished(self, worker: TaskWorker) -> None:
+        open_analyze = (
+            self._open_analyze_after_load
+            and getattr(worker, "task_name", None) == "Load + QC"
+            and self._exp is not None
+        )
+        if getattr(worker, "task_name", None) == "Load + QC":
+            self._open_analyze_after_load = False
         if self._worker is worker:
             self._worker = None
         self._progress.setVisible(False)
@@ -2990,6 +3006,8 @@ class HubWindow(QMainWindow):
         self._refresh_project_view()
         self._refresh_batch_view()
         self._refresh_tiles()
+        if open_analyze:
+            self._open_panel("analyze")
 
     def _set_busy(self, busy: bool) -> None:
         for btn in (

@@ -341,8 +341,10 @@ def test_the_selection_never_leaves_the_project(qapp, tmp_path, monkeypatch):
 
     _make_project(tmp_path)
     loaded: list = []
-    monkeypatch.setattr(HubWindow, "_load_experiment",
-                        lambda self, directory=None: loaded.append(str(directory)))
+    def _fake_load(self, directory=None, *, open_analyze=False):
+        loaded.append(str(directory))
+
+    monkeypatch.setattr(HubWindow, "_load_experiment", _fake_load)
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
     card = win._cards["projectview"]
