@@ -362,7 +362,7 @@ class HubWindow(QMainWindow):
         self._project_edit.setReadOnly(True)
         # One action, not two: reloading a Project was picking the same
         # directory again, so the picker is the reload.
-        load_btn = ActionButton("Load…", Category.LOAD, icon_name="browse")
+        load_btn = ActionButton("Load…", Category.NEUTRAL, icon_name="browse")
         load_btn.setToolTip(
             "Choose the Project directory to work in. Picking the one already "
             "open re-reads it from disk — replicates added or analyzed outside "
@@ -375,13 +375,13 @@ class HubWindow(QMainWindow):
         # project.yaml is fixed in the Project directory — Edit when present,
         # Create (writes a default) when missing; both open the Project editor.
         # QC viewer is experiment-level and lives on the Experiment tile.
-        self._btn_edit_cfg = ActionButton("Edit config…", Category.TOOLS,
+        self._btn_edit_cfg = ActionButton("Edit config…", Category.NEUTRAL,
                                           icon_name="config")
         self._btn_edit_cfg.setEnabled(False)
         self._btn_edit_cfg.clicked.connect(self._edit_or_create_project_config)
         # Making a Project is project-level work: it belongs beside the
         # directory it writes into, not in the Experiment (Load) card.
-        new_project_btn = ActionButton("Create project…", Category.LOAD,
+        new_project_btn = ActionButton("Create project…", Category.NEUTRAL,
                                        icon_name="project")
         new_project_btn.setToolTip(
             "Create (or edit) a Project of replicate experiments somewhere "
@@ -389,7 +389,7 @@ class HubWindow(QMainWindow):
             "information."
         )
         new_project_btn.clicked.connect(self._new_project)
-        create_exp_btn = ActionButton("Create experiment…", Category.LOAD,
+        create_exp_btn = ActionButton("Create experiment…", Category.NEUTRAL,
                                       icon_name="new")
         create_exp_btn.setToolTip(
             "Create a standalone experiment directory from an Experiment Type."
@@ -609,9 +609,8 @@ class HubWindow(QMainWindow):
         Project — per-replicate status plus the project-level actions."""
         card = Card(
             "Analysis",
-            category=Category.ANALYZE,
-            subtitle="Replicate experiments of one design.",
-            icon_name="batch",
+            category=Category.NEUTRAL,
+            icon_name="project",
         )
         card.add_title_widget(
             HelpButton("project_actions", tooltip="Project actions and combined analysis")
@@ -642,37 +641,37 @@ class HubWindow(QMainWindow):
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
         card.add_body(hint)
 
-        btn_configs = ActionButton("Experiment configs…", Category.TOOLS,
+        btn_configs = ActionButton("Experiment configs…", Category.NEUTRAL,
                                    icon_name="config")
         btn_configs.setToolTip(
             "Create or edit each experiment's tracking_config.yaml. The "
             "Project's shared design lives in project.yaml; the per-experiment "
             "configs live one level down, one per experiment directory.")
         btn_configs.clicked.connect(self._project_experiment_configs)
-        btn_add = ActionButton("Add experiment…", Category.LOAD,
+        btn_add = ActionButton("Add experiment…", Category.NEUTRAL,
                                icon_name="project")
         btn_add.setToolTip(
             "Create a replicate subdirectory whose config is scaffolded from "
             "the project design — the shared design holds by construction.")
         btn_add.clicked.connect(self._project_add_experiment)
-        btn_plots = ActionButton("Plot editor…", Category.ANALYZE,
+        btn_plots = ActionButton("Plot editor…", Category.NEUTRAL,
                                  icon_name="report")
         btn_plots.clicked.connect(
             lambda: self._launch_subapp("plots", self._project_root()))
-        btn_report = ActionButton("Create report", Category.ANALYZE,
-                                  icon_name="report", primary=True)
+        btn_report = ActionButton("Create report", Category.NEUTRAL,
+                                  icon_name="report")
         btn_report.clicked.connect(self._project_report)
         self._btn_project_report = btn_report
-        btn_view_reports = ActionButton("View reports", Category.ANALYZE,
+        btn_view_reports = ActionButton("View reports", Category.NEUTRAL,
                                         icon_name="report")
         btn_view_reports.clicked.connect(self._project_view_reports)
         self._btn_view_reports = btn_view_reports
-        btn_ai = ActionButton("AI narrative…", Category.AI, icon_name="ai")
+        btn_ai = ActionButton("AI narrative…", Category.NEUTRAL, icon_name="ai")
         btn_ai.setToolTip(
             "Have an AI provider write the project narrative from the "
             "Combined Analysis and rebuild the Project report to embed it.")
         btn_ai.clicked.connect(self._project_ai_narrative)
-        btn_removals = ActionButton("Removed regions…", Category.TOOLS,
+        btn_removals = ActionButton("Removed regions…", Category.NEUTRAL,
                                     icon_name="clear")
         btn_removals.setToolTip(
             "Declare tracking regions the experimenter removed from the "
@@ -710,7 +709,7 @@ class HubWindow(QMainWindow):
         self._project_script_combo.setSizePolicy(QSizePolicy.Policy.Ignored,
                                                  QSizePolicy.Policy.Fixed)
         script_row.addWidget(self._project_script_combo, 1)
-        btn_run_script = ActionButton("Run script", Category.SCRIPTS,
+        btn_run_script = ActionButton("Run script", Category.NEUTRAL,
                                       icon_name="scripts")
         btn_run_script.setToolTip(
             "Run the selected Project Script — this project's own scripts "
@@ -721,7 +720,7 @@ class HubWindow(QMainWindow):
             "so it analyzes and pools before building the PDF; the figure "
             "step is skipped when there is no plot_specs.yaml.")
         btn_run_script.clicked.connect(self._project_run_script)
-        btn_edit_scripts = ActionButton("Edit scripts…", Category.SCRIPTS,
+        btn_edit_scripts = ActionButton("Edit scripts…", Category.NEUTRAL,
                                         icon_name="config")
         btn_edit_scripts.setToolTip(
             "Open the Script Editor on project.yaml — Project Scripts plus "
@@ -1349,6 +1348,16 @@ class HubWindow(QMainWindow):
             "found is listed below for the run.")
         btn_pick_batch.clicked.connect(self._pick_batch_dir)
         pick_row.addWidget(btn_pick_batch)
+        self._btn_batch_rescan = ActionButton(
+            "Rescan folder", Category.TOOLS, icon_name="refresh")
+        self._btn_batch_rescan.setToolTip(
+            "Walk the batch folder again. The project list is read once when "
+            "the folder is selected; rescan after adding or fixing projects "
+            "outside the app.")
+        self._btn_batch_rescan.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                             QSizePolicy.Policy.Fixed)
+        self._btn_batch_rescan.clicked.connect(self._rescan_batch)
+        pick_row.addWidget(self._btn_batch_rescan)
         pick_row.addStretch(1)
         ## Right of the folder picker on the same row, and deliberately small:
         ## a secondary action on the folder you just chose, not a peer of Run
@@ -1426,15 +1435,6 @@ class HubWindow(QMainWindow):
         hint.setWordWrap(True)
         card.add_body(hint)
 
-        self._btn_batch_rescan = ActionButton(
-            "Rescan folder", Category.TOOLS, icon_name="refresh")
-        self._btn_batch_rescan.setToolTip(
-            "Walk the batch folder again. The project list is read once when "
-            "the folder is selected; rescan after adding or fixing projects "
-            "outside the app.")
-        self._btn_batch_rescan.clicked.connect(self._rescan_batch)
-        card.add_body(self._btn_batch_rescan)
-
         script_row = QHBoxLayout()
         script_row.addWidget(QLabel("Script:"))
         self._batch_script_combo = QComboBox()
@@ -1454,7 +1454,7 @@ class HubWindow(QMainWindow):
             self._on_batch_script_changed)
         script_row.addWidget(self._batch_script_combo, 1)
         self._btn_run_batch = ActionButton("Run batch", Category.ANALYZE,
-                                           icon_name="run", primary=True)
+                                           icon_name="run")
         self._btn_run_batch.setToolTip(
             "Run the designated Project Script in every checked Project — "
             "continue-on-error, per-Project summary at the end. Unloads the "
@@ -1995,7 +1995,9 @@ class HubWindow(QMainWindow):
             tile.set_active(True)
         else:
             x = central.width() - 8 - 440
-        panel.open_at(x, strip_bottom + 4, central.height() - 8)
+        ## rect().bottom* coordinates are inclusive; +1 starts the panel just
+        ## below the strip while preserving the caller-owned bottom margin.
+        panel.open_at(x, strip_bottom + 1, central.height() - 8)
         self._open_panel_key = key
 
     def _close_panel(self) -> None:

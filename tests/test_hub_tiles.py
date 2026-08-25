@@ -318,6 +318,8 @@ def test_batch_project_double_click_opens_project_panel(
 
 def test_batch_panel_content_fits_the_visible_viewport(
         hub, qapp, tmp_path):  # noqa: F811
+    from PyQt6.QtWidgets import QPushButton
+
     _make_batch(tmp_path)
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
@@ -332,6 +334,38 @@ def test_batch_panel_content_fits_the_visible_viewport(
 
     assert host.width() <= viewport.width()
     assert run_button_right <= viewport.width()
+
+    buttons = {b.text(): b for b in
+               hub._cards["batch"].findChildren(QPushButton)}
+    choose = buttons["Choose batch folder…"]
+    rescan = hub._btn_batch_rescan
+    removals = hub._btn_batch_removals
+    centers = [b.mapTo(viewport, b.rect().center())
+               for b in (choose, rescan, removals)]
+    assert centers[0].x() < centers[1].x() < centers[2].x()
+    assert max(p.y() for p in centers) - min(p.y() for p in centers) <= 8
+
+
+def test_batch_run_button_uses_normal_button_fill(hub):
+    style = hub._btn_run_batch.styleSheet()
+    assert "background: palette(button)" in style
+    assert "palette(highlight)" not in style
+
+
+def test_project_panel_uses_available_height_to_fit_content(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_project(tmp_path)
+    hub.resize(1400, 840)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("project")
+    qapp.processEvents()
+
+    panel = hub._panels["project"]
+    scroll = panel._scroll
+    content = scroll.widget().sizeHint().height()
+    assert scroll.viewport().height() >= content
+    assert scroll.verticalScrollBar().maximum() == 0
 
 
 def test_cards_live_inside_panels_and_stay_functional(hub):
@@ -411,10 +445,14 @@ def test_project_report_button_labels_create_or_update(hub, qapp, tmp_path):  # 
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
     assert hub._btn_project_report.text() == "Create report"
+    assert "background: palette(button)" in hub._btn_project_report.styleSheet()
+    assert "palette(highlight)" not in hub._btn_project_report.styleSheet()
 
     (tmp_path / "Proj_report.pdf").write_bytes(b"%PDF-")
     hub._refresh_project_view()
     assert hub._btn_project_report.text() == "Update report"
+    assert "background: palette(button)" in hub._btn_project_report.styleSheet()
+    assert "palette(highlight)" not in hub._btn_project_report.styleSheet()
 
 
 def test_project_report_button_runs_full_refresh(hub, tmp_path, monkeypatch):
@@ -645,6 +683,24 @@ def test_project_panel_headers_are_distinct(hub):
     """The panel is already titled Project — its cards name their own jobs."""
     titles = [hub._cards[key]._title_lbl.text() for key in ("project", "projectview")]
     assert titles == ["Create/Load", "Analysis"]
+    assert hub._cards["projectview"]._subtitle_lbl is None
+
+
+def test_project_panel_uses_one_project_theme(hub):
+    from pytrackinganalysis.ui import Category
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    assert hub._cards["project"]._category == Category.NEUTRAL
+    assert hub._cards["projectview"]._category == Category.NEUTRAL
+
+    buttons = []
+    for key in ("project", "projectview"):
+        buttons.extend(hub._cards[key].findChildren(ActionButton))
+
+    assert buttons
+    assert {button._category for button in buttons} == {Category.NEUTRAL}
+    assert not any("palette(highlight)" in button.styleSheet()
+                   for button in buttons)
 
 
 def test_project_card_edits_project_yaml_not_tracking_configs(
