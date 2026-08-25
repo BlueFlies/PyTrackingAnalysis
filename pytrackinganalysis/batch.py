@@ -1,7 +1,16 @@
-"""The Batch level (ADR-0009): many sibling Projects run unattended.
+"""The Batch level (ADR-0009, ADR-0011): many Projects run unattended.
 
-A Batch is structural — a directory whose immediate subdirectories holding a
-``project.yaml`` are its Projects. Nothing marks one: ``batch.yaml`` at its
+A Batch is structural — a directory with at least one Project anywhere
+beneath it. Discovery is recursive and **prunes at each Project**: the walk
+descends until it finds one — ``project.yaml`` plus at least one
+experiment-shaped subdirectory — and never looks inside, because a Project's
+subdirectories are its Experiments by definition. Grouping folders
+(``Sept2026/``, ``Archive/2025/``) are therefore transparent, and a **Member**
+is identified by its POSIX path relative to the Batch root (``Sept2026/ProjA``;
+a top-level Project is just ``ProjA``, so existing ``batch.yaml`` files,
+Removal Sheets, and API calls keep working unchanged).
+
+Nothing marks a Batch: ``batch.yaml`` at its
 root appears only once batch-level scripting is authored, because unlike a
 Project a Batch has no authority to declare. A Batch Run executes one
 designated Project Script in every Project (continue-on-error, per-Project
@@ -19,9 +28,11 @@ silently substituted for a Project that has none.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 import yaml
 
+from . import layout
 from . import project as prj
 from . import removals
 
@@ -63,26 +74,304 @@ Do not perform new analysis: you are summarizing what the pipeline already
 computed."""
 
 
-def batch_project_names(path) -> list[str]:
-    """Immediate subdirectories of *path* that are Projects, sorted by name —
-    the order a Batch Run visits them in."""
-    root = str(path)
+#: A runaway walk is a mis-clicked home directory, not a Batch. The cap is far
+#: above any real batch (a 200-Project batch visits a few hundred directories)
+#: and exists so pointing the Hub at ``/`` cannot hang it.
+MAX_WALKED_DIRECTORIES = 20000
+
+#: Never descended into: caches and anything hidden. Everything else is
+#: decided structurally — a denylist of output-directory names would misfire
+#: on a grouping folder that happens to be called ``figures``.
+_SKIP_DIRNAMES = {"__pycache__"}
+
+
+@dataclass(frozen=True)
+class BatchMember:
+    """One Project a Batch Run can target, with its layout already read.
+
+    *key* is the identity (POSIX path relative to the Batch root);
+    *experiments* holds every experiment-shaped subdirectory, healthy or
+    Blocked (ADR-0011) — blocked is a property of the Experiment Directory,
+    never of the Member, so a Member with four healthy replicates and one
+    blocked one runs the four.
+    """
+
+    key: str
+    directory: str
+    experiments: tuple = ()
+    has_report: bool = False
+
+    @property
+    def usable(self) -> tuple:
+        return tuple(e for e in self.experiments if e.usable)
+
+    @property
+    def blocked(self) -> tuple:
+        return tuple(e for e in self.experiments if e.blocked)
+
+    @property
+    def runnable(self) -> bool:
+        """False when nothing in it can be analyzed — the run would only
+        produce a failure, so such a Member starts unchecked."""
+        return bool(self.usable)
+
+    def summary(self) -> str:
+        text = f"{len(self.usable)}/{len(self.experiments)} replicates"
+        if self.blocked:
+            text += f", {len(self.blocked)} blocked"
+        return text
+
+
+def project_kind(directory) -> tuple[str, tuple]:
+    """Classify *directory* as a Batch Member candidate.
+
+    Returns ``(kind, experiments)`` where kind is:
+
+    ``"project"``
+        ``project.yaml`` and at least one *configured* replicate — certainly a
+        Project. The walk prunes here.
+    ``"unconfirmed"``
+        ``project.yaml`` and experiment-shaped children, but not one the run
+        could use — every replicate is blocked. It is probably a Project
+        needing repair, but a grouping folder holding one junk subdirectory
+        (a ``template/`` with a config, an exported workbook) looks identical,
+        so the walk descends first and only calls it a Member if no real
+        Project turns up below (ADR-0011).
+    ``"marker"``
+        ``project.yaml`` and nothing experiment-shaped at all: a grouping
+        folder someone dropped a marker into. Walk through it.
+    ``""``
+        not a Project.
+    """
+    if not prj.is_project_dir(directory):
+        return "", ()
+    experiments = tuple(layout.experiments_in(directory))
+    if any(e.usable for e in experiments):
+        return "project", experiments
+    if experiments:
+        ## Configured-but-unusable is not strong enough to prune on: a
+        ## grouping folder with one ``template/tracking_config.yaml`` looks
+        ## exactly like a Project whose replicates are all blocked, and
+        ## pruning there hides every real Project beneath it.
+        return "unconfirmed", experiments
+    return "marker", ()
+
+
+def _member(path, root, experiments) -> BatchMember:
+    return BatchMember(
+        key=os.path.relpath(path, root).replace(os.sep, "/"),
+        directory=path,
+        experiments=tuple(experiments),
+        has_report=_has_report(path),
+    )
+
+
+class _Walk:
+    """One recursive discovery pass, with its budget and cycle guard.
+
+    Depth-first and *decide-after-descending* for the ambiguous case, so a
+    stray ``project.yaml`` at a grouping level can never hide the Projects
+    beneath it — the exact mistake recursion exists to tolerate.
+    """
+
+    def __init__(self, root) -> None:
+        self.root = os.path.abspath(str(root))
+        self.members: list = []
+        self.skipped: list = []
+        self.truncated = False
+        self._seen: set[str] = set()
+        self._budget = MAX_WALKED_DIRECTORIES
+
+    def key(self, path) -> str:
+        return os.path.relpath(path, self.root).replace(os.sep, "/")
+
+    def note(self, path, why: str) -> None:
+        self.skipped.append((self.key(path), why))
+
+    def run(self) -> dict:
+        kind, experiments = project_kind(self.root)
+        if kind == "project":
+            ## A Project is never also a Batch (ADR-0009): its subdirectories
+            ## are its Experiments, not Members.
+            return self.result()
+        ## The root's own tracking_config.yaml does not stop the walk either:
+        ## a folder can be both a stray experiment directory and the place the
+        ## user keeps their projects.
+        self.descend(self.root)
+        return self.result()
+
+    def result(self) -> dict:
+        self.members.sort(key=lambda m: m.key)
+        return {"members": self.members, "skipped": sorted(self.skipped),
+                "truncated": self.truncated}
+
+    def descend(self, directory) -> int:
+        """Walk *directory*'s children; returns how many Members were found.
+
+        A caller deciding "no Projects below, so this IS the Project" must
+        check :attr:`truncated` first — a budget-exhausted descent found
+        nothing because it never looked.
+        """
+        if self._budget <= 0:
+            self.truncated = True
+            return 0
+        self._budget -= 1
+        try:
+            real = os.path.realpath(directory)
+        except OSError:
+            return 0
+        if real in self._seen:
+            return 0
+        self._seen.add(real)
+
+        try:
+            entries = sorted(os.scandir(directory), key=lambda e: e.name)
+        except OSError as err:
+            ## A directory nobody can read may hold a whole Project. Silently
+            ## pruning it would report the batch as smaller than it is.
+            self.note(directory, f"cannot be listed ({err.strerror or err})")
+            return 0
+
+        found = 0
+        for entry in entries:
+            name = entry.name
+            if name.startswith(".") or name in _SKIP_DIRNAMES:
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    if entry.is_symlink() and entry.is_dir():
+                        ## A link into an archive share would double-run its
+                        ## experiments, and a link to an ancestor is a cycle.
+                        self.note(entry.path, "symlinked directory — not "
+                                              "followed")
+                    continue
+            except OSError:
+                self.note(entry.path, "cannot be read")
+                continue
+            found += self.visit(entry.path)
+        return found
+
+    def visit(self, path) -> int:
+        kind, experiments = project_kind(path)
+        if kind == "project":
+            self.members.append(_member(path, self.root, experiments))
+            return 1                              # prune: a Project is a leaf
+        if kind == "unconfirmed":
+            below = self.descend(path)
+            if below or self.truncated:
+                ## Real Projects live under it, so the marker was a grouping
+                ## folder with a junk subdirectory — say so and keep them.
+                self.note(path, f"has {prj.PROJECT_FILENAME} and "
+                                f"{len(experiments)} folder(s) nothing can "
+                                "run; treated as a folder of projects")
+                return below
+            self.members.append(_member(path, self.root, experiments))
+            return 1
+        if kind == "marker":
+            below = self.descend(path)
+            ## Always reported, either way: "I marked that folder as a
+            ## Project — why isn't it in the list?" is the question this
+            ## rule creates, and it deserves an answer in the log.
+            self.note(path, f"has {prj.PROJECT_FILENAME} but no experiment "
+                            "directory" + (f"; {below} project(s) found "
+                                           "inside it instead" if below else ""))
+            return below
+        if layout.has_config(path):
+            ## An Experiment Directory: its children are data/, analysis/,
+            ## qc/ — never Projects. But a stray tracking_config.yaml at a
+            ## grouping level looks identical, so descend first and stop only
+            ## if nothing turns up: an unconditional stop here hid every
+            ## Project below one stray file, exactly as the project.yaml
+            ## marker did.
+            below = self.descend(path)
+            if below:
+                self.note(path, f"has {prj.CONFIG_FILENAME} and "
+                                f"{below} project(s) inside it")
+            return below
+        return self.descend(path)
+
+
+def _has_report(project_dir) -> bool:
     try:
-        entries = sorted(os.listdir(root))
+        return any(name.lower().endswith("_report.pdf")
+                   for name in os.listdir(project_dir))
     except OSError:
-        return []
-    return [entry for entry in entries
-            if os.path.isdir(os.path.join(root, entry))
-            and prj.is_project_dir(os.path.join(root, entry))]
+        return False
+
+
+def discover(root) -> dict:
+    """Everything one walk of *root* found.
+
+    ``{"members": [...], "skipped": [(key, why)], "truncated": bool}`` — the
+    Members in run order, every directory the walk dropped and why, and
+    whether the walk hit its budget. The single source of truth for what a
+    Batch contains: the table, the preflight, and the run all read it, so what
+    the user was shown is what runs. Cheap by construction — directory
+    listings only, no Project loads and no YAML parsing.
+    """
+    return _Walk(root).run()
+
+
+def discover_members(root) -> list:
+    """Every Project under *root*, in run order (by relative-path key)."""
+    return discover(root)["members"]
+
+
+def batch_project_names(path) -> list[str]:
+    """The Members' keys, in the order a Batch Run visits them.
+
+    A key is the Project's path relative to the Batch root, so a top-level
+    Project is still its bare folder name and every stored designation, sheet
+    row, and API call written before ADR-0011 still resolves.
+    """
+    return [member.key for member in discover_members(path)]
+
+
+def member_directory(root, key) -> str:
+    """Absolute directory of Member *key* in Batch *root*.
+
+    A key comes from the walk today, but this is the public key→directory
+    resolver and the Removal Sheet's project column is hand-typed, so an
+    escaping key is refused rather than resolved.
+    """
+    parts = [part for part in str(key).split("/") if part not in ("", ".")]
+    if any(part == ".." for part in parts) or os.path.isabs(str(key)):
+        raise ValueError(f"{key!r} is not a member of this batch")
+    return os.path.join(os.path.abspath(str(root)), *parts)
 
 
 def is_batch_dir(path) -> bool:
-    """A Batch is structural: at least one immediate subdirectory is a
-    Project. A Project is never also a Batch — its subdirectories are its
-    Experiments, so a nested ``project.yaml`` does not turn it into one."""
-    if prj.is_project_dir(path):
-        return False
-    return bool(batch_project_names(path))
+    """A Batch is structural: at least one Project lies somewhere beneath.
+
+    A Project is never also a Batch — its subdirectories are its Experiments,
+    so a nested ``project.yaml`` does not turn it into one. Deliberately the
+    SAME walk the table and the run use: an earlier short-circuit that asked
+    ``is_project_dir`` at the root disagreed with the walk's stricter test, so
+    one stray ``project.yaml`` at a batch root emptied the whole panel.
+    """
+    return bool(discover(path)["members"])
+
+
+def nested_batch_files(root) -> list[str]:
+    """``batch.yaml`` files below *root* that this run ignores.
+
+    Recursive discovery means a grouping folder can be a Batch in its own
+    right and carry its own designation. Only the selected Batch's file
+    governs — ADR-0009's resolution is already three steps and a fourth that
+    depended on where the user clicked would be unmemorable — so these are
+    named rather than silently overridden (ADR-0011).
+    """
+    root = os.path.abspath(str(root))
+    found: list[str] = []
+    for member in discover_members(root):
+        directory = os.path.dirname(member.directory)
+        while len(directory) > len(root):
+            candidate = os.path.join(directory, BATCH_FILENAME)
+            relative = os.path.relpath(candidate, root).replace(os.sep, "/")
+            if os.path.isfile(candidate) and relative not in found:
+                found.append(relative)
+            directory = os.path.dirname(directory)
+    return sorted(found)
 
 
 def load_batch_file(path) -> dict:
@@ -325,37 +614,152 @@ def write_batch_narrative(batch_dir, text: str, provider: str, model: str,
     return path
 
 
-def apply_removal_sheet(batch_dir, log=print) -> dict:
+def normalize_member_key(value) -> str:
+    """A sheet's ``project`` cell as a Member key.
+
+    Sheets are written by hand, so a cell may carry a backslash separator, a
+    leading ``./``, a trailing slash, a doubled separator, or an interior
+    ``/./`` — all of them name the same Member, and the scope test and the
+    write have to agree about which.
+    """
+    text = str(value or "").strip().replace("\\", "/")
+    parts = [part for part in text.split("/") if part not in ("", ".")]
+    return "/".join(parts)
+
+
+def normalize_sheet_rows(rows) -> list:
+    """Rewrite each row's ``project`` cell into a Member key.
+
+    The scope test and the write must resolve the same cell the same way: a
+    Windows-authored ``Sept2026\\ProjA`` that scopes in and then resolves to
+    nothing is worse than one that never scoped in at all.
+    """
+    for row in rows:
+        if getattr(row, "project", ""):
+            row.project = normalize_member_key(row.project)
+    return list(rows)
+
+
+def row_member_key(row, members) -> str:
+    """Which Member a sheet row addresses, given the known *members*.
+
+    A hand-written sheet does not always put the whole path in the ``project``
+    cell — ``project=Sept2026, experiment=ProjA/Rep1`` names the same
+    experiment as ``project=Sept2026/ProjA, experiment=Rep1``. Scoping on the
+    project cell alone let the second spelling slip past the filter and write
+    into a Member that was not running, so the row's full path is matched
+    against the longest Member key that prefixes it.
+    """
+    whole = normalize_member_key(
+        "/".join(part for part in (getattr(row, "project", ""),
+                                   getattr(row, "experiment", "")) if part))
+    folded = os.path.normcase(whole)
+    best = ""
+    for key in members:
+        candidate = os.path.normcase(normalize_member_key(key))
+        if (folded == candidate or folded.startswith(candidate + "/")) \
+                and len(candidate) > len(best):
+            best = candidate
+    return best
+
+
+def scope_sheet_rows(rows, members) -> tuple[list, list]:
+    """Split *rows* into (for these Members, for anyone else).
+
+    Unchecking a Member means "do not touch this Project" — and with recursive
+    discovery the walk surfaces Projects the user may never have known were
+    there, so writing into one they excluded is the ADR-0010 failure mode one
+    step removed (ADR-0011).
+    """
+    if members is None:
+        return list(rows), []
+    ## normcase, because on Windows and macOS 'sept2026/proja' opens the same
+    ## directory as 'Sept2026/ProjA': scoping a row out on the very filesystem
+    ## where its path resolves would silently drop a declaration.
+    wanted = {os.path.normcase(normalize_member_key(m)) for m in members}
+    keep, skip = [], []
+    for row in rows:
+        ## Matched on the row's whole path, not its project cell: the two
+        ## columns are one path split at a place the author chose.
+        key = row_member_key(row, wanted)
+        ## Scoping is asked for (members is not None), so a row must name one
+        ## of them. A blank project cell used to pass as "the root itself" —
+        ## the Project-root sheet contract — but at a Batch root that contract
+        ## does not apply, and it let a row write outside every checked Member.
+        (keep if key else skip).append(row)
+    return keep, skip
+
+
+def apply_removal_sheet(batch_dir, log=print, members=None) -> dict:
     """Apply the Batch's Removal Sheet, if it has one (ADR-0010).
 
-    Never fatal: an unreadable sheet is reported and the run continues, and a
-    row naming a project, experiment or region that does not exist is counted
-    in the summary rather than aborting ten Projects' worth of work.
+    *members* restricts the write to those Member keys — the ones actually
+    running (ADR-0011); ``None`` applies every row. Never fatal: an unreadable
+    sheet is reported and the run continues, and a row naming a project,
+    experiment or region that does not exist is counted in the summary rather
+    than aborting ten Projects' worth of work.
     """
     root = os.path.abspath(str(batch_dir))
     path = removals.find_sheet(root)
     if path is None:
         return {"results": [], "written": [], "counts": {}, "sheet": None}
     try:
-        return removals.apply_sheet(root, sheet_path=path, log=log)
+        rows = normalize_sheet_rows(removals.read_sheet(path))
+        rows, out_of_scope = scope_sheet_rows(rows, members)
+        if out_of_scope:
+            log(f"[removals] {len(out_of_scope)} row(s) skipped — they name "
+                "projects that are not in this run")
+        if not rows:
+            return {"results": [], "written": [], "counts": {}, "sheet": path,
+                    "skipped": len(out_of_scope)}
+        result = removals.apply_sheet(root, rows, sheet_path=path, log=log)
+        result["skipped"] = len(out_of_scope)
+        return result
     except Exception as err:  # noqa: BLE001
         log(f"[removals] {os.path.basename(path)} could not be applied: {err}")
         return {"results": [], "written": [], "counts": {}, "sheet": path,
                 "error": str(err)}
 
 
+def preview_removal_sheet(batch_dir, members=None) -> dict:
+    """What applying the sheet WOULD do — read-only (ADR-0011 preflight).
+
+    Runs the same matching as :func:`apply_removal_sheet` against a copy of
+    each experiment's declaration, so the preview and the write cannot
+    disagree, and writes nothing: selecting a Batch reports, it never applies
+    (ADR-0010).
+    """
+    root = os.path.abspath(str(batch_dir))
+    path = removals.find_sheet(root)
+    if path is None:
+        return {"sheet": None, "results": [], "counts": {}, "skipped": 0}
+    try:
+        rows = normalize_sheet_rows(removals.read_sheet(path))
+    except Exception as err:  # noqa: BLE001
+        return {"sheet": path, "results": [], "counts": {}, "skipped": 0,
+                "error": str(err)}
+    rows, out_of_scope = scope_sheet_rows(rows, members)
+    results = removals.plan_sheet(root, rows)
+    counts: dict = {}
+    for item in results:
+        counts[item.status] = counts.get(item.status, 0) + 1
+    return {"sheet": path, "results": results, "counts": counts,
+            "skipped": len(out_of_scope)}
+
+
 def run_batch(batch_dir, script_name: str | None = None,
               project_names: list[str] | None = None,
-              log=print) -> dict:
+              log=print, apply_removals: bool = True) -> dict:
     """One Batch Run: the designated Project Script in every Project of
     *batch_dir* — continue-on-error, per-Project log prefixes.
 
-    Returns ``{project_name: 'ok' | error message}``. A Batch Run never
-    creates or upgrades a ``project.yaml``; children that are not Projects
-    are skipped with a log line. *script_name* ``None`` falls back to the
+    Returns ``{member_key: 'ok' | error message}``, keyed by each Project's
+    path relative to *batch_dir* (ADR-0011). A Batch Run never creates or
+    upgrades a ``project.yaml``. *script_name* ``None`` falls back to the
     ``batch.yaml`` designation, and with no designation each Project runs
     its own default script. *project_names* restricts the run to that
-    (checked) subset.
+    (checked) subset; *apply_removals* False declines the Removal Sheet for
+    this run without touching it or any standing declaration.
     """
     from .script_editor.project_actions import run_project_script
 
@@ -364,26 +768,21 @@ def run_batch(batch_dir, script_name: str | None = None,
     if script_name is None:
         script_name = meta["script"]
 
-    all_projects = batch_project_names(root)
-    project_set = set(all_projects)
-    try:
-        children = sorted(os.listdir(root))
-    except OSError:
-        children = []
-    for entry in children:
-        if os.path.isdir(os.path.join(root, entry)) \
-                and entry not in project_set:
-            log(f"[{entry}] skipped — not a Project "
-                f"(no {prj.PROJECT_FILENAME})")
+    found = discover(root)
+    members = found["members"]
+    by_key = {member.key: member for member in members}
 
     if project_names is None:
-        targets = all_projects
+        targets = [member.key for member in members]
     else:
-        wanted = set(project_names)
-        targets = [n for n in all_projects if n in wanted]
-        for missing in sorted(wanted - set(all_projects)):
-            ## An API caller's stale name must not vanish silently — the Hub
-            ## table only offers real Projects, so this is for scripts.
+        wanted = {os.path.normcase(normalize_member_key(n))
+                  for n in project_names}
+        targets = [member.key for member in members
+                   if os.path.normcase(normalize_member_key(member.key))
+                   in wanted]
+        for missing in sorted(wanted - set(by_key)):
+            ## An API caller's stale key must not vanish silently — the Hub
+            ## table only offers real Members, so this is for scripts.
             log(f"[{missing}] not a Project in this Batch — ignored")
 
     results: dict[str, str] = {}
@@ -393,14 +792,45 @@ def run_batch(batch_dir, script_name: str | None = None,
 
     log(f"Batch Run: {len(targets)} Project(s) in {root}")
 
+    ## Discovery is recursive (ADR-0011), so say what it found: with Projects
+    ## at arbitrary depth the target list is no longer obvious from the folder
+    ## that was picked.
+    for key in targets:
+        member = by_key[key]
+        log(f"  {key} — {member.summary()}")
+        for experiment in member.blocked:
+            log(f"      {experiment.describe()}")
+
+    for key, why in found["skipped"]:
+        log(f"[{key}] skipped — {why}")
+    if found.get("truncated"):
+        ## A truncated walk that said nothing would report a partial run as a
+        ## complete one.
+        log(f"[batch] WARNING: stopped after {MAX_WALKED_DIRECTORIES} "
+            "directories — this folder is larger than a batch should be, and "
+            "projects deeper in it were not found.")
+
+    for note in nested_batch_files(root):
+        ## Only the selected Batch's designation governs; a sub-batch's own
+        ## batch.yaml is ignored, and saying so beats wondering why the wrong
+        ## script ran (ADR-0011).
+        log(f"[batch] {note} ignored — only the selected batch folder's "
+            "designation applies")
+
     ## A Removal Sheet at the Batch root is applied before anything runs, so
     ## an unattended run honours the experimenter's notes (ADR-0010). It is a
     ## writer, never an overlay: the rows are stamped into each experiment's
     ## removed_regions.yaml and nothing reads the sheet at analysis time.
-    apply_removal_sheet(root, log=log)
+    ## Scoped to the Members actually running: unchecking one means "do not
+    ## touch this Project" (ADR-0011).
+    if apply_removals:
+        apply_removal_sheet(root, log=log, members=targets)
+    elif removals.find_sheet(root) is not None:
+        log("[removals] sheet found but declined for this run — nothing "
+            "written")
 
     for i, name in enumerate(targets, 1):
-        project_dir = os.path.join(root, name)
+        project_dir = by_key[name].directory
 
         def plog(msg, _n=name):
             log(f"[{_n}] {msg}")

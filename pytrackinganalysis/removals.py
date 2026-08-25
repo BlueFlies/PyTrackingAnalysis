@@ -192,11 +192,23 @@ class RowResult:
 
 
 def find_sheet(root) -> str | None:
-    """The Removal Sheet at *root*, or ``None``. ``.csv`` beats ``.xlsx``."""
+    """The Removal Sheet at *root*, or ``None``. ``.csv`` beats ``.xlsx``.
+
+    Matched case-insensitively: "Save As" in Excel routinely produces
+    ``Removed_Regions.csv``, and an exact-case test made that sheet invisible
+    on Linux — the preflight then reported the batch simply had no sheet, and
+    the run applied nothing with no line anywhere saying so.
+    """
+    try:
+        entries = sorted(os.listdir(str(root)))
+    except OSError:
+        return None
     for suffix in SHEET_SUFFIXES:
-        path = os.path.join(str(root), SHEET_STEM + suffix)
-        if os.path.isfile(path):
-            return path
+        wanted = (SHEET_STEM + suffix).lower()
+        for entry in entries:
+            path = os.path.join(str(root), entry)
+            if entry.lower() == wanted and os.path.isfile(path):
+                return path
     return None
 
 
@@ -256,27 +268,64 @@ def read_sheet(path) -> list[SheetRow]:
     return rows
 
 
-def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
-    """Write a Removal Sheet's rows into each experiment's sidecar.
+def is_readable_declaration(experiment_dir) -> bool:
+    """Can the sidecar at *experiment_dir* be read as a declaration?
 
-    *root* is a Batch root (rows name a project) or a Project root (they do
-    not). A row's ``project`` is a path *relative to the Batch root*, so a
-    Project nested under grouping folders is named the way the Batch itself
-    names it (``Sept2026/ProjA``); a top-level Project is just its own name. Merging is additive and the standing declaration wins: a region
-    already declared is never rewritten, and a differing reason is reported as
-    a **conflict** — the sheet is re-applied on every Batch Run, so letting it
-    win would keep resetting reasons refined in the window (ADR-0010).
+    ``read_removals`` deliberately returns ``{}`` for a malformed file so a
+    broken note never blocks an analysis (ADR-0010). Writing on top of that
+    ``{}`` would be a different act entirely: it would *delete* whatever the
+    experimenter wrote, which is the audit trail this feature exists to keep.
+    """
+    path = removals_path(experiment_dir)
+    if not os.path.isfile(path):
+        return True                          # nothing to lose
+    try:
+        with open(path, encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError):
+        return False
+    if loaded is None:
+        return True                          # empty file
+    if not isinstance(loaded, dict):
+        return False
+    section = loaded.get(REMOVALS_KEY, loaded)
+    return section is None or isinstance(section, dict)
 
-    Returns ``{"results": [RowResult], "written": [paths], "counts": {...}}``.
-    Nothing here raises for a row that matches nothing: it is reported.
+
+def _canonical(path) -> str:
+    """One spelling per directory: resolved, and case-folded where the
+    filesystem is (Windows/macOS), so the same folder is never two keys."""
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _inside(root, path) -> bool:
+    """Is *path* within *root*? Guards a hand-edited sheet from writing
+    outside the tree it was found in."""
+    root_real = os.path.realpath(str(root))
+    target = os.path.realpath(str(path))
+    try:
+        return os.path.commonpath([root_real, target]) == root_real
+    except ValueError:              # different drives on Windows
+        return False
+
+
+def plan_sheet(root, rows) -> list:
+    """What applying *rows* under *root* would do — writes nothing.
+
+    The preflight's preview and the run's write share this one evaluation
+    (ADR-0011), so what the user was shown cannot disagree with what happens.
+    """
+    results, _pending = _evaluate_sheet(root, rows)
+    return results
+
+
+def _evaluate_sheet(root, rows) -> tuple:
+    """Match every row against the tree; returns ``(results, pending)``.
+
+    Pure: per-experiment declarations accumulate in memory and are handed
+    back for the caller to write — or to throw away, for a preview.
     """
     from . import project as prj
-
-    if rows is None:
-        sheet_path = sheet_path or find_sheet(root)
-        if sheet_path is None:
-            return {"results": [], "written": [], "counts": {}, "sheet": None}
-        rows = read_sheet(sheet_path)
 
     root = str(root)
     results: list[RowResult] = []
@@ -291,13 +340,34 @@ def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
                                      "experiment and region are required"))
             continue
 
-        project_dir = os.path.join(root, row.project) if row.project else root
-        if row.project and not os.path.isdir(project_dir):
+        ## One seam normalizes the cell, so scoping and resolution cannot
+        ## disagree: a Windows-authored 'Sept2026\\ProjA' resolved fine on
+        ## Windows and was reported "unknown project" on the Linux box that
+        ## actually ran the batch.
+        from .batch import normalize_member_key
+
+        project = normalize_member_key(row.project) if row.project else ""
+        project_dir = os.path.join(root, project) if project else root
+        if project and not _inside(root, project_dir):
+            ## A sheet is a hand-edited spreadsheet, and os.path.join honours
+            ## both '../' and an absolute path: without this a stray cell
+            ## writes removed_regions.yaml anywhere on disk that happens to
+            ## hold a tracking_config.yaml.
+            results.append(RowResult(
+                row, "unknown project",
+                f"{row.project!r} is outside {os.path.basename(root)}"))
+            continue
+        if project and not os.path.isdir(project_dir):
             results.append(RowResult(row, "unknown project",
                                      f"no directory {row.project!r} under {root}"))
             continue
 
         experiment_dir = os.path.join(project_dir, row.experiment)
+        if not _inside(root, experiment_dir):
+            results.append(RowResult(
+                row, "unknown experiment",
+                f"{row.experiment!r} is outside {os.path.basename(root)}"))
+            continue
         if not prj.is_experiment_dir(experiment_dir):
             results.append(RowResult(
                 row, "unknown experiment",
@@ -314,6 +384,11 @@ def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
                 f"{row.region} is not a tracking region of {row.experiment}"))
             continue
 
+        ## Keyed by the resolved path: two spellings of one directory
+        ## ('P1/Rep1' and './P1/Rep1') used to accumulate two independent
+        ## declaration sets, and the second write threw away the first's
+        ## regions while both rows reported "applied".
+        experiment_dir = _canonical(experiment_dir)
         declared = pending.get(experiment_dir)
         if declared is None:
             declared = dict(read_removals(experiment_dir))
@@ -331,12 +406,59 @@ def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
                 f"kept {existing!r}, sheet says {row.reason!r} "
                 "(edit the removals window to change it)"))
 
+
+    return results, pending
+
+
+def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
+    """Write a Removal Sheet's rows into each experiment's sidecar.
+
+    *root* is a Batch root (rows name a project) or a Project root (they do
+    not). Merging is additive and the standing declaration wins: a region
+    already declared is never rewritten, and a differing reason is reported as
+    a **conflict** — the sheet is re-applied on every Batch Run, so letting it
+    win would keep resetting reasons refined in the window (ADR-0010).
+
+    Returns ``{"results": [RowResult], "written": [paths], "counts": {...}}``.
+    Nothing here raises for a row that matches nothing: it is reported.
+    """
+    if rows is None:
+        sheet_path = sheet_path or find_sheet(root)
+        if sheet_path is None:
+            return {"results": [], "written": [], "counts": {}, "sheet": None}
+        rows = read_sheet(sheet_path)
+
+    results, pending = _evaluate_sheet(root, rows)
+
     written: list[str] = []
+    failed: list[str] = []
     for experiment_dir, declared in pending.items():
-        if declared != read_removals(experiment_dir):
+        if declared == read_removals(experiment_dir):
+            continue
+        if not is_readable_declaration(experiment_dir):
+            ## Merging onto a file we cannot parse would silently replace the
+            ## experimenter's own declaration with the sheet's rows.
+            failed.append(
+                f"{os.path.basename(experiment_dir)}: its "
+                f"{os.path.basename(removals_path(experiment_dir))} is not "
+                "readable — fix or delete it, nothing was written")
+            continue
+        try:
             path = write_removals(experiment_dir, declared)
-            if path:
-                written.append(path)
+        except OSError as err:
+            ## One read-only experiment directory in a batch of forty must not
+            ## discard the other thirty-nine's results — and reporting
+            ## "nothing written" when sidecars HAVE been rewritten is the one
+            ## thing an audit trail must never do.
+            ## Name the Project too — "Rep1" alone is ambiguous across a
+            ## batch where every Project has one.
+            parent = os.path.basename(os.path.dirname(experiment_dir))
+            failed.append(
+                f"{os.path.join(parent, os.path.basename(experiment_dir))}: "
+                f"{err}")
+            continue
+        if path:
+            written.append(path)
 
     counts: dict[str, int] = {}
     for result in results:
@@ -345,8 +467,11 @@ def apply_sheet(root, rows=None, *, sheet_path=None, log=None) -> dict:
     if log is not None:
         _log_results(results, counts, written, sheet_path, log)
 
+    if failed and log is not None:
+        for note in failed:
+            log(f"[removals] could not write {note}")
     return {"results": results, "written": written, "counts": counts,
-            "sheet": sheet_path}
+            "sheet": sheet_path, "failed": failed}
 
 
 def _log_results(results, counts, written, sheet_path, log) -> None:

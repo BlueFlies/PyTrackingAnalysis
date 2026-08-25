@@ -22,6 +22,10 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from ..gui_env import sanitize_input_method_environment
+
+sanitize_input_method_environment()
+
 # Force non-GUI mpl backend before the domain imports pyplot.
 import matplotlib
 

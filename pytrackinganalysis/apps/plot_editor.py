@@ -15,6 +15,10 @@ import os
 import sys
 import time
 
+from ..gui_env import sanitize_input_method_environment
+
+sanitize_input_method_environment()
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (

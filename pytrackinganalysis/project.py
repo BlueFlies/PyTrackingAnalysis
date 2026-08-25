@@ -75,13 +75,28 @@ def has_experiment_data(path) -> bool:
     """True when *path* holds a recording: a ``data/`` subdirectory with at
     least one ``.xlsx`` workbook (the DTrack export that defines an
     experiment). This is the experiment-shape test for listing candidate
-    replicates in the Project view; any other subdirectory is ignored."""
-    data = os.path.join(str(path), "data")
+    replicates in the Project view; any other subdirectory is ignored.
+
+    Deliberately tolerant: this asks "is this folder experiment-SHAPED", the
+    question behind offering to scaffold a config, so a ``Data/`` folder and a
+    ``.XLSX`` extension both count. Whether the loader can actually read it is
+    a different question, and a stricter one — :func:`layout.classify` answers
+    that, and reports the difference as a Blocked Experiment (ADR-0011).
+
+    What does not count is an Excel ``~$`` lock file: it is not a recording,
+    and treating one as data offered to scaffold a config for a folder whose
+    workbook had been moved away with Excel still open.
+    """
+    from . import layout
+
+    data = layout.data_dir(str(path))
     try:
         entries = os.listdir(data)
     except OSError:
         return False
-    return any(entry.lower().endswith(".xlsx") for entry in entries)
+    return any(entry.lower().endswith(".xlsx")
+               and not entry.startswith(("~$", "."))
+               for entry in entries)
 
 
 def create_project_file(project_dir, name: str | None = None,
@@ -167,9 +182,18 @@ class Project:
         # ---- discover replicates -------------------------------------
         self.experiment_names: list[str] = []
         self.configs: dict[str, dict] = {}
+        #: Real paths already taken, so a symlinked copy of a replicate is not
+        #: analyzed twice and stacked into the Combined Analysis under two
+        #: labels — the same "no recording twice in one run" rule the Batch
+        #: walk enforces (ADR-0011), one level down.
+        seen: set[str] = set()
         for entry in sorted(os.listdir(self.project_directory)):
             sub = os.path.join(self.project_directory, entry)
             if os.path.isdir(sub) and is_experiment_dir(sub):
+                real = os.path.realpath(sub)
+                if real in seen:
+                    continue
+                seen.add(real)
                 self.experiment_names.append(entry)
                 with open(os.path.join(sub, CONFIG_FILENAME),
                           encoding="utf-8") as handle:
@@ -435,6 +459,12 @@ class Project:
         sitting in the Project". Never overwrites an existing config — a
         replicate's region assignments are hand-made.
         """
+        if not name or name != os.path.basename(name) or name in (".", ".."):
+            ## The name is joined onto the Project directory, so a separator
+            ## in it writes a config (and a data/ folder) outside the Project.
+            raise ValueError(
+                f"'{name}' is not a replicate name — it must be a single "
+                "folder name inside the project")
         directory = self.experiment_dir(name)
         config_path = os.path.join(directory, CONFIG_FILENAME)
         if os.path.isfile(config_path):
@@ -462,8 +492,13 @@ class Project:
         """Path of a replicate's saved summary artifact, or None. The
         recording name (xlsx basename) need not match the directory name, so
         the file is found by suffix."""
-        pattern = os.path.join(self.experiment_dir(name), "analysis",
-                               f"*{suffix}")
+        ## glob.escape: an ancestor named 'Sept2026 [pilot]' turns the path
+        ## into a character class, the pattern matches nothing, and every
+        ## replicate under it reads "not analyzed" forever — which then makes
+        ## combined_frames drop them all as missing. Recursive discovery puts
+        ## arbitrary ancestor names into this pattern.
+        pattern = os.path.join(glob.escape(self.experiment_dir(name)),
+                               "analysis", f"*{suffix}")
         matches = glob.glob(pattern)
         if suffix == "_Summary.csv":
             matches = [p for p in matches

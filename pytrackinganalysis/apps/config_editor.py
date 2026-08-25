@@ -14,6 +14,10 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from ..gui_env import sanitize_input_method_environment
+
+sanitize_input_method_environment()
+
 import yaml
 from PyQt6.QtCore import QSize, QTimer
 from PyQt6.QtWidgets import (

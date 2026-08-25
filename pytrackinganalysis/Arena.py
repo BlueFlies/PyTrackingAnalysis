@@ -142,7 +142,11 @@ class Arena:
 
         :meta private:
         """
-        csv_files = natsorted(glob.glob(self.data_path+self.experiment_name + "_Data_*.csv"))
+        ## glob.escape the directory (a bracketed folder name matched nothing
+        ## and surfaced as "No objects to concatenate" deep in the load); the
+        ## experiment name is escaped too, since it comes from a filename.
+        csv_files = natsorted(glob.glob(
+            glob.escape(self.data_path + self.experiment_name) + "_Data_*.csv"))
         #Read each CSV file into a DataFrame and store them in a list
         dataframes = [pd.read_csv(file,keep_default_na=False,na_values=['NaN']) for file in csv_files]
 

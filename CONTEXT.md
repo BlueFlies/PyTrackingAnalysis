@@ -58,16 +58,18 @@ loose file into `extra_files/`, and never a `.yaml`, which at an experiment
 root is configuration or declaration) makes it loadable with nothing lost.
 _Avoid_: malformed, non-compliant, unconverted, needs conversion
 
-**Blocked Member**:
-A Batch Member a Batch Run cannot use as it stands: it holds an Unfiled
-Recording, a recording with no `tracking_config.yaml`, or an Experiment
-Directory with no recording at all. Blocked is a property of the Member, the
-reason is per Experiment Directory, and each reason names its own fix — file
-the recording, scaffold the config, or supply the missing data. A Batch Run
-reports Blocked Members before it starts rather than failing on them one by
-one an hour in.
+**Blocked Experiment**:
+An Experiment Directory a run cannot use as it stands: an Unfiled Recording,
+a recording with no `tracking_config.yaml`, or a configured directory with no
+recording at all. Each reason names its own fix — file the recording,
+scaffold the config, supply the missing data. Blocked is a property of the
+Experiment Directory, never of the Project or the Member: a Member with four
+healthy replicates and one blocked replicate runs the four. Blocked
+Experiments are named before a Batch Run starts and again in its summary —
+being reported is the whole point, and a Batch Run is never refused because
+of one (a stale folder must not stop ten Projects at 2am).
 _Avoid_: invalid project, broken project (nothing is broken — the run just
-cannot use it yet)
+cannot use it yet), blocked project
 
 **Replicate**:
 An Experiment inside a Project. Every replicate's resolved config is

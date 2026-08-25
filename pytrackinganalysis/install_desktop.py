@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .gui_env import sanitize_input_method_environment
+
 _APPS = [
     ("pytrack-hub", "PyTrackingAnalysis Hub",
      "Load experiments, run analyses, view plots"),
@@ -53,6 +55,7 @@ def _exec_arg(value: str) -> str:
 
 
 def main() -> int:
+    sanitize_input_method_environment()
     # Render icons without needing a display.
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication

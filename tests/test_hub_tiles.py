@@ -32,6 +32,32 @@ TILE_ORDER = ["batch", "project", "analyze", "plots", "scripts", "ai",
               "tools"]
 
 
+def _accept_preflight(monkeypatch, keys=None, apply_removals=True):
+    """Run the real preflight dialog but never block on it (ADR-0011).
+
+    The dialog is built for real — so discovery, the member tree, and the
+    sheet preview are all exercised — and only ``exec`` is replaced, which is
+    the one call that would wait forever with no user in a headless run.
+    """
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QDialog
+
+    from pytrackinganalysis.apps import batch_preflight
+
+    def _exec(self):
+        if keys is not None:
+            for index in range(self._tree.topLevelItemCount()):
+                item = self._tree.topLevelItem(index)
+                item.setCheckState(
+                    0, Qt.CheckState.Checked
+                    if item.data(0, batch_preflight._KEY_ROLE) in keys
+                    else Qt.CheckState.Unchecked)
+        self._sheet_box.setChecked(apply_removals)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(batch_preflight.BatchPreflightDialog, "exec", _exec)
+
+
 def _make_batch(tmp_path, names=("P1", "P2")):
     """A Batch on disk: Projects in subdirectories, plus one non-Project
     child that must never be listed."""
@@ -225,6 +251,87 @@ def test_a_click_on_the_output_closes_the_panel_but_the_strip_does_not(
     _clicking(hub._log)                       # the output area: closes
     hub._handle_click_away(_Press())
     assert hub._open_panel_key is None
+
+
+def test_batch_panel_stays_open_through_dialog_and_non_output_clicks(
+        hub, monkeypatch):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QWidget
+
+    class _Press:
+        def globalPosition(self):
+            return QPointF(0, 0)
+
+    def _clicking(widget):
+        monkeypatch.setattr(QApplication, "widgetAt",
+                            staticmethod(lambda _p: widget))
+
+    hub._open_panel("batch")
+    dialog = QDialog(hub)
+    button = QPushButton("Close", dialog)
+    _clicking(button)                         # child dialog: stays open
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key == "batch"
+
+    # App chrome is not an explicit return to the output/errors/analysis dock.
+    _clicking(hub._status_panel)
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key == "batch"
+
+    _clicking(hub._log)                       # Output tab content: closes
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key is None
+
+    hub._open_panel("batch")
+    _clicking(hub._err_log)                   # Errors tab content: closes
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key is None
+
+    hub._open_panel("batch")
+    analysis = QWidget()
+    hub._plot_dock.add_widget("Analysis", analysis)
+    _clicking(analysis)                       # analysis tab content: closes
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key is None
+
+
+def test_batch_project_double_click_opens_project_panel(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("batch")
+
+    table = hub._batch_table
+    row = next(r for r in range(table.rowCount())
+               if table.item(r, 0).text() == "P2")
+    table.itemDoubleClicked.emit(table.item(row, 0))
+    qapp.processEvents()
+
+    assert hub._project_dir == tmp_path / "P2"
+    assert hub._open_panel_key == "project"
+    assert hub._panels["project"].isVisible()
+    assert not hub._panels["batch"].isVisible()
+    assert hub._tiles["project"]._active
+    assert not hub._tiles["batch"]._active
+
+
+def test_batch_panel_content_fits_the_visible_viewport(
+        hub, qapp, tmp_path):  # noqa: F811
+    _make_batch(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("batch")
+    qapp.processEvents()
+
+    panel = hub._panels["batch"]
+    viewport = panel._scroll.viewport()
+    host = panel._scroll.widget()
+    run_button_right = hub._btn_run_batch.mapTo(
+        viewport, hub._btn_run_batch.rect().bottomRight()).x()
+
+    assert host.width() <= viewport.width()
+    assert run_button_right <= viewport.width()
 
 
 def test_cards_live_inside_panels_and_stay_functional(hub):
@@ -630,6 +737,28 @@ def test_batch_table_lists_projects_checked_by_default(hub, qapp, tmp_path):  # 
     assert hub._batch_checked_names() == ["P2"]
 
 
+def test_batch_table_caps_and_elides_long_project_names(
+        hub, qapp, tmp_path):  # noqa: F811
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QHeaderView
+
+    long_key = (
+        "September-2026/Archive/"
+        "Very-Long-Project-Name-That-Should-Not-Widen-The-Batch-Panel"
+    )
+    (tmp_path / long_key).mkdir(parents=True)
+    _make_batch(tmp_path / long_key, names=("Leaf",))
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    table = hub._batch_table
+    header = table.horizontalHeader()
+    assert table.textElideMode() == Qt.TextElideMode.ElideRight
+    assert table.columnWidth(0) <= hub._BATCH_PROJECT_COLUMN_MAX_WIDTH
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+    assert table.item(0, 0).toolTip() == f"{long_key}/Leaf"
+
+
 def test_batch_double_click_is_an_ordinary_selection_change(
         hub, qapp, tmp_path):  # noqa: F811
     _make_batch(tmp_path)
@@ -645,6 +774,118 @@ def test_batch_double_click_is_an_ordinary_selection_change(
     assert hub._project_dir == tmp_path / "P2"
     assert "replicates" in hub._tiles["project"].summary_text()
     assert "selection is a project" in hub._tiles["batch"].summary_text()
+
+
+def test_the_batch_table_lists_nested_projects_and_reds_the_blocked(
+        hub, qapp, tmp_path):  # noqa: F811
+    """Recursive discovery (ADR-0011): rows carry the relative-path key, and a
+    Project with a Blocked Experiment is red with the reason in its tooltip."""
+    from pytrackinganalysis.apps.batch_preflight import blocked_color
+    from tests.test_batch_discovery import make_project, unfiled
+
+    make_project(tmp_path / "Sept2026" / "ProjA", replicates=("Rep1", "Rep2"))
+    make_project(tmp_path / "Sept2026" / "ProjB")
+    unfiled(tmp_path / "Sept2026" / "ProjB" / "Rep2")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    table = hub._batch_table
+    rows = {table.item(r, 0).text(): r for r in range(table.rowCount())}
+    assert sorted(rows) == ["Sept2026/ProjA", "Sept2026/ProjB"]
+    ok_row, blocked_row = rows["Sept2026/ProjA"], rows["Sept2026/ProjB"]
+    assert table.item(ok_row, 1).text() == "2/2"
+    assert table.item(ok_row, 3).text() == "ok"
+    assert table.item(blocked_row, 1).text() == "1/2"
+    assert "blocked" in table.item(blocked_row, 3).text()
+    assert table.item(blocked_row, 0).foreground().color() == blocked_color()
+    assert "unfiled" in table.item(blocked_row, 3).toolTip()
+    # ...and a healthy row is left in the ordinary text color.
+    assert table.item(ok_row, 0).foreground().color() != blocked_color()
+
+
+def test_a_member_with_nothing_runnable_starts_unchecked(hub, qapp, tmp_path):  # noqa: F811
+    """It can only produce a failure, so it does not silently join the run —
+    but it stays checkable (ADR-0011)."""
+    from tests.test_batch_discovery import make_project
+
+    make_project(tmp_path / "ProjA")
+    make_project(tmp_path / "Pending", configs=False)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    assert hub._batch_checked_names() == ["ProjA"]
+
+
+def test_the_batch_walk_is_cached_until_something_changes(hub, qapp, tmp_path,
+                                                          monkeypatch):  # noqa: F811
+    """_refresh_tiles fires on every checkbox toggle and finished task; the
+    recursive walk must not run again each time (ADR-0011)."""
+    from pytrackinganalysis import batch as batch_mod
+    from tests.test_batch_discovery import make_project
+
+    make_project(tmp_path / "ProjA")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    walks: list = []
+    real = batch_mod.discover
+    monkeypatch.setattr(batch_mod, "discover",
+                        lambda root: walks.append(root) or real(root))
+
+    hub._refresh_tiles()
+    hub._refresh_batch_view()
+    assert walks == []                       # served from the cache
+
+    hub._rescan_batch()
+    assert len(walks) == 1                   # ...until asked to look again
+
+
+def test_run_batch_goes_through_the_preflight(hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """The preflight is where the target list is confirmed, so its answers —
+    not the table's — are what the run receives (ADR-0011)."""
+    from pytrackinganalysis import batch as batch_mod
+    from tests.test_batch_discovery import make_project
+
+    make_project(tmp_path / "Sept2026" / "ProjA")
+    make_project(tmp_path / "Sept2026" / "ProjB")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+
+    calls: list = []
+
+    def fake_run_batch(root, script_name=None, project_names=None, log=print,
+                       apply_removals=True):
+        calls.append((project_names, apply_removals))
+        return {n: "ok" for n in (project_names or [])}
+
+    monkeypatch.setattr(batch_mod, "run_batch", fake_run_batch)
+    monkeypatch.setattr(type(hub), "_unload_experiment", lambda self: None)
+    monkeypatch.setattr(hub, "_spawn_task", lambda name, fn: fn())
+    _accept_preflight(monkeypatch, keys={"Sept2026/ProjB"},
+                      apply_removals=False)
+
+    hub._run_batch()
+
+    assert calls == [(["Sept2026/ProjB"], False)]
+
+
+def test_cancelling_the_preflight_runs_nothing(hub, qapp, tmp_path,
+                                               monkeypatch):  # noqa: F811
+    from PyQt6.QtWidgets import QDialog
+
+    from pytrackinganalysis.apps import batch_preflight
+    from tests.test_batch_discovery import make_project
+
+    make_project(tmp_path / "ProjA")
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    monkeypatch.setattr(batch_preflight.BatchPreflightDialog, "exec",
+                        lambda self: QDialog.DialogCode.Rejected)
+    spawned: list = []
+    monkeypatch.setattr(hub, "_spawn_task", lambda name, fn: spawned.append(name))
+
+    hub._run_batch()
+    assert spawned == []
 
 
 def test_batch_picker_defaults_to_each_projects_own_script(
@@ -702,11 +943,13 @@ def test_run_batch_runs_checked_projects_and_unloads_first(
 
     calls: list = []
 
-    def fake_run_batch(root, script_name=None, project_names=None, log=print):
+    def fake_run_batch(root, script_name=None, project_names=None, log=print,
+                       apply_removals=True):
         calls.append((root, script_name, project_names))
         return {"P2": "ok"}
 
     monkeypatch.setattr(batch_mod, "run_batch", fake_run_batch)
+    _accept_preflight(monkeypatch)
     unloaded: list = []
     monkeypatch.setattr(type(hub), "_unload_experiment",
                         lambda self: unloaded.append(True))
@@ -789,16 +1032,18 @@ def test_hub_preflight_blocks_a_typoed_script_before_running(
 
 
 def test_batch_table_shows_replicate_and_report_status(hub, qapp, tmp_path):  # noqa: F811
+    """Replicates read "usable/total" now (ADR-0011), so a Project with a
+    blocked experiment can be told from one without leaving the card."""
     _make_batch(tmp_path)
     (tmp_path / "P1" / "Proj_report.pdf").write_bytes(b"%PDF-")
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
     table = hub._batch_table
     rows = {table.item(r, 0).text():
-            (table.item(r, 1).text(), table.item(r, 2).text())
+            tuple(table.item(r, c).text() for c in (1, 2, 3))
             for r in range(table.rowCount())}
-    assert rows["P1"] == ("2", "yes")
-    assert rows["P2"] == ("2", "no")
+    assert rows["P1"] == ("2/2", "yes", "ok")
+    assert rows["P2"] == ("2/2", "no", "ok")
 
 
 def test_busy_state_greys_the_batch_card(hub):
@@ -823,6 +1068,7 @@ def test_run_batch_requires_a_checked_project(hub, qapp, tmp_path,
                         lambda self, msg: warnings.append(msg))
     monkeypatch.setattr(hub, "_spawn_task",
                         lambda name, fn: spawned.append(name))
+    _accept_preflight(monkeypatch, keys=set())
     hub._run_batch()
     assert spawned == []
     assert warnings

@@ -19,13 +19,17 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from ..gui_env import sanitize_input_method_environment
+
+sanitize_input_method_environment()
+
 # Force a non-GUI matplotlib backend before the domain layer imports pyplot.
 import matplotlib
 
 matplotlib.use("Agg")
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PyQt6.QtGui import QBrush, QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -61,6 +65,11 @@ from PyQt6.QtWidgets import (
 )
 
 from .. import Experiment as ExperimentMod
+from .batch_preflight import (
+    BatchPreflightDialog,
+    PROJECT_COLUMN_MAX_WIDTH,
+    blocked_color,
+)
 from ._hub_tiles import (
     ClickAwayFilter,
     StatusPanel,
@@ -139,6 +148,8 @@ _PLOT_ICON_BY_LABEL: dict[str, str] = {
 
 class HubWindow(QMainWindow):
     """The Analysis Hub main window."""
+
+    _BATCH_PROJECT_COLUMN_MAX_WIDTH = PROJECT_COLUMN_MAX_WIDTH
 
     def __init__(self, initial_project: str | None = None) -> None:
         super().__init__()
@@ -282,6 +293,7 @@ class HubWindow(QMainWindow):
             panel.finish()
             self._panels[key] = panel
         self._open_panel_key: str | None = None
+        self._batch_panel_root: Path | None = None
         ## App-level filter: a click outside the open panel (and outside the
         ## strip) closes it; the click itself is NOT swallowed. A dedicated
         ## QObject (never the window itself) — see ClickAwayFilter.
@@ -906,14 +918,23 @@ class HubWindow(QMainWindow):
 
     def _enclosing_project_dir(self, path):
         """The Project *path* is a replicate of, or None when *path* is not a
-        replicate inside one."""
+        replicate inside one.
+
+        The parent must be a Project in the ADR-0011 sense — a marker plus a
+        replicate the run can use. A bare ``project.yaml`` one level up used
+        to capture the selection, so choosing a grouping folder inside a batch
+        whose root carried a stray marker silently retargeted the whole
+        selection to that root.
+        """
+        from .. import batch as batch_mod
         from .. import project as prj
 
         candidate = Path(path)
         if prj.is_project_dir(candidate):
             return None
         parent = candidate.parent
-        return parent if prj.is_project_dir(parent) else None
+        kind, _experiments = batch_mod.project_kind(parent)
+        return parent if kind == "project" else None
 
     def _experiment_dir(self):
         """Directory of the loaded experiment — the subject of every
@@ -1114,9 +1135,16 @@ class HubWindow(QMainWindow):
         self._refresh_project_view()
         self._refresh_tiles()
 
-    def _apply_removal_sheet(self, root, label: str) -> None:
+    def _apply_removal_sheet(self, root, label: str, members=None) -> None:
         """Apply a Removal Sheet found at *root* (a Batch or Project), after
-        confirming — applying writes into every experiment it names."""
+        confirming — applying writes into every experiment it names.
+
+        *members* limits it to those Member keys: at a Batch the checked rows,
+        so unchecking a Project protects it here exactly as it does during a
+        run (ADR-0011). Without it this button was the one writer the scoping
+        rule did not reach.
+        """
+        from .. import batch as batch_mod
         from .. import removals as removals_mod
 
         sheet = removals_mod.find_sheet(str(root))
@@ -1126,16 +1154,21 @@ class HubWindow(QMainWindow):
                 f"{removals_mod.SHEET_STEM}.csv with project, experiment, "
                 f"region and reason columns.")
             return
+        scope = ("" if members is None else
+                 f"\n\nOnly the {len(members)} checked project(s) are "
+                 "touched — rows naming any other are skipped.")
         answer = QMessageBox.question(
             self, "Apply removal sheet",
             f"Apply {os.path.basename(sheet)} to the experiments it names?\n\n"
             "Declarations already in place are kept; a row whose reason "
-            "differs is reported as a conflict, not overwritten.")
+            "differs is reported as a conflict, not overwritten." + scope)
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            result = removals_mod.apply_sheet(
-                str(root), sheet_path=sheet, log=self._log.append_line)
+            result = batch_mod.apply_removal_sheet(
+                str(root), log=self._log.append_line, members=members)
+            if result.get("error"):
+                raise RuntimeError(result["error"])
         except Exception as err:  # noqa: BLE001
             self._log_issue(f"[removals] {os.path.basename(sheet)}: {err}")
             self._warn(f"The removal sheet could not be read:\n{err}")
@@ -1290,10 +1323,11 @@ class HubWindow(QMainWindow):
     # ---------------- Batch card ----------------
 
     def _build_batch_card(self) -> None:
-        """The Batch panel (ADR-0009): a Batch is a directory whose immediate
-        subdirectories are Projects. A Batch Run executes one designated
-        Project Script in every checked Project — there is no third script
-        level, and a Batch never pools results across Projects."""
+        """The Batch panel (ADR-0009, ADR-0011): a Batch is a directory with
+        Projects anywhere beneath it, found by a walk that prunes at each one.
+        A Batch Run executes one designated Project Script in every checked
+        Project — there is no third script level, and a Batch never pools
+        results across Projects."""
         card = Card(
             "Batch",
             category=Category.NEUTRAL,
@@ -1310,8 +1344,9 @@ class HubWindow(QMainWindow):
         btn_pick_batch = ActionButton("Choose batch folder…", Category.LOAD,
                                       icon_name="browse")
         btn_pick_batch.setToolTip(
-            "Pick the parent directory whose subdirectories are Projects — "
-            "every Project found in it is listed below for the run.")
+            "Pick the folder that holds your Projects. They are found "
+            "recursively, so they can sit at any depth inside it — every one "
+            "found is listed below for the run.")
         btn_pick_batch.clicked.connect(self._pick_batch_dir)
         pick_row.addWidget(btn_pick_batch)
         pick_row.addStretch(1)
@@ -1335,24 +1370,34 @@ class HubWindow(QMainWindow):
                 "padding: 6px 12px;", "padding: 3px 8px;"))
         self._btn_batch_removals.setIconSize(QSize(13, 13))
         self._btn_batch_removals.clicked.connect(
-            lambda: self._apply_removal_sheet(self._batch_root(), "batch folder"))
+            lambda: self._apply_removal_sheet(
+                self._batch_view_root(), "batch folder",
+                members=self._batch_checked_names()))
         pick_row.addWidget(self._btn_batch_removals, 0,
                            Qt.AlignmentFlag.AlignRight)
         card.add_body(pick_row)
         self._batch_empty = QLabel(
-            "Choose a batch folder — one whose subdirectories are Projects — "
-            "and every Project in it is listed here for the run.")
+            "Choose a batch folder — one with Projects anywhere inside it — "
+            "and every Project found is listed here for the run. A Project is "
+            "a folder with a project.yaml and at least one experiment "
+            "directory.")
         self._batch_empty.setStyleSheet(
             "color: palette(mid); font-style: italic;")
         self._batch_empty.setWordWrap(True)
         card.add_body(self._batch_empty)
 
-        self._batch_table = QTableWidget(0, 3)
+        self._batch_table = QTableWidget(0, 4)
         self._batch_table.setHorizontalHeaderLabels(
-            ["Project", "Replicates", "Report"])
+            ["Project", "Replicates", "Report", "Status"])
+        self._batch_table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._batch_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         header = self._batch_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self._batch_table.setColumnWidth(
+            0, self._BATCH_PROJECT_COLUMN_MAX_WIDTH)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self._batch_table.verticalHeader().setVisible(False)
         self._batch_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
@@ -1360,11 +1405,13 @@ class HubWindow(QMainWindow):
             QTableWidget.SelectionBehavior.SelectRows)
         self._batch_table.setMaximumHeight(170)
         self._batch_table.setToolTip(
-            "Checked Projects join the next Batch Run. Double-click a row to "
-            "select that Project.")
+            "Checked Projects join the next Batch Run. Projects are found "
+            "recursively, so a row's name is its path inside the batch "
+            "folder. Double-click a row to open that Project; right-click "
+            "for its blocked experiments and removed regions.")
         self._batch_table.itemDoubleClicked.connect(
             self._open_selected_batch_project)
-        ## Right-click, not double-click: double-click already means "select
+        ## Right-click, not double-click: double-click already means "open
         ## this Project" (ADR-0009), so the removals window takes the gesture
         ## that is free.
         self._batch_table.setContextMenuPolicy(
@@ -1372,11 +1419,21 @@ class HubWindow(QMainWindow):
         self._batch_table.customContextMenuRequested.connect(
             self._batch_table_menu)
         card.add_body(self._batch_table)
-        hint = QLabel("Double-click a project to select it — the strip "
-                      "switches to that Project. Right-click for its removed "
-                      "regions.")
+        hint = QLabel("Double-click a project to open its Project panel. "
+                      "Right-click to fix a blocked experiment or edit its "
+                      "removed regions.")
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        hint.setWordWrap(True)
         card.add_body(hint)
+
+        self._btn_batch_rescan = ActionButton(
+            "Rescan folder", Category.TOOLS, icon_name="refresh")
+        self._btn_batch_rescan.setToolTip(
+            "Walk the batch folder again. The project list is read once when "
+            "the folder is selected; rescan after adding or fixing projects "
+            "outside the app.")
+        self._btn_batch_rescan.clicked.connect(self._rescan_batch)
+        card.add_body(self._btn_batch_rescan)
 
         script_row = QHBoxLayout()
         script_row.addWidget(QLabel("Script:"))
@@ -1402,7 +1459,9 @@ class HubWindow(QMainWindow):
             "Run the designated Project Script in every checked Project — "
             "continue-on-error, per-Project summary at the end. Unloads the "
             "loaded experiment first.")
-        self._btn_run_batch.clicked.connect(self._run_batch)
+        ## Through a lambda: clicked() would otherwise pass its bool into
+        ## the focus argument.
+        self._btn_run_batch.clicked.connect(lambda: self._run_batch())
         script_row.addWidget(self._btn_run_batch)
         card.add_body(script_row)
 
@@ -1435,7 +1494,7 @@ class HubWindow(QMainWindow):
 
         for w in (self._batch_table, self._batch_script_combo,
                   self._btn_run_batch, self._chk_batch_narrative,
-                  self._btn_batch_removals):
+                  self._btn_batch_removals, self._btn_batch_rescan):
             w.setEnabled(False)
         self._cards["batch"] = card
         self._cards_lay.addWidget(card)
@@ -1463,9 +1522,36 @@ class HubWindow(QMainWindow):
                     f"[removals] {os.path.basename(sheet)} could not be read: {err}")
         return sheet
 
+    def _rescan_batch(self) -> None:
+        """Walk the batch folder again (ADR-0011's Rescan)."""
+        root = self._batch_view_root()
+        if root is None:
+            return
+        found = self._scan_batch(root, refresh=True)
+        blocked = sum(len(m.blocked) for m in found["members"])
+        self._log.append_line(
+            f"[batch] rescanned {root}: {len(found['members'])} project(s)"
+            + (f", {blocked} blocked experiment(s)" if blocked else ""))
+        for key, why in found["skipped"]:
+            self._log_issue(f"[batch] {key} skipped — {why}")
+        self._refresh_batch_view()
+        self._refresh_tiles()
+
+    def _batch_member(self, key):
+        """The scanned Member for *key*, or None if it has gone."""
+        for member in self._batch_members():
+            if member.key == key:
+                return member
+        return None
+
     def _batch_table_menu(self, point) -> None:
-        """Right-click on a project row: its removals window (ADR-0010)."""
-        root = self._batch_root()
+        """Right-click on a project row: fix its blocked experiments
+        (ADR-0011), or open its removals window (ADR-0010).
+
+        Both live here because the other two gestures are taken: double-click
+        selects the Project (ADR-0009) and a check runs it.
+        """
+        root = self._batch_view_root()
         if root is None:
             return
         item = self._batch_table.itemAt(point)
@@ -1474,12 +1560,24 @@ class HubWindow(QMainWindow):
         name_item = self._batch_table.item(item.row(), 0)
         if name_item is None:
             return
-        name = name_item.text().strip()
+        key = name_item.text().strip()
+        member = self._batch_member(key)
         menu = QMenu(self)
-        action = menu.addAction(f"Removed regions in {name}…")
+        fix = menu.addAction(f"Fix blocked experiments in {key}…")
+        fix.setEnabled(bool(member is not None and member.blocked))
+        if member is not None and member.blocked:
+            fix.setToolTip("\n".join(e.describe() for e in member.blocked))
+        removals_action = menu.addAction(f"Removed regions in {key}…")
         chosen = menu.exec(self._batch_table.viewport().mapToGlobal(point))
-        if chosen is action:
-            self._project_removed_regions(Path(root) / name)
+        if chosen is removals_action:
+            from .. import batch as batch_mod
+
+            self._project_removed_regions(
+                Path(batch_mod.member_directory(root, key)))
+        elif chosen is fix:
+            ## The same review window, so its Run button means the same thing
+            ## it does everywhere else — opened from here it was inert.
+            self._run_batch(focus=key)
 
     def _pick_batch_dir(self) -> None:
         """The Batch panel's own way in: pick the parent directory, and every
@@ -1494,27 +1592,95 @@ class HubWindow(QMainWindow):
             return
         p = Path(chosen).expanduser().resolve()
         self._set_project_dir(p)
-        if self._batch_root() is None:
-            ## Not a Batch after all — say why, in the folder's own terms.
-            if prj.is_project_dir(p):
+        if self._batch_root() is not None:
+            return
+        ## Not a Batch after all — say why, about the folder the user picked
+        ## rather than the one the selection normalized to, and using what the
+        ## walk actually saw. "No Project subdirectories" is the wrong answer
+        ## now that the search is recursive.
+        found = self._scan_batch(p)
+        if prj.is_project_dir(p) and not found["skipped"]:
+            self._log_issue(
+                f"[batch] {p.name} is a single Project — to batch it, "
+                "choose a folder that contains it.")
+        else:
+            self._log_issue(
+                f"[batch] no Project found anywhere in {p} — a Project is a "
+                "folder with a project.yaml and at least one experiment "
+                "directory inside it.")
+            for key, why in found["skipped"][:10]:
+                self._log_issue(f"[batch]   {key} — {why}")
+            if found.get("truncated"):
                 self._log_issue(
-                    f"[batch] {p.name} is a single Project — to batch it, "
-                    "choose its parent folder.")
-            else:
-                self._log_issue(
-                    f"[batch] {p} has no Project subdirectories — nothing "
-                    "to batch.")
+                    "[batch]   the scan stopped early: this folder is larger "
+                    "than a batch should be. Choose one closer to the "
+                    "projects.")
+
+    def _scan_batch(self, path, refresh: bool = False) -> dict:
+        """The recursive walk of *path*, cached (ADR-0011).
+
+        Discovery is recursive now, so the walk is far more expensive than the
+        single ``listdir`` it replaced — and ``_refresh_tiles`` runs on every
+        checkbox toggle and every finished task. One walk per selection is
+        kept and reused; :meth:`_invalidate_batch_scan` drops it whenever the
+        tree may have changed underneath (a new selection, a filed recording,
+        a finished run), and the Rescan button covers changes made outside the
+        app entirely.
+        """
+        from .. import batch as batch_mod
+
+        key = str(path)
+        cached = getattr(self, "_batch_scan_cache", None)
+        if refresh or cached is None or cached[0] != key:
+            cached = (key, batch_mod.discover(key))
+            self._batch_scan_cache = cached
+        return cached[1]
+
+    def _invalidate_batch_scan(self) -> None:
+        self._batch_scan_cache = None
 
     def _batch_root(self):
         """The selected Batch, or None when the selection is not one. The
         selection names exactly one working container — a Batch or a Project
         (ADR-0009)."""
-        from .. import batch as batch_mod
-
         if not self._project_dir:
             return None
-        return (Path(self._project_dir)
-                if batch_mod.is_batch_dir(self._project_dir) else None)
+        ## Gated on the walk alone. An earlier short-circuit here asked
+        ## is_project_dir, which disagreed with the walk's stricter test: a
+        ## batch root carrying a stray or legacy project.yaml (every flat
+        ## batch someone once clicked "Edit config" on has one) enumerated
+        ## its Members fine and showed an empty, dead Batch card. The walk
+        ## already refuses to call a real Project a Batch.
+        found = self._scan_batch(self._project_dir)
+        if found["members"]:
+            root = Path(self._project_dir)
+            self._batch_panel_root = root
+            return root
+        return None
+
+    def _batch_view_root(self):
+        """Batch whose projects table is currently being shown.
+
+        The app selection still names exactly one container, but the Batch
+        panel is allowed to stay open while a row double-click selects one of
+        its Projects. In that state the panel keeps displaying the Batch it
+        came from instead of rebuilding itself as an empty Batch card.
+        """
+        root = self._batch_root()
+        if root is not None:
+            return root
+        remembered = getattr(self, "_batch_panel_root", None)
+        if remembered is None or self._open_panel_key != "batch":
+            return None
+        found = self._scan_batch(remembered)
+        if found["members"]:
+            return Path(remembered)
+        self._batch_panel_root = None
+        return None
+
+    def _batch_members(self) -> list:
+        root = self._batch_view_root()
+        return self._scan_batch(root)["members"] if root is not None else []
 
     def _refresh_batch_view(self) -> None:
         from .. import batch as batch_mod
@@ -1526,14 +1692,15 @@ class HubWindow(QMainWindow):
         card = self._cards.get("batch")
         if card is None:
             return
-        root = self._batch_root()
+        root = self._batch_view_root()
         live = root is not None
         self._batch_empty.setVisible(not live)
         ## The suppress-tabs box is deliberately NOT in this list: it applies
         ## to every run, not only Batch Runs, so it stays usable with no
         ## Batch selected.
         for w in (self._batch_table, self._batch_script_combo,
-                  self._btn_run_batch, self._chk_batch_narrative):
+                  self._btn_run_batch, self._chk_batch_narrative,
+                  self._btn_batch_rescan):
             w.setEnabled(live)
         ## Selecting a Batch REPORTS its Removal Sheet; it never applies one.
         ## Browsing to a colleague's batch folder must not silently rewrite
@@ -1547,36 +1714,58 @@ class HubWindow(QMainWindow):
             self._batch_script_combo.blockSignals(False)
             return
 
-        names = batch_mod.batch_project_names(root)
+        found = self._scan_batch(root)
+        members = found["members"]
+        if found.get("truncated") and getattr(self, "_noted_truncation", None) != str(root):
+            ## Once per selection: a partial scan reported as a complete one
+            ## is how an unattended run silently skips half a batch.
+            self._noted_truncation = str(root)
+            self._log_issue(
+                f"[batch] the scan of {root} stopped early — this folder is "
+                "larger than a batch should be, and projects deeper in it "
+                "were not found. Choose a folder closer to the projects.")
         meta = batch_mod.load_batch_file(root)
 
         ## Rebuilding must not silently re-check a Project the user
-        ## unchecked; new rows default to checked (all-on, ADR-0009).
+        ## unchecked; a new row defaults to checked unless nothing in it can
+        ## run, which can only produce a failure (ADR-0011).
         prev: dict[str, Qt.CheckState] = {}
         for row in range(self._batch_table.rowCount()):
             item = self._batch_table.item(row, 0)
             if item is not None:
                 prev[item.text()] = item.checkState()
         self._batch_table.setRowCount(0)
-        for name in names:
+        for member in members:
             row = self._batch_table.rowCount()
             self._batch_table.insertRow(row)
-            item = QTableWidgetItem(name)
+            item = QTableWidgetItem(member.key)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(prev.get(name, Qt.CheckState.Checked))
+            default = (Qt.CheckState.Checked if member.runnable
+                       else Qt.CheckState.Unchecked)
+            item.setCheckState(prev.get(member.key, default))
+            item.setToolTip(member.key)
             self._batch_table.setItem(row, 0, item)
-            project_dir = Path(root) / name
-            ## Cheap sources only — a directory scan, never a Project load:
-            ## a Batch may hold many Projects and this runs on every refresh.
-            try:
-                reps = sum(1 for d in project_dir.iterdir()
-                           if d.is_dir()
-                           and (d / _CANONICAL_CONFIG).is_file())
-            except OSError:
-                reps = 0
-            report = "yes" if any(project_dir.glob("*_report.pdf")) else "no"
-            self._batch_table.setItem(row, 1, QTableWidgetItem(str(reps)))
-            self._batch_table.setItem(row, 2, QTableWidgetItem(report))
+            reps = QTableWidgetItem(
+                f"{len(member.usable)}/{len(member.experiments)}")
+            report = QTableWidgetItem("yes" if member.has_report else "no")
+            blocked = member.blocked
+            status = QTableWidgetItem(
+                f"{len(blocked)} blocked" if blocked else "ok")
+            self._batch_table.setItem(row, 1, reps)
+            self._batch_table.setItem(row, 2, report)
+            self._batch_table.setItem(row, 3, status)
+            if blocked:
+                ## Red, and the reasons in the tooltip: the strip has no room
+                ## for them and the preflight is a click away (ADR-0011).
+                brush = QBrush(blocked_color())
+                detail = "\n".join(e.describe() for e in blocked)
+                for column in range(self._batch_table.columnCount()):
+                    cell = self._batch_table.item(row, column)
+                    if cell is not None:
+                        cell.setForeground(brush)
+                        cell.setToolTip(
+                            f"{member.key}\n\n{detail}"
+                            if column == 0 else detail)
 
         ## Picker: built-ins plus batch.yaml's central Project Scripts. The
         ## designation may also name a script each project.yaml defines, so
@@ -1626,7 +1815,7 @@ class HubWindow(QMainWindow):
             STANDARD_PIPELINE,
         )
 
-        root = self._batch_root()
+        root = self._batch_view_root()
         if root is None:
             return
         data = self._batch_script_combo.currentData()
@@ -1648,28 +1837,36 @@ class HubWindow(QMainWindow):
             self._log_issue(f"[batch] could not save the designation: {err}")
 
     def _open_selected_batch_project(self, item) -> None:
-        """An ordinary selection change down to that Project (ADR-0009): the
-        selection still does exactly one job, so there is no drill-in state
-        and no 'up to batch' button — reaching the Batch again is picking
-        its folder."""
-        root = self._batch_root()
+        """Enter a Batch member Project and switch the visible work panel."""
+        from .. import batch as batch_mod
+
+        root = self._batch_view_root()
         name_item = self._batch_table.item(item.row(), 0)
         if root is None or name_item is None:
             return
-        self._close_panel()
-        self._set_project_dir(Path(root) / name_item.text())
+        ## The row's text is the Member key — a path relative to the batch
+        ## root, which may hold separators (ADR-0011).
+        project_dir = Path(batch_mod.member_directory(root, name_item.text()))
+        self._set_project_dir(project_dir)
+        self._open_panel("project")
 
-    def _run_batch(self) -> None:
+    def _run_batch(self, focus=None) -> None:
         from .. import batch as batch_mod
         from ..script_editor.project_actions import (
             REPORT_PIPELINE,
             STANDARD_PIPELINE,
         )
 
-        root = self._batch_root()
+        root = self._batch_view_root()
         if root is None:
             return
-        checked = self._batch_checked_names()
+        ## The preflight is where the target list is confirmed and blocked
+        ## experiments are repaired (ADR-0011). Always shown: with recursive
+        ## discovery the folder you picked no longer says what will run.
+        confirmed = self._open_batch_preflight(root, focus=focus)
+        if confirmed is None:
+            return
+        checked, apply_removals = confirmed
         if not checked:
             self._warn("No Projects checked — check at least one row.")
             return
@@ -1699,7 +1896,8 @@ class HubWindow(QMainWindow):
 
         def _do() -> str:
             results = batch_mod.run_batch(str(root), script_name=name,
-                                          project_names=checked, log=print)
+                                          project_names=checked, log=print,
+                                          apply_removals=apply_removals)
             ok = sum(1 for v in results.values() if v == "ok")
             failed = [f"{n}: {v.splitlines()[0] if v else '<no message>'}"
                       for n, v in results.items() if v != "ok"]
@@ -1718,6 +1916,29 @@ class HubWindow(QMainWindow):
             return msg + narrative
 
         self._spawn_task("Batch Run", _do)
+
+    def _open_batch_preflight(self, root, focus=None):
+        """Show the preflight for *root*; returns ``(keys, apply_removals)``
+        when the user chose to run, or None when they cancelled.
+
+        Opened from Run batch and from the table's right-click fix entry —
+        the same dialog either way, so there is one place that states what a
+        Batch Run is about to do.
+        """
+        checked = self._batch_checked_names()
+        dialog = BatchPreflightDialog(
+            self, root, checked=checked, log=self._log.append_line)
+        if focus is not None:
+            dialog.focus_member(focus)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        ## Filing or scaffolding inside the dialog changes the tree, so the
+        ## cached walk is stale either way.
+        self._invalidate_batch_scan()
+        self._refresh_batch_view()
+        self._refresh_tiles()
+        if not accepted:
+            return None
+        return dialog.selected_keys, dialog.apply_removals
 
     def _choose_ai_provider(self, title: str) -> str | None:
         """Ask which configured provider to use, or None when unavailable or
@@ -1796,11 +2017,21 @@ class HubWindow(QMainWindow):
         if panel is None or not panel.isVisible():
             return
         widget = QApplication.widgetAt(event.globalPosition().toPoint())
+        if widget is not None and widget.window() is not self:
+            return
         probe = widget
         while probe is not None:
             if probe is panel or probe is self._strip:
                 return
             probe = probe.parentWidget()
+        if self._open_panel_key == "batch":
+            probe = widget
+            while probe is not None:
+                if probe is self._plot_dock:
+                    break
+                probe = probe.parentWidget()
+            else:
+                return
         self._close_panel()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -1901,13 +2132,16 @@ class HubWindow(QMainWindow):
         ## Batch state, computed once: the Batch tile and the Project tile's
         ## batch branch both read it (cheap directory scans, no Project load).
         batch_root = self._batch_root()
+        batch_members: list = []
         batch_names: list[str] = []
         ## No designation runs each Project's own default script, so the
         ## readout names that script rather than a built-in (ADR-0009).
         default_designation = f"each project's '{DEFAULT_PROJECT_SCRIPT_NAME}'"
         designated = default_designation
         if batch_root is not None:
-            batch_names = batch_mod.batch_project_names(batch_root)
+            ## The cached walk (ADR-0011) — this runs on every tile refresh.
+            batch_members = self._scan_batch(batch_root)["members"]
+            batch_names = [member.key for member in batch_members]
             meta = batch_mod.load_batch_file(batch_root)
             designated = meta["script"] or default_designation
 
@@ -1920,8 +2154,11 @@ class HubWindow(QMainWindow):
         if tile is not None:
             tile.set_dimmed(False)
             if batch_root is not None:
-                tile.set_summary([f"{len(batch_names)} project(s)",
-                                  designated])
+                blocked = sum(len(m.blocked) for m in batch_members)
+                headline = f"{len(batch_names)} project(s)"
+                if blocked:
+                    headline += f" · {blocked} blocked"
+                tile.set_summary([headline, designated])
             elif self._project_root() is not None:
                 tile.set_summary(["selection is a project",
                                   "load its parent to batch"])
@@ -2077,6 +2314,8 @@ class HubWindow(QMainWindow):
         a replicate and there is no drill-in state to return from. Loading a
         replicate is a separate context (``_load_experiment``)."""
         p = Path(path).expanduser().resolve()
+        ## A new selection means a new tree to walk (ADR-0011's cache).
+        self._invalidate_batch_scan()
         enclosing = self._enclosing_project_dir(p)
         if enclosing is not None:
             p = enclosing
@@ -2086,8 +2325,9 @@ class HubWindow(QMainWindow):
         self._project_edit.setText(p.name or str(p))
         self._project_edit.setToolTip(str(p))
         ui_settings.add_recent_project(p)
-        from .. import batch as batch_mod
-        kind = "Batch" if batch_mod.is_batch_dir(p) else "Project"
+        ## Read through the cache — is_batch_dir walks the whole tree now,
+        ## and this runs on every selection change.
+        kind = "Batch" if self._scan_batch(p)["members"] else "Project"
         self._log.append_line(f"{kind}: {p}")
         self._refresh_project_config_button()
         self._refresh_scripts()
@@ -2742,6 +2982,9 @@ class HubWindow(QMainWindow):
         ## status table refreshes here — the one GUI-thread point every task
         ## passes through. A Batch Run changes every Project, so the batch
         ## table refreshes for the same reason.
+        ## A finished task may have written reports or analysis into the
+        ## batch tree, so the cached walk is stale.
+        self._invalidate_batch_scan()
         self._refresh_project_view()
         self._refresh_batch_view()
         self._refresh_tiles()

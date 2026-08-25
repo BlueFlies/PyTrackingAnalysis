@@ -1,25 +1,93 @@
 # Batch runs
 
-A **Batch** is a folder whose immediate subdirectories are Projects. Nothing
-marks it — choose such a folder with the Batch panel's own **Choose batch
-folder…** button (or Project tile → **Load…**) and the **Batch** tile fills
-with every Project inside it auto-loaded into the table; select a single
-Project and the Batch tile reads "selection is a project — load its parent to
-batch" instead. The Batch and Project tiles are never dimmed: they are the
-way in, always available whatever is selected. A
+A **Batch** is a folder with Projects anywhere beneath it. Nothing marks it —
+choose such a folder with the Batch panel's own **Choose batch folder…**
+button (or Project tile → **Load…**) and the **Batch** tile fills with every
+Project inside it auto-loaded into the table; select a single Project and the
+Batch tile reads "selection is a project — load its parent to batch" instead.
+The Batch and Project tiles are never dimmed: they are the way in, always
+available whatever is selected. A
 Batch is a processing convenience: it runs many Projects unattended and
 reports per-Project success or failure. It never pools results across
 Projects — each Project keeps its own design and its own outputs.
 
+## How projects are found
+
+The search is **recursive**, so Projects do not have to be immediate children:
+`Sept2026/ProjA` and `Archive/2025/ProjC` are both found, and the folders in
+between are just folders. It stops at each Project — a Project's own
+subdirectories are its Experiments, so an archived copy carrying its own
+`project.yaml` inside a Project is never picked up as a second entry, and no
+recording is analyzed twice in one run.
+
+A Project is a folder with a `project.yaml` **and** at least one experiment
+directory the run can use. A `project.yaml` with nothing usable under it is
+treated as a grouping folder and the search continues underneath it — one
+stray marker file must not hide every Project below it — and each such folder
+is named in the Output tab so it is never silently ignored. The same log
+names anything else the scan skipped: symlinked folders (never followed) and
+folders it could not read.
+
+Because a Project can sit at any depth, a row's name is its **path inside the
+batch folder** (`Sept2026/ProjA`). A Project directly in the batch folder
+keeps its plain name, so existing `batch.yaml` designations and removal sheets
+keep working unchanged.
+
+## Blocked experiments, and fixing them
+
+An experiment directory the run cannot use is **blocked**, and its Project's
+row turns red with the count. There are four reasons:
+
+- **Unfiled recording** — the DTrack export is still sitting at the
+  experiment's root instead of in `data/`, where the loader looks. This is the
+  one that can be repaired in place: filing moves the `.xlsx` and its
+  `_Data_*.csv` companions into `data/`, and any other loose file into
+  `extra_files/` beside it. YAML files never move — `tracking_config.yaml`
+  moved would un-make the experiment directory, and `removed_regions.yaml`
+  moved would silently return removed flies to the analysis — and neither does
+  a removal sheet. Nothing is ever overwritten.
+- **No config** — a recording with no `tracking_config.yaml`. The fix is
+  **Experiment configs…**, which scaffolds one from the project design.
+- **No recording** — a config with no `.xlsx` in `data/`. Nothing to do but
+  add the recording.
+- **Ambiguous** — two workbooks, so "which one is the experiment?" cannot be
+  answered for you. Sort it out in a file manager; filing refuses to guess,
+  because the loader would quietly pick one and analyze it.
+
+Blocked belongs to the *experiment*, never to the Project: a Project with four
+healthy replicates and one blocked one runs the four. A Project with nothing
+usable starts unchecked — it can only fail — but you can still check it.
+
+## The review before a run
+
+**Run batch** opens a review window first, every time. It lists the projects
+that were found with their paths, how many replicates are usable, and every
+blocked experiment with its reason and the button that clears it — **File
+data…**, or **Experiment configs…**. **Rescan** walks the folder again, for
+changes made outside the app.
+
+It also previews the **removal sheet**: how many rows apply, how many are
+already declared, and which conflict with a reason already in place. One
+switch declines the sheet for that run — the sheet itself and every standing
+declaration are left exactly as they are. Rows naming a project you unchecked
+are skipped, not written: unchecking means "do not touch this project".
+
+Nothing here blocks the run. Cancel does; everything else is there so you find
+out before an overnight batch rather than during it.
+
 ## The Batch panel
 
-- The **projects table** lists every Project in the folder (subdirectories
-  without a `project.yaml` are skipped, with a log line during a run).
-  Checked rows join the next run — all are checked by default, so re-running
-  one failed Project is two clicks. **Double-click a row to select that
-  Project**: the strip switches to it, exactly as if you had loaded its
-  folder. There is no "up to batch" button — to return, load the Batch
-  folder again.
+- The **projects table** lists every Project found, with its replicate count
+  (`3/5` means five experiment directories, three of which the run can use),
+  whether a report exists, and its status. Checked rows join the next run —
+  all are checked by default except a Project with nothing usable in it.
+  **Double-click a row to select that Project**: the strip switches to it,
+  exactly as if you had loaded its folder. There is no "up to batch" button —
+  to return, load the Batch folder again. **Right-click** a row to fix its
+  blocked experiments, or to open its removed-regions window.
+- **Rescan folder** walks the batch folder again. The project list is read
+  once when the folder is selected and reused after that, so rescan when you
+  have added or repaired projects outside the app.
 - The **Script** picker holds the designated Project Script. **Each
   project's own script (default)** runs the script each Project carries in
   its own `project.yaml` — every Project is created with one, named **Report
@@ -33,10 +101,13 @@ Projects — each Project keeps its own design and its own outputs.
   `batch.yaml`'s `project_scripts:` section are also listed as explicit
   choices; a saved designation naming a script the Projects define
   themselves stays listed too, shown as "(from each project)".
-- **Run batch** runs the designated script in every checked Project — one
-  at a time, in name order — continue-on-error with `[project]`-prefixed
-  log lines and a summary at the end. It unloads the loaded experiment
-  first — the run rewrites every replicate's analysis.
+- **Run batch** opens the review window (above) and then runs the designated
+  script in every checked Project — one at a time, in path order —
+  continue-on-error with `[project]`-prefixed log lines and a summary at the
+  end. It unloads the loaded experiment first — the run rewrites every
+  replicate's analysis. Only the batch folder's own `batch.yaml` designation
+  applies; a `batch.yaml` in a folder further down is ignored and named in
+  the log.
 - **AI narrative of the batch** asks an AI provider, after the run, to
   synthesize the Projects' own narratives into `batch_ai_narrative.md` at the
   batch folder: results across the batch, Projects whose design looks

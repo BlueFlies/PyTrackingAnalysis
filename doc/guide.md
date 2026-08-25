@@ -797,14 +797,22 @@ analysis counts, and the loaded experiment (design factors in its tooltip).
 
 The panels:
 
-- **Batch** — lights when the selected folder's immediate subdirectories are
-  Projects (the selection names a Batch *or* a Project — still exactly one
-  working container).  A checkable **projects table** lists every Project,
-  all checked by default in name order; **double-click a row to select that
+- **Batch** — lights when the selected folder has Projects anywhere beneath
+  it (the selection names a Batch *or* a Project — still exactly one
+  working container).  Discovery is **recursive and stops at each Project**,
+  so `Sept2026/ProjA` and `Archive/2025/ProjC` are both found and a row's name
+  is its path inside the batch folder.  A checkable **projects table** lists
+  every Project with its usable replicate count (`3/5`), its report status,
+  and any **blocked experiments** in red; all are checked by default except a
+  Project with nothing the run can use.  **Double-click a row to select that
   Project** — an ordinary selection change, so there is no "up to batch"
-  button.  A **Script** picker names the **designated Project Script**
+  button; **right-click** it to fix a blocked experiment or edit its removed
+  regions, and **Rescan folder** walks the tree again after changes made
+  outside the app.  A **Script** picker names the **designated Project Script**
   (default: the built-in **Report pipeline**), and **Run batch** runs it in
-  every checked Project (§8.5).
+  every checked Project (§8.5) — after a **review window** that states the
+  target list, offers to file any recording still sitting loose at an
+  experiment root, and previews (or declines) the removal sheet.
 - **Project** — two cards, **Create/Load** and **Analysis** (the panel itself is
   already titled Project, so neither card repeats it).
   **Create/Load** picks the folder (an experiment directory *or* a Project; the
@@ -1304,8 +1312,8 @@ CSVs (§6).
 
 ### 8.5 Batch Runs: many Projects at once
 
-A **Batch** is structural: a directory whose immediate subdirectories are
-Projects (`docs/adr/0009`) — the Project↔experiment rule one level up.
+A **Batch** is structural: a directory with Projects anywhere beneath it —
+found by a recursive walk that stops at each Project (`docs/adr/0009`) — the Project↔experiment rule one level up.
 Nothing marks it, and it is a processing convenience only: a Batch never
 pools results across Projects (each keeps its own design and outputs), and
 its only artifact of its own is an optional `batch.yaml`.

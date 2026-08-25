@@ -12,7 +12,7 @@ The status readout to the right of the Tools tile shows the current Project, pat
 
 ## Batch panel
 
-The selection names a Batch or a Project. Selecting a folder whose immediate subdirectories are Projects lights the **Batch** tile: its panel holds **Choose batch folder...** (pick the parent directory and every Project inside auto-loads), a checkable projects table, a **Script** picker for the designated Project Script, and **Run batch**. Double-click a row to select that Project. See the **Batch runs** help topic for the full reference.
+The selection names a Batch or a Project. Selecting a folder with Projects anywhere beneath it lights the **Batch** tile: its panel holds **Choose batch folder...** (pick the folder and every Project inside it auto-loads, at any depth), a checkable projects table showing usable replicates and blocked experiments, **Rescan folder**, a **Script** picker for the designated Project Script, and **Run batch** — which opens a review window before anything runs. Double-click a row to select that Project; right-click it to fix a blocked experiment or edit its removed regions. See the **Batch runs** help topic for the full reference.
 
 ## Project panel
 

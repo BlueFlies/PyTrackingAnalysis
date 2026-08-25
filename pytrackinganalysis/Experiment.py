@@ -188,7 +188,9 @@ class Experiment:
         ## the entirely ordinary reason that the user had the sheet open.
         ## Sorting also makes the choice deterministic when several are present.
         xlsx_files = sorted(
-            f for f in glob.glob(os.path.join(self.data_path, '*.xlsx'))
+            ## glob.escape: a bracket anywhere in the path (a 'Trial [2]'
+            ## folder) makes the pattern a character class and matches nothing.
+            f for f in glob.glob(os.path.join(glob.escape(self.data_path), '*.xlsx'))
             if not os.path.basename(f).startswith(('~$', '.'))
         )
         if not xlsx_files:
@@ -2203,7 +2205,7 @@ def _is_experiment_dir(path: str) -> bool:
     if not os.path.isdir(data_dir):
         return False
 
-    return bool(glob.glob(os.path.join(data_dir, '*.xlsx')))
+    return bool(glob.glob(os.path.join(glob.escape(data_dir), '*.xlsx')))
 
 
 def batch_analyze(

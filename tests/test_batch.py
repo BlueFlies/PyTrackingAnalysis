@@ -34,8 +34,13 @@ def test_batch_is_structural(tmp_path):
     assert batch_mod.batch_project_names(tmp_path) == ["P1", "P2"]
     # A Project is never also a Batch, whatever its subdirectories hold.
     assert not batch_mod.is_batch_dir(tmp_path / "P1")
+    # ...but a bare project.yaml does not make one: with no experiment
+    # directory of its own it is a marker at a grouping level, and hiding
+    # every Project beneath it is the mistake recursion exists to tolerate
+    # (ADR-0011). It is reported rather than silently walked through.
     prj.create_project_file(str(tmp_path))
-    assert not batch_mod.is_batch_dir(tmp_path)
+    assert batch_mod.is_batch_dir(tmp_path)
+    assert batch_mod.batch_project_names(tmp_path) == ["P1", "P2"]
 
 
 # ---- batch.yaml ------------------------------------------------------------
@@ -189,19 +194,19 @@ def test_run_batch_continue_on_error_and_skips(tmp_path, monkeypatch):
     logs: list[str] = []
     results = batch_mod.run_batch(str(tmp_path), log=logs.append)
 
-    # An empty designless Project raises at load — that Project's failure,
-    # never the run's; the boom in P2 is likewise contained.
-    assert results["Broken"].startswith("ValueError")
-    assert results["P1"] == "ok"
+    # A project.yaml with no experiment directory is not a Member at all
+    # (ADR-0011): it never runs, so it can no longer fail the way it used to.
+    # It is reported rather than silently ignored.
+    assert "Broken" not in results
+    assert any("Broken" in line and "skipped" in line for line in logs)
     assert "boom" in results["P2"]
+    assert results["P1"] == "ok"
     # Each Project ran its own seeded default, named "batch".
     assert ran == [("P1", pa.DEFAULT_PROJECT_SCRIPT_NAME),
                    ("P2", pa.DEFAULT_PROJECT_SCRIPT_NAME)]
-    # Non-Project children are skipped with a log line, and a Batch Run
-    # never creates or upgrades a project.yaml.
-    assert any("notes" in line and "skipped" in line for line in logs)
+    # A Batch Run never creates or upgrades a project.yaml.
     assert not (tmp_path / "notes" / "project.yaml").exists()
-    assert any("1/3" in line for line in logs)
+    assert any("1/2" in line for line in logs)
 
 
 def test_run_batch_subset_and_designated_name(tmp_path, monkeypatch):

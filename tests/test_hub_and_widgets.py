@@ -630,6 +630,22 @@ def test_desktop_exec_quotes_paths_with_spaces():
     assert _exec_arg('/opt/a"b/pytrack-hub') == '"/opt/a\\"b/pytrack-hub"'
 
 
+def test_gui_environment_strips_ibus_module_overrides(monkeypatch):
+    import os
+
+    from pytrackinganalysis.gui_env import sanitize_input_method_environment
+
+    monkeypatch.setenv("QT_IM_MODULE", "ibus")
+    monkeypatch.setenv("GTK_IM_MODULE", "ibus")
+    monkeypatch.setenv("XMODIFIERS", "@im=ibus")
+
+    sanitize_input_method_environment()
+
+    assert "QT_IM_MODULE" not in os.environ
+    assert "GTK_IM_MODULE" not in os.environ
+    assert os.environ["XMODIFIERS"] == "@im=ibus"
+
+
 def test_worker_output_does_not_steal_main_thread_prints(qapp, capsys):
     """redirect_stdout rebound sys.stdout process-wide from the worker thread."""
     import threading
