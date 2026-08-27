@@ -1,6 +1,6 @@
 # Creating and opening a Project
 
-This is the **Project -> Create/Load** card at the top of the Hub's Project panel. Four buttons, because there are three different states a folder can be in before it is a Project, plus the editor for the one that is already open.
+This is the **Project -> Create/Load** card at the top of the Hub's Project panel. Four ways in, because there are three different states a folder can be in before it is a Project, plus the editor for the one that is already open - and **Validate YAMLs** on its own row below them, which is not a way in at all but the check you run over the Project that is open.
 
 A **Project** is a directory with a `project.yaml`. That file is the authority for the shared design - experiment type, design factors and levels, facets, quality criteria, and counting-region names - and every replicate under it is hard-validated against it each time the Project loads.
 
@@ -10,6 +10,12 @@ A **Project** is a directory with a `project.yaml`. That file is the authority f
 - **Create project...** - nothing exists yet. You choose where it goes, name it, and fill in the design; the directory is created for you and `project.yaml` is written into it.
 - **Initialize existing directory...** - the directory exists (usually with replicate subdirectories already in it) but has no `project.yaml`. It keeps its own name, its subdirectories become the replicates, and the design shown in the dialog is inferred from the first subdirectory that already has a `tracking_config.yaml`. This is the path for a study you started before Projects existed.
 - **Edit config...** - reopens the Project editor on the `project.yaml` of the Project that is currently loaded. Disabled until one is. If the file is missing, this button creates a default one and opens it.
+
+## Validate YAMLs
+
+Full width on its own row, because it is a check rather than a fifth way in. It reads the open Project's `project.yaml` **and** every replicate's `tracking_config.yaml` in one pass - parse errors and semantic problems alike (unknown rig, missing calibration, design mismatch) - and reports each file separately in the log with a count at the end. With a standalone experiment loaded instead, it checks that one config.
+
+This used to live on a **Tools** tile. The tile is gone: opening folders is the file manager's job, and matplotlib's cache is now cleared automatically every time the Hub closes.
 
 If you point the Hub at a folder that is itself an **Experiment Directory** (it has a `tracking_config.yaml`, not a `project.yaml`), it offers to create the Project on the *parent* instead, so that experiment becomes a replicate of it.
 
@@ -26,3 +32,4 @@ Nothing on the **Experiments** or **Analysis** cards is enabled until a Project 
 - **Project YAML** - every key in `project.yaml`, the two script sections, and what validation enforces.
 - **Creating experiments** - the same three cases one level down, for replicates.
 - **Project directory layout** - the on-disk shape of Experiments, Projects, and Batches.
+- **Outputs** - every file the Project and its replicates write, and where.

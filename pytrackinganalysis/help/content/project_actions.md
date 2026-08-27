@@ -16,7 +16,7 @@ Double-click a configured row to load that replicate and run QC. Double-click a 
 ## Setup actions
 
 - **Experiment configs...** opens the config manager for all immediate subdirectories. Create missing configs, create all missing configs, or open an existing replicate in the Config Editor.
-- **Create experiment...** creates a new replicate directory and scaffolds its config from `project.yaml`.
+- **Create experiment...** creates a new replicate directory and scaffolds its config from `project.yaml`, then asks how to finish it: **Edit config...** opens the scaffold in the Config Editor, **Copy config from...** replaces it with a config from an experiment that already works (checked against the project design before it is written, and refused with the scaffold left intact if it would not conform). See the **Creating experiments** help topic.
 - **Initialize existing directory...** adopts a directory already in the Project that has no config: it files any loose recording into `data/`, scaffolds the config, and opens the Config Editor.
 
 ## Project pipeline
@@ -34,6 +34,8 @@ Use the other Project actions around that full refresh:
 - **AI narrative...** - write a Project AI narrative from the current Combined Analysis and rebuild the Project report so the narrative is embedded. The prose is also saved as `analysis/ai_narrative.md` for later searching.
 - **View reports** - open the Project report and every per-replicate report at once, each handed to your desktop's PDF viewer. Enabled only when both kinds exist; the tooltip says which half is missing when it does not.
 - **Removed regions...** - declare tracking regions to leave out of the analysis. See below.
+
+Every file this sequence writes - per-replicate `analysis/`, the Project's own `analysis/`, `figures/`, and both kinds of PDF - is listed in the **Outputs** help topic.
 
 Rebuilding Combined Analysis deletes any saved Project AI narrative because the narrative describes one specific combined result. Because **Create report** and **Update report** rebuild Combined Analysis, run **AI narrative...** after the final report refresh if you want AI prose in the PDF.
 

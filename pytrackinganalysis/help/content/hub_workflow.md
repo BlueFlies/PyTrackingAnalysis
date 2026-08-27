@@ -47,7 +47,7 @@ For a custom sequence, use **Edit scripts...** and make a Project Script. Script
 
 After a replicate is loaded:
 
-- **Analyze** runs the loaded experiment's analysis, QC-only task, report build, summary export, or pairwise comparisons. Run Analysis and Create PDF Report ask for optional run notes.
+- **Analyze** runs the loaded experiment's analysis, QC-only task, report build, summary export, or pairwise comparisons. Run Analysis and Create PDF Report ask for optional run notes. The **Outputs** help topic lists every file these write and where it lands; **QC Viewer** covers the per-tracker quality table.
 - **Plots** shows only plots valid for the loaded tracking type. The top-bar **Interactive plots** toggle controls whether plot tabs are live canvases or faster static PNGs.
 - **Scripts** runs experiment scripts from the loaded replicate's `scripts:` block.
 - **AI** creates an optional AI Summary for the loaded experiment, when an AI provider key is available.
@@ -68,3 +68,5 @@ There is no Tools tile: folder-opening is the file manager's job, and matplotlib
 - **Errors** collects warnings and failures, with an unseen count when issues arrive in the background.
 - Plots and surfaced text/CSV/PNG artifacts open as additional closable tabs.
 - **Clear plots** closes artifact and plot tabs but keeps Output and Errors.
+
+Artifacts surfaced here are the same files written under `analysis/`, `qc/`, and `figures/` - see the **Outputs** help topic for the full list.
