@@ -2,7 +2,7 @@
 
 A **Batch** is a folder with Projects anywhere beneath it. Nothing marks it —
 choose such a folder with the Batch panel's own **Choose batch folder…**
-button (or Project tile → **Load…**) and the **Batch** tile fills with every
+button (or Project tile → **Open Project**) and the **Batch** tile fills with every
 Project inside it auto-loaded into the table; select a single Project and the
 Batch tile reads "selection is a project — load its parent to batch" instead.
 The Batch and Project tiles are never dimmed: they are the way in, always

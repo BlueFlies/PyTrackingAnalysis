@@ -16,20 +16,29 @@ The selection names a Batch or a Project. Selecting a folder with Projects anywh
 
 ## Project panel
 
-The Project panel contains two cards.
+The Project panel contains three cards, in the order the work happens: the Project, its experiments, then the analysis over them.
 
-**Create/Load** chooses the folder, reloads it, creates standalone experiments, and edits `project.yaml`. The config button reads **Edit config...** when the selected folder is already a Project and **Create config...** when it is not. If the selected folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
+**Create/Load** is the Project itself: one button per way in, then what is loaded — name, experiment type, replicate count, design factors and any load warnings.
 
-**Analysis** is the main Project workspace. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
+- **Open Project** - the directory and its `project.yaml` both exist. Picking the one already open re-reads it from disk.
+- **Create project...** - the Project does not exist yet. Choose where it goes and name it; the directory is created and `project.yaml` written into it.
+- **Initialize existing directory...** - the directory exists but has no `project.yaml`. Choose it and it becomes the Project, keeping its own name; any experiment subdirectories already in it become the replicates, and the shared design is inferred from the first one that has a config.
+- **Edit config...** - reopen the Project editor on the selected directory's `project.yaml`. It reads **Create config...** when the selected folder is not a Project yet; if that folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
 
-Project actions:
+**Experiments** is the replicates themselves. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
 
+- **Create experiment...** - the replicate does not exist at all. Give it a name; the directory, its `data/` folder and a `tracking_config.yaml` scaffolded from `project.yaml` are created for you. Nothing else is asked, because everything else is the Project's.
 - **Experiment configs...** - create or edit each replicate's `tracking_config.yaml`.
-- **Add experiment...** - create a new replicate directory and config from the Project design.
+- **Initialize existing directory...** - the directory is already in the Project but has no `tracking_config.yaml`. Pick it from the list of config-less folders: a recording still loose at its root is filed into `data/` and every other loose file into `extra_files/`, the config is scaffolded from the project design, and the Config Editor opens on it so you can set the rig and assign region treatments.
+
+**Analysis** is what you do with the Project once its experiments exist:
+
 - **Create report** / **Update report** - analyze every replicate, rebuild Combined Analysis, and write the Project PDF report. The label changes depending on whether `<project>_report.pdf` already exists.
 - **Plot editor...** - curate pooled publication figures after a report refresh has created combined faceted data.
 - **AI narrative...** - create an optional Project-level AI narrative from the current Combined Analysis and rebuild the PDF to embed it.
-- **Script** picker - run the built-in **Report pipeline** or **Standard pipeline**, or saved Project Scripts.
+- **View reports** - open the pooled Project report alongside the per-replicate ones.
+- **Removed regions...** - declare the tracking regions the experimenter removed, so their flies leave the figures, statistics and summary CSVs.
+- **Script** picker, at the bottom - run the built-in **Report pipeline** or **Standard pipeline**, or saved Project Scripts.
 
 For a custom sequence, use **Edit scripts...** and make a Project Script. Scripts can run lower-level steps such as replicate analysis, Combined Analysis, publication figure rendering, report creation, AI narrative, or a named Experiment Script in every replicate.
 

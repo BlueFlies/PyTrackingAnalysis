@@ -163,6 +163,63 @@ def test_valence_requires_tracking_regions():
     assert any("tracking_regions" in p for p in t.validate(cfg))
 
 
+def test_valence_colosseum_runs_at_eighteen_or_twenty_four_wells():
+    """The Colosseum is run in two plate sizes. Both validate; a config built
+    from scratch gets the 24-well plate."""
+    from pytrackinganalysis import config_validation
+
+    t = et.get_experiment_type("Valence")
+    assert t.region_counts_for_rig("colosseum") == (24, 18)
+    assert t.region_counts_for_rig("colloseum") == (24, 18)   # spelling alias
+    # From scratch: 24.
+    assert t.regions_for_rig("colosseum") == [f"T_{i}" for i in range(24)]
+    assert len(t.build_config(rig="colosseum")["tracking_regions"]) == 24
+
+    for count in (18, 24):
+        cfg = t.build_config(rig="colosseum")
+        cfg["tracking_regions"] = {
+            f"T_{i}": {"experimental_factors": "",
+                       "x_location_multiplier": 1,
+                       "y_location_multiplier": 1}
+            for i in range(count)}
+        assert config_validation.validate_config(cfg) == [], count
+
+    # A size the rig is not run in is still refused, and says both.
+    cfg = t.build_config(rig="colosseum")
+    cfg["tracking_regions"] = {
+        f"T_{i}": {"experimental_factors": "",
+                   "x_location_multiplier": 1,
+                   "y_location_multiplier": 1}
+        for i in range(20)}
+    problems = config_validation.validate_config(cfg)
+    assert problems and "18 or 24" in problems[0]
+
+    # T_0..T_17 exactly — a partial plate of the right SIZE but wrong names
+    # is not an 18-well Colosseum.
+    cfg["tracking_regions"] = {
+        f"T_{i}": {"experimental_factors": "",
+                   "x_location_multiplier": 1,
+                   "y_location_multiplier": 1}
+        for i in range(6, 24)}
+    assert config_validation.validate_config(cfg) != []
+
+
+def test_arena_max_still_takes_one_plate_size_only():
+    """One count stays one count — the message must not grow an 'or'."""
+    from pytrackinganalysis import config_validation
+
+    t = et.get_experiment_type("Valence")
+    assert t.region_counts_for_rig("arena_max") == (36,)
+    cfg = t.build_config(rig="arena_max")
+    cfg["tracking_regions"] = {
+        f"T_{i}": {"experimental_factors": "",
+                   "x_location_multiplier": 1,
+                   "y_location_multiplier": 1}
+        for i in range(24)}
+    problems = config_validation.validate_config(cfg)
+    assert problems and "exactly 36 tracking regions" in problems[0]
+
+
 def test_valence_regions_for_rig():
     t = et.get_experiment_type("Valence")
     assert t.regions_for_rig("arena_max") == [f"T_{i}" for i in range(36)]

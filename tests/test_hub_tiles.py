@@ -386,7 +386,8 @@ def test_cards_live_inside_panels_and_stay_functional(hub):
     # The full existing cards moved into panels — handlers and widgets intact.
     project_panel = hub._panels["project"]
     assert hub._cards["project"] in project_panel.findChildren(type(hub._cards["project"]))
-    assert hub._cards["projectview"] in project_panel.findChildren(type(hub._cards["projectview"]))
+    for key in ("experiments", "projectview"):
+        assert hub._cards[key] in project_panel.findChildren(type(hub._cards[key]))
     # The replicates table is reachable exactly as before.
     assert hub._exp_table.parent() is not None
 
@@ -441,17 +442,51 @@ def test_project_actions_use_three_columns(hub):
     grid = hub._project_actions_grid
     assert grid.columnCount() == 3
     # Focused actions over three columns — no button spans the whole card.
-    assert grid.count() == 7
+    assert grid.count() == 5
     # "View reports" sits directly under the Create/Update report button.
     report_at = grid.getItemPosition(grid.indexOf(hub._btn_project_report))
     view_at = grid.getItemPosition(grid.indexOf(hub._btn_view_reports))
     assert view_at[1] == report_at[1] and view_at[0] == report_at[0] + 1
     labels = [grid.itemAt(i).widget().text() for i in range(grid.count())]
     assert labels == [
-        "Experiment configs…", "Add experiment…", "Create report",
-        "Plot editor…", "AI narrative…", "View reports",
-        "Removed regions…",
+        "Create report", "Plot editor…", "AI narrative…",
+        "View reports", "Removed regions…",
     ]
+
+
+def test_experiments_card_owns_the_experiment_actions(hub):
+    """Section 2 holds the replicates table and every action that makes or
+    configures an experiment; section 3 holds none of them."""
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    grid = hub._experiments_actions_grid
+    assert grid.columnCount() == 3
+    labels = [grid.itemAt(i).widget().text() for i in range(grid.count())]
+    assert labels == [
+        "Create experiment…", "Initialize existing directory…",
+        "Experiment configs…",
+    ]
+    # The table lives here, not on the Analysis card.
+    assert hub._exp_table in hub._cards["experiments"].findChildren(
+        type(hub._exp_table))
+    analysis_labels = [b.text() for b in
+                       hub._cards["projectview"].findChildren(ActionButton)]
+    assert not any("experiment" in text.lower() for text in analysis_labels)
+
+
+def test_experiment_actions_wait_for_a_project(hub, qapp, tmp_path):  # noqa: F811
+    """Every replicate action inherits the design from project.yaml, so none
+    of them is offered until there is a Project to inherit from."""
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    buttons = {b.text(): b for b in
+               hub._cards["experiments"].findChildren(ActionButton)}
+    assert not any(b.isEnabled() for b in buttons.values())
+
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    assert all(b.isEnabled() for b in buttons.values())
 
 
 def test_project_report_button_labels_create_or_update(hub, qapp, tmp_path):  # noqa: F811
@@ -794,14 +829,14 @@ def test_one_load_action_and_no_reload(hub, qapp, tmp_path, monkeypatch):  # noq
 
     buttons = {b.text(): b for b in
                hub._cards["project"].findChildren(QPushButton)}
-    assert "Load…" in buttons
+    assert "Open Project" in buttons
     assert not [t for t in buttons if "Reload" in t or "Browse" in t]
     assert not hasattr(hub, "_reload_project")
 
     _make_project(tmp_path)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory",
                         staticmethod(lambda *a, **k: str(tmp_path)))
-    buttons["Load…"].click()
+    buttons["Open Project"].click()
     qapp.processEvents()
     assert hub._project_dir == tmp_path
     assert hub._exp_table.rowCount() == 2      # the project was read
@@ -812,15 +847,217 @@ def test_one_load_action_and_no_reload(hub, qapp, tmp_path, monkeypatch):  # noq
     (tmp_path / "Rep3" / "tracking_config.yaml").write_text(
         (tmp_path / "Rep1" / "tracking_config.yaml").read_text(),
         encoding="utf-8")
-    buttons["Load…"].click()
+    buttons["Open Project"].click()
     qapp.processEvents()
     assert hub._exp_table.rowCount() == 3
 
 
+def test_create_load_offers_the_three_ways_into_a_project(hub):
+    """One button per scenario: the Project exists, it does not exist yet, or
+    its directory does but its project.yaml does not — plus the editor."""
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    grid = hub._create_load_grid
+    assert grid.columnCount() == 2
+    labels = [grid.itemAt(i).widget().text() for i in range(grid.count())]
+    assert labels == [
+        "Open Project", "Create project…",
+        "Initialize existing directory…", "Edit config…",
+    ]
+    # Nothing else creeps back into section 1.
+    card_labels = {b.text() for b in
+                   hub._cards["project"].findChildren(ActionButton)}
+    assert card_labels == set(labels)
+
+
+def test_initialize_existing_directory_writes_the_project_in_place(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """Scenario 3: the directory (and its experiments) already exist, so the
+    directory is kept, named after itself, and gets a project.yaml."""
+    from PyQt6.QtWidgets import QDialog
+
+    from pytrackinganalysis import project as prj
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    # An existing directory holding one experiment, but no project.yaml.
+    _make_project(tmp_path)
+    (tmp_path / prj.PROJECT_FILENAME).unlink()
+    existing = tmp_path
+    assert not prj.is_project_dir(existing)
+
+    seen = {}
+
+    def _fake_exec(dialog):
+        seen["initialize"] = dialog._initialize
+        seen["title"] = dialog.windowTitle()
+        dialog.dir_edit.setText(str(existing))
+        seen["name"] = dialog.name_edit.text()
+        seen["read_only"] = dialog.name_edit.isReadOnly()
+        dialog._save()
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(hub_mod.ProjectInfoDialog, "exec", _fake_exec)
+    hub._initialize_existing_directory()
+    qapp.processEvents()
+
+    assert seen["initialize"] is True
+    assert seen["title"] == "Initialize existing directory"
+    # The directory names the Project, and the field says so without letting
+    # it be edited.
+    assert seen["name"] == existing.name
+    assert seen["read_only"] is True
+    assert prj.is_project_dir(existing)
+    assert prj.Project(str(existing)).name == existing.name
+    # The new Project is the selection, with its replicates already listed.
+    assert hub._project_dir == existing
+    assert hub._exp_table.rowCount() == 2
+
+
+def test_initialize_refuses_a_directory_that_is_already_a_project(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """Each way in stays disjoint: an existing project.yaml is Open Project's
+    job, and a directory that is not there yet is Create project's."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    _make_project(tmp_path)
+    said = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: said.append(a[2])))
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: said.append(a[2])))
+
+    dialog = hub_mod.ProjectInfoDialog(hub, initialize_existing=True)
+    assert dialog._resolve_existing_directory(str(tmp_path)) is None
+    assert "already" in said[-1]
+
+    assert dialog._resolve_existing_directory(str(tmp_path / "nope")) is None
+    assert "not a directory" in said[-1]
+
+    # A plain directory with no project.yaml is exactly what it takes.
+    (tmp_path / "Plain").mkdir()
+    assert dialog._resolve_existing_directory(str(tmp_path / "Plain")) == \
+        str(tmp_path / "Plain")
+    dialog.close()
+
+
+def test_initialize_moves_up_from_an_experiment_directory(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """A project.yaml beside a tracking_config.yaml makes a Project with zero
+    replicates, so the offer is to initialize the parent instead."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    from pytrackinganalysis import project as prj
+
+    _make_project(tmp_path)
+    (tmp_path / prj.PROJECT_FILENAME).unlink()
+    replicate = tmp_path / "Rep1"
+
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
+    dialog = hub_mod.ProjectInfoDialog(hub, initialize_existing=True)
+    resolved = dialog._resolve_existing_directory(str(replicate))
+    assert resolved == str(tmp_path)
+    # The name follows the retarget, so the Project is not named "Rep1".
+    assert dialog.name_edit.text() == tmp_path.name
+    dialog.close()
+
+
+def test_initialize_experiment_files_scaffolds_and_opens_the_editor(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """Case 3 for a replicate: the directory is there with its recording
+    loose in it, so filing runs first, then the config, then the editor."""
+    from PyQt6.QtWidgets import QInputDialog
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    loose = tmp_path / "Rep2"
+    loose.mkdir()
+    (loose / "Rec.xlsx").write_bytes(b"")
+    (loose / "Rec_Data_1.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (loose / "notes.txt").write_text("bench notes", encoding="utf-8")
+
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    picked = {}
+
+    def _fake_item(_parent, _title, _label, items, *a, **k):
+        picked["items"] = list(items)
+        return items[0], True
+
+    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(_fake_item))
+    launched = []
+    monkeypatch.setattr(type(hub), "_launch_subapp",
+                        lambda self, *a, **k: launched.append((a, k)))
+    hub._project_initialize_experiment()
+    qapp.processEvents()
+
+    # Only the config-less directory was offered.
+    assert [text.split("  —  ")[0] for text in picked["items"]] == ["Rep2"]
+    # The recording was filed, the stray file parked, and the config written.
+    assert (loose / "data" / "Rec.xlsx").is_file()
+    assert (loose / "data" / "Rec_Data_1.csv").is_file()
+    assert (loose / "extra_files" / "notes.txt").is_file()
+    assert (loose / "tracking_config.yaml").is_file()
+    assert not (loose / "Rec.xlsx").exists()
+    # And the editor opened on it, which is the point of the button.
+    assert launched and launched[-1][0][0] == "config"
+    assert launched[-1][1]["directory"] == str(loose)
+    # The Project now sees it as a replicate.
+    names = [hub._exp_table.item(r, 0).text()
+             for r in range(hub._exp_table.rowCount())]
+    assert names == ["Rep1", "Rep2"]
+
+
+def test_initialize_experiment_needs_a_directory_without_a_config(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """With every folder already configured there is nothing to initialize —
+    that case is Create experiment's."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    warned = []
+    monkeypatch.setattr(type(hub), "_warn",
+                        lambda self, message: warned.append(message))
+    hub._project_initialize_experiment()
+    assert "Create experiment" in warned[-1]
+
+
+def test_initialize_experiment_stops_when_filing_is_refused(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """A workbook open in Excel blocks the move; writing the config anyway
+    would leave a replicate whose recording never gets filed."""
+    from PyQt6.QtWidgets import QInputDialog
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    blocked = tmp_path / "Rep2"
+    blocked.mkdir()
+    (blocked / "Rec.xlsx").write_bytes(b"")
+    (blocked / "~$Rec.xlsx").write_bytes(b"")     # Excel's lock file
+
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    monkeypatch.setattr(
+        QInputDialog, "getItem",
+        staticmethod(lambda _p, _t, _l, items, *a, **k: (items[0], True)))
+    warned = []
+    monkeypatch.setattr(type(hub), "_warn",
+                        lambda self, message: warned.append(message))
+    hub._project_initialize_experiment()
+
+    assert "open" in warned[-1]
+    assert not (blocked / "tracking_config.yaml").exists()
+    assert (blocked / "Rec.xlsx").is_file()
+
+
 def test_project_panel_headers_are_distinct(hub):
     """The panel is already titled Project — its cards name their own jobs."""
-    titles = [hub._cards[key]._title_lbl.text() for key in ("project", "projectview")]
-    assert titles == ["Create/Load", "Analysis"]
+    titles = [hub._cards[key]._title_lbl.text()
+              for key in ("project", "experiments", "projectview")]
+    assert titles == ["Create/Load", "Experiments", "Analysis"]
     assert hub._cards["projectview"]._subtitle_lbl is None
 
 
@@ -828,11 +1065,11 @@ def test_project_panel_uses_one_project_theme(hub):
     from pytrackinganalysis.ui import Category
     from pytrackinganalysis.ui.widgets import ActionButton
 
-    assert hub._cards["project"]._category == Category.NEUTRAL
-    assert hub._cards["projectview"]._category == Category.NEUTRAL
+    for key in ("project", "experiments", "projectview"):
+        assert hub._cards[key]._category == Category.NEUTRAL
 
     buttons = []
-    for key in ("project", "projectview"):
+    for key in ("project", "experiments", "projectview"):
         buttons.extend(hub._cards[key].findChildren(ActionButton))
 
     assert buttons

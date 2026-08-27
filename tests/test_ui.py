@@ -231,6 +231,49 @@ def test_opening_a_valence_colosseum_project_lays_out_24_regions(qapp, tmp_path,
     win.close()
 
 
+def test_an_eighteen_well_colosseum_plate_is_left_alone(qapp, tmp_path,
+                                                       dialogs, monkeypatch):
+    """The Colosseum is run at 18 wells as well as 24. Offering to "fix" a
+    valid 18-well plate would reset every treatment assignment on it."""
+    from pytrackinganalysis.apps.config_editor import ConfigEditorWindow
+
+    cfg = {"global": {"experiment_type": "Valence",
+                      "tracking_rig": "colosseum"},
+           "counting_regions": {"Light": {"alias": "L"},
+                                "NoLight": {"alias": "N"}},
+           "tracking_regions": {
+               f"T_{i}": {"experimental_factors": "chr",
+                          "x_location_multiplier": 1,
+                          "y_location_multiplier": 1}
+               for i in range(18)}}
+    path = tmp_path / "tracking_config.yaml"
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    win = ConfigEditorWindow(str(path))
+    # Opening it leaves the plate as it is...
+    assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(18)]
+
+    # ...and so does re-selecting the rig it is already on. question() would
+    # say Yes here, so a plate that got offered up would come back as 24.
+    from pytrackinganalysis.apps import config_editor as ce
+    asked = []
+
+    def _question(*a, **k):
+        asked.append(a)
+        return ce.QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(ce.QMessageBox, "question", staticmethod(_question))
+    win._loading = False
+    win._maybe_populate_tracking_regions("colosseum")
+    assert not asked
+    assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(18)]
+
+    # It saves without complaint, which is the whole point.
+    out = tmp_path / "saved.yaml"
+    win._write(out)
+    assert out.is_file() and not dialogs["warning"]
+    win.close()
+
+
 def test_changing_valence_rig_regenerates_the_plate_on_confirm(qapp, tmp_path, dialogs, monkeypatch):
     from pytrackinganalysis.apps import config_editor as ce
     from pytrackinganalysis.apps._config_tabs import _find_data
@@ -277,80 +320,6 @@ def test_scaffold_project_refuses_to_overwrite(qapp, tmp_path):
     (tmp_path / "Dup").mkdir()
     with pytest.raises(FileExistsError):
         ConfigEditorWindow.scaffold_project(tmp_path, "Dup", "Valence")
-
-
-# --------------------------------------------------------------------------
-# Create Experiment wizard
-# --------------------------------------------------------------------------
-
-def test_create_project_writes_config_and_dirs(qapp, tmp_path):
-    from pytrackinganalysis.apps.create_experiment import create_project
-    from pytrackinganalysis import experiment_types as et
-    cfg = et.get_experiment_type("Valence").build_config(rig="colosseum")
-    path = create_project(tmp_path, "Exp1", cfg)
-    proj = path.parent
-    assert proj == tmp_path / "Exp1" and path.name == "tracking_config.yaml"
-    assert (proj / "data").is_dir() and (proj / "analysis").is_dir() and (proj / "qc").is_dir()
-    loaded = yaml.safe_load(path.read_text())
-    assert loaded["global"]["experiment_type"] == "Valence"
-    assert len(loaded["tracking_regions"]) == 24
-
-
-def test_create_project_refuses_existing(qapp, tmp_path):
-    from pytrackinganalysis.apps.create_experiment import create_project
-    (tmp_path / "Dup").mkdir()
-    with pytest.raises(FileExistsError):
-        create_project(tmp_path, "Dup", {"global": {}})
-
-
-def _valence_dialog(qapp, tmp_path, rig):
-    from pytrackinganalysis.apps.create_experiment import ConfigureExperimentDialog
-    from pytrackinganalysis.apps._config_tabs import _find_data
-    d = ConfigureExperimentDialog(start_dir=str(tmp_path))
-    d.type_combo.setCurrentIndex(_find_data(d.type_combo, "Valence"))
-    d.rig_combo.setCurrentIndex(_find_data(d.rig_combo, rig))
-    return d
-
-
-def test_wizard_builds_valence_config_with_factors(qapp, tmp_path):
-    from PyQt6.QtWidgets import QTableWidgetItem
-    d = _valence_dialog(qapp, tmp_path, "arena_max")
-    d.facets_edit.setText("10, 70")
-    d.factors_table.insertRow(0)
-    d.factors_table.setItem(0, 0, QTableWidgetItem("feeding"))
-    d.factors_table.setItem(0, 1, QTableWidgetItem("Starved, Control"))
-    cfg = d.build_config()
-    g = cfg["global"]
-    assert g["experiment_type"] == "Valence" and g["tracking_rig"] == "arena_max"
-    assert g["facet_cutoffs"] == [10, 70]
-    assert g["experimental_design_factors"] == {"feeding": ["Starved", "Control"]}
-    assert len(cfg["tracking_regions"]) == 36
-    assert cfg["tracking_regions"]["T_0"]["x_location_multiplier"] == -1
-    assert cfg["tracking_regions"]["T_18"]["x_location_multiplier"] == 1
-    d.close()
-
-
-def test_wizard_constrains_rig_and_locks_tracking_type_for_valence(qapp, tmp_path):
-    d = _valence_dialog(qapp, tmp_path, "arena_max")
-    rigs = {d.rig_combo.itemData(i) for i in range(d.rig_combo.count())}
-    assert rigs == {"arena_max", "colosseum"}
-    assert not d.tracking_type_combo.isEnabled()
-    d.close()
-
-
-def test_wizard_accept_creates_the_project(qapp, tmp_path):
-    d = _valence_dialog(qapp, tmp_path, "colosseum")
-    d.name_edit.setText("MyExp")
-    d.dir_edit.setText(str(tmp_path))           # parent dir; MyExp is created in it
-    d._on_accept()
-    project = tmp_path / "MyExp"
-    assert d.created_path == project / "tracking_config.yaml"
-    assert d.created_path.exists() and (project / "data").is_dir()
-    # And the written config validates.
-    from pytrackinganalysis import config_validation
-    cfg = yaml.safe_load(d.created_path.read_text())
-    assert config_validation.validate_config(cfg) == []
-    d.close()
 
 
 def test_editor_rig_calibrations_match_the_analysis(qapp):

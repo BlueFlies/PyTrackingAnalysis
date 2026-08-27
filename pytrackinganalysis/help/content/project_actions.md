@@ -16,7 +16,8 @@ Double-click a configured row to load that replicate and run QC. Double-click a 
 ## Setup actions
 
 - **Experiment configs...** opens the config manager for all immediate subdirectories. Create missing configs, create all missing configs, or open an existing replicate in the Config Editor.
-- **Add experiment...** creates a new replicate directory and scaffolds its config from `project.yaml`.
+- **Create experiment...** creates a new replicate directory and scaffolds its config from `project.yaml`.
+- **Initialize existing directory...** adopts a directory already in the Project that has no config: it files any loose recording into `data/`, scaffolds the config, and opens the Config Editor.
 
 ## Project pipeline
 

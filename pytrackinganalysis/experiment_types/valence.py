@@ -35,9 +35,11 @@ class ValenceExperimentType(ExperimentType):
     phase_labels = ("Acclimation", "Experiment", "Cooldown")
     required_counting_regions = ("Light", "NoLight")
     allow_calibration_override = False
-    # The plate is fixed by the rig: Arena Max has 36 wells (T_0..T_35),
-    # Colosseum has 24 (T_0..T_23).
-    region_counts = {"arena_max": 36, "colosseum": 24}
+    # The plate is fixed by the rig: Arena Max has 36 wells (T_0..T_35).
+    # The Colosseum is run at two sizes — 24 wells (T_0..T_23) and 18
+    # (T_0..T_17) — and both validate; 24 is first, so it is the plate a
+    # config built from scratch is laid out with.
+    region_counts = {"arena_max": 36, "colosseum": (24, 18)}
     # Low-Transition Exclusion (ADR-0003): flies with fewer than this many
     # transitions during the Primary Phase are excluded from every result.
     # yaml `min_transitions` overrides; 0 turns the exclusion off.
@@ -234,9 +236,11 @@ class ValenceExperimentType(ExperimentType):
                      **_) -> dict:
         """Full Valence config for the create wizard.
 
-        Lays out the rig's plate with the correct X multipliers (Arena Max flips
-        the first 18 wells; Colosseum is all +1), the Light/NoLight counting
-        regions, the chosen (or default) facets with their phase names
+        Lays out the rig's DEFAULT plate with the correct X multipliers (Arena
+        Max flips the first 18 wells; Colosseum is all +1, 24 wells — an
+        18-well Colosseum is equally valid but has to be chosen in the Config
+        Editor), the Light/NoLight counting regions, the chosen (or default)
+        facets with their phase names
         (Acclimation/Experiment/Cooldown by default), and any design factors.
         Region treatments are left blank for the user to assign.
         """

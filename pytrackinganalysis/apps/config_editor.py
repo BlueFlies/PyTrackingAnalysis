@@ -370,16 +370,26 @@ class ConfigEditorWindow(QMainWindow):
         if not expected:
             return
         have = self._tracking_tab.region_names()
-        if have == expected:
+        ## Not just the default plate: a rig run at more than one size (the
+        ## 18- and 24-well Colosseum) must not have a perfectly valid plate
+        ## offered up for replacement — accepting would reset every treatment
+        ## assignment on it.
+        if hasattr(t, "regions_match_rig"):
+            if t.regions_match_rig(rig, have) and have:
+                return
+        elif have == expected:
             return
         if have:
+            sizes = getattr(t, "region_counts_for_rig", lambda _r: ())(rig)
+            wanted = (f"{len(expected)}" if len(sizes) < 2 else
+                      " or ".join(str(n) for n in sorted(sizes)))
             resp = QMessageBox.question(
                 self,
                 f"{t.display_name} tracking regions",
-                f"{t.display_name} on this rig needs {len(expected)} tracking "
-                f"regions ({expected[0]}..{expected[-1]}).\n\n"
-                f"Replace the current {len(have)} region(s)? Treatment "
-                "assignments will be reset.",
+                f"{t.display_name} on this rig needs {wanted} tracking "
+                f"regions (T_0..T_n).\n\n"
+                f"Replace the current {len(have)} region(s) with "
+                f"{len(expected)}? Treatment assignments will be reset.",
             )
             if resp != QMessageBox.StandardButton.Yes:
                 return

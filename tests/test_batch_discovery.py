@@ -203,6 +203,29 @@ def test_a_projects_own_output_folders_are_not_replicates(tmp_path):
     assert names == ["Rep1"]
 
 
+def test_initializable_dirs_lists_every_folder_without_a_config(tmp_path):
+    """The candidates for "initialize this directory as a replicate" are a
+    wider set than experiments_in's: a folder nobody has filled yet is
+    precisely the one that needs initializing."""
+    project = make_project(tmp_path / "P")
+    unfiled(project / "Loose", config=False)      # recording at the root
+    (project / "Empty").mkdir()                   # nothing in it at all
+    (project / "NoConfig" / "data").mkdir(parents=True)
+    (project / "NoConfig" / "data" / "Rec.xlsx").write_bytes(b"x")
+    (project / "analysis").mkdir(exist_ok=True)   # an output folder
+
+    found = {item.name: item.status
+             for item in layout.initializable_dirs(project)}
+    # Rep1 has a config, so it is a replicate already; analysis/ is never one.
+    assert set(found) == {"Loose", "Empty", "NoConfig"}
+    assert found["Loose"] == layout.UNFILED
+    assert found["NoConfig"] == layout.NO_CONFIG
+    # An empty folder is not experiment-shaped, and is still offered.
+    assert found["Empty"] == layout.NOT_AN_EXPERIMENT
+    assert [item.name for item in layout.experiments_in(project)] != \
+        list(found)
+
+
 def test_a_workbook_the_loader_cannot_see_is_blocked_not_healthy(tmp_path):
     """Experiment globs '*.xlsx'. A classifier that says healthy where the
     loader says "No .xlsx file found" moves the failure into hour three of an

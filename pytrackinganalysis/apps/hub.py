@@ -104,6 +104,11 @@ _SAVED_RE = re.compile(r"^\s*Saved:\s+(\S.*?)\s*$")
 # The only config file ``Experiment.__init__`` ever opens — it takes a project
 # directory and joins this name onto it, with no parameter to override it.
 _CANONICAL_CONFIG = "tracking_config.yaml"
+## The replicates table is sized to its rows (``_fit_exp_table_height``):
+## enough for one row when the Project is empty, and never so tall that the
+## Analysis section below it falls off the panel.
+_EXP_TABLE_MIN_HEIGHT = 70
+_EXP_TABLE_MAX_HEIGHT = 170
 
 
 # Per-tracking-type plot buttons for the Plots card. Each entry is
@@ -268,6 +273,7 @@ class HubWindow(QMainWindow):
         self._cards_lay = QVBoxLayout(cards_host)
         self._build_batch_card()
         self._build_project_card()
+        self._build_experiments_card()
         self._build_project_view_card()
         self._build_analyze_card()
         self._build_plots_card()
@@ -278,7 +284,9 @@ class HubWindow(QMainWindow):
         self._panels: dict[str, TilePanel] = {}
         panel_map = {
             "batch": (620, ["batch"]),
-            "project": (640, ["project", "projectview"]),
+            ## Three sections, top to bottom: project identity, the
+            ## replicates, then what to do with them (ADR-0005).
+            "project": (640, ["project", "experiments", "projectview"]),
             "analyze": (460, ["analyze"]),
             "plots": (500, ["plots"]),
             "scripts": (460, ["scripts"]),
@@ -364,11 +372,12 @@ class HubWindow(QMainWindow):
         self._project_edit.setReadOnly(True)
         # One action, not two: reloading a Project was picking the same
         # directory again, so the picker is the reload.
-        load_btn = ActionButton("Load…", Category.NEUTRAL, icon_name="browse")
+        load_btn = ActionButton("Open Project", Category.NEUTRAL,
+                                icon_name="browse")
         load_btn.setToolTip(
-            "Choose the Project directory to work in. Picking the one already "
-            "open re-reads it from disk — replicates added or analyzed outside "
-            "the Hub show up.")
+            "Open a directory that already holds a project.yaml. Picking the "
+            "one already open re-reads it from disk — replicates added or "
+            "analyzed outside the Hub show up.")
         load_btn.clicked.connect(self._pick_project_dir)
         # Path on its own line so long paths stay readable; buttons below.
         form.addRow("Project dir:", self._project_edit)
@@ -386,28 +395,39 @@ class HubWindow(QMainWindow):
         new_project_btn = ActionButton("Create project…", Category.NEUTRAL,
                                        icon_name="project")
         new_project_btn.setToolTip(
-            "Create (or edit) a Project of replicate experiments somewhere "
-            "else: choose the directory and fill in the project.yaml "
-            "information."
+            "Make a Project that does not exist yet: choose where it goes, "
+            "name it, and fill in the project.yaml information. The directory "
+            "is created for you."
         )
         new_project_btn.clicked.connect(self._new_project)
-        create_exp_btn = ActionButton("Create experiment…", Category.NEUTRAL,
-                                      icon_name="new")
-        create_exp_btn.setToolTip(
-            "Create a standalone experiment directory from an Experiment Type."
+        init_btn = ActionButton("Initialize existing directory…",
+                                Category.NEUTRAL, icon_name="project")
+        init_btn.setToolTip(
+            "Turn a directory you already have into a Project: it keeps its "
+            "own name, any experiment subdirectories already in it become the "
+            "replicates, and project.yaml is written there."
         )
-        create_exp_btn.clicked.connect(self._create_experiment)
-        ## One three-column grid, matching the Analysis card: the panel is wide
-        ## for the replicates table, and ragged half-rows read as accidental.
+        init_btn.clicked.connect(self._initialize_existing_directory)
+        ## Two columns, four buttons, no ragged row: the three ways in (the
+        ## Project exists / does not exist / the directory does but the
+        ## project.yaml does not), then the editor for the one that is open.
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        for i, btn in enumerate((load_btn, self._btn_edit_cfg,
-                                 new_project_btn, create_exp_btn)):
-            grid.addWidget(btn, i // 3, i % 3)
-        for col in range(3):
+        for i, btn in enumerate((load_btn, new_project_btn,
+                                 init_btn, self._btn_edit_cfg)):
+            grid.addWidget(btn, i // 2, i % 2)
+        for col in range(2):
             grid.setColumnStretch(col, 1)
         card.add_body(grid)
+        self._create_load_grid = grid
+
+        ## What is loaded, described: name, type, replicate count, design
+        ## factors and any load warnings. Project info, so it sits with the
+        ## project it describes rather than over the replicates table.
+        self._projectview_summary = QLabel("")
+        self._projectview_summary.setWordWrap(True)
+        card.add_body(self._projectview_summary)
 
         self._cards["project"] = card
         self._cards_lay.addWidget(card)
@@ -604,22 +624,24 @@ class HubWindow(QMainWindow):
 
         AiSummaryDialog(self).exec()
 
-    # ---------------- Project view (a directory of replicates) ----------------
+    # ---------------- Experiments (the replicates of a Project) --------------
 
-    def _build_project_view_card(self) -> None:
-        """The Project view (ADR-0005): shown when the selected directory is a
-        Project — per-replicate status plus the project-level actions."""
+    def _build_experiments_card(self) -> None:
+        """Section 2 of the Project tile: the replicates themselves — the
+        status table plus the actions that create and configure experiments.
+
+        Every action here inherits the shared design from project.yaml, so
+        all three wait for a Project rather than offering a replicate with
+        nothing to conform to (see ``_refresh_project_view``)."""
         card = Card(
-            "Analysis",
+            "Experiments",
             category=Category.NEUTRAL,
             icon_name="project",
         )
         card.add_title_widget(
-            HelpButton("project_actions", tooltip="Project actions and combined analysis")
+            HelpButton("project_structure",
+                       tooltip="Experiment directories and their configs")
         )
-        self._projectview_summary = QLabel("")
-        self._projectview_summary.setWordWrap(True)
-        card.add_body(self._projectview_summary)
 
         self._exp_table = QTableWidget(0, 6)
         self._exp_table.setHorizontalHeaderLabels(
@@ -635,7 +657,7 @@ class HubWindow(QMainWindow):
             QTableWidget.EditTrigger.NoEditTriggers)
         self._exp_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows)
-        self._exp_table.setMaximumHeight(170)
+        self._exp_table.setMaximumHeight(_EXP_TABLE_MAX_HEIGHT)
         self._exp_table.itemDoubleClicked.connect(self._open_selected_replicate)
         card.add_body(self._exp_table)
         hint = QLabel("Double-click a replicate to open it as the current "
@@ -643,6 +665,29 @@ class HubWindow(QMainWindow):
         hint.setStyleSheet("color: palette(mid); font-style: italic;")
         card.add_body(hint)
 
+        ## The same three cases as the Project above it, one level down: the
+        ## replicate exists (the table), it does not exist at all (Create),
+        ## or its directory does but its tracking_config.yaml does not
+        ## (Initialize).
+        create_exp_btn = ActionButton("Create experiment…", Category.NEUTRAL,
+                                      icon_name="new")
+        create_exp_btn.setToolTip(
+            "Create a replicate directory and scaffold its "
+            "tracking_config.yaml from the project design — everything but "
+            "the name is inherited from project.yaml, so the shared design "
+            "holds by construction.")
+        create_exp_btn.clicked.connect(self._create_experiment)
+        self._btn_create_experiment = create_exp_btn
+        init_exp_btn = ActionButton("Initialize existing directory…",
+                                    Category.NEUTRAL, icon_name="project")
+        init_exp_btn.setToolTip(
+            "Adopt a directory that is already in the Project but has no "
+            "tracking_config.yaml: any loose recording is filed into data/ "
+            "and every other loose file into extra_files/, the config is "
+            "scaffolded from the project design, and the Config Editor opens "
+            "on it.")
+        init_exp_btn.clicked.connect(self._project_initialize_experiment)
+        self._btn_init_experiment = init_exp_btn
         btn_configs = ActionButton("Experiment configs…", Category.NEUTRAL,
                                    icon_name="config")
         btn_configs.setToolTip(
@@ -650,12 +695,39 @@ class HubWindow(QMainWindow):
             "Project's shared design lives in project.yaml; the per-experiment "
             "configs live one level down, one per experiment directory.")
         btn_configs.clicked.connect(self._project_experiment_configs)
-        btn_add = ActionButton("Add experiment…", Category.NEUTRAL,
-                               icon_name="project")
-        btn_add.setToolTip(
-            "Create a replicate subdirectory whose config is scaffolded from "
-            "the project design — the shared design holds by construction.")
-        btn_add.clicked.connect(self._project_add_experiment)
+        self._btn_exp_configs = btn_configs
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for i, btn in enumerate((create_exp_btn, init_exp_btn, btn_configs)):
+            grid.addWidget(btn, i // 3, i % 3)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
+        card.add_body(grid)
+        self._experiments_actions_grid = grid
+
+        ## Nothing to configure or add to until a Project is loaded.
+        self._set_project_experiment_actions_enabled(False)
+
+        self._cards["experiments"] = card
+        self._cards_lay.addWidget(card)
+
+    # ---------------- Project view (a directory of replicates) ----------------
+
+    def _build_project_view_card(self) -> None:
+        """Section 3 of the Project tile: what you DO with a Project once its
+        experiments exist — reports, figures, the AI narrative, removals, and
+        the script runner at the bottom (ADR-0005)."""
+        card = Card(
+            "Analysis",
+            category=Category.NEUTRAL,
+            icon_name="project",
+        )
+        card.add_title_widget(
+            HelpButton("project_actions", tooltip="Project actions and combined analysis")
+        )
+
         btn_plots = ActionButton("Plot editor…", Category.NEUTRAL,
                                  icon_name="report")
         btn_plots.clicked.connect(
@@ -684,16 +756,14 @@ class HubWindow(QMainWindow):
         btn_removals.clicked.connect(self._project_removed_regions)
         self._btn_removals = btn_removals
 
-        ## Three equal columns: setup on the left, the full Project refresh in
-        ## the middle, and downstream review/AI actions after it.
+        ## Three equal columns, in the order the work happens: build the
+        ## report, shape its figures, write its narrative — then review what
+        ## came out and correct the flies that should not have counted.
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
-        ## Six across two rows of three. The order puts "View reports"
-        ## directly under the Create/Update report button it follows from.
-        for i, btn in enumerate((btn_configs, btn_add, btn_report,
-                                 btn_plots, btn_ai, btn_view_reports,
-                                 btn_removals)):
+        for i, btn in enumerate((btn_report, btn_plots, btn_ai,
+                                 btn_view_reports, btn_removals)):
             grid.addWidget(btn, i // 3, i % 3)
         for col in range(3):
             grid.setColumnStretch(col, 1)
@@ -735,9 +805,7 @@ class HubWindow(QMainWindow):
 
         card.setVisible(False)
         self._cards["projectview"] = card
-        ## Above the Load card: when a Project is open, its view is the main
-        ## working surface.
-        self._cards_lay.insertWidget(1, card)
+        self._cards_lay.addWidget(card)
 
     def _project_root(self):
         """The selected Project, or None when the selection is not one.
@@ -763,10 +831,41 @@ class HubWindow(QMainWindow):
             return prj.Project(str(root))
         except Exception as err:  # noqa: BLE001
             self._log_issue(f"Project failed to load: {err}")
+            ## The summary sits in the always-visible Create/Load card, so the
+            ## failure is readable even though the sections below stay down.
             self._projectview_summary.setText(
                 f"<b style='color:#dc2626'>Project failed to load:</b> {err}")
-            self._cards["projectview"].setVisible(True)
             return None
+
+    def _fit_exp_table_height(self) -> None:
+        """Size the replicates table to the rows it actually has.
+
+        A fixed height reserved room for rows a two-replicate Project does not
+        have, and that dead band is height the three sections of the panel
+        need. Capped, so a large Project scrolls inside the table rather than
+        pushing the Analysis section off the panel."""
+        table = self._exp_table
+        height = (table.horizontalHeader().height()
+                  + 2 * table.frameWidth())
+        for row in range(table.rowCount()):
+            height += table.rowHeight(row)
+        if table.rowCount() == 0:
+            ## Empty still reads as a table, not a stripe.
+            height += table.verticalHeader().defaultSectionSize()
+        table.setFixedHeight(
+            min(max(height, _EXP_TABLE_MIN_HEIGHT), _EXP_TABLE_MAX_HEIGHT))
+
+    def _set_project_experiment_actions_enabled(self, enabled: bool) -> None:
+        """Gate the Experiments card's actions on there being a Project.
+
+        The card itself stays visible — it is where the replicates are, and an
+        empty table with dimmed buttons says "load a Project" more plainly
+        than an absent section does."""
+        for name in ("_btn_create_experiment", "_btn_init_experiment",
+                     "_btn_exp_configs"):
+            btn = getattr(self, name, None)
+            if btn is not None:
+                btn.setEnabled(enabled)
 
     def _refresh_project_view(self) -> None:
         from .. import project as prj
@@ -780,10 +879,18 @@ class HubWindow(QMainWindow):
         root = self._project_root()
         if root is None:
             card.setVisible(False)
+            self._projectview_summary.setText("")
+            self._exp_table.setRowCount(0)
+            self._fit_exp_table_height()
+            self._set_project_experiment_actions_enabled(False)
             return
         project = self._current_project()
         if project is None:
+            self._exp_table.setRowCount(0)
+            self._fit_exp_table_height()
+            self._set_project_experiment_actions_enabled(False)
             return
+        self._set_project_experiment_actions_enabled(True)
         loaded = self._experiment_dir()
         current_name = (loaded.name
                         if loaded is not None and loaded.parent == root
@@ -840,6 +947,8 @@ class HubWindow(QMainWindow):
                 font.setItalic(True)
                 item.setFont(font)
                 self._exp_table.setItem(row, col, item)
+
+        self._fit_exp_table_height()
 
         # Script picker: the Project's OWN scripts first — every project.yaml
         # is created with a default one, so the first entry is the run the
@@ -983,8 +1092,8 @@ class HubWindow(QMainWindow):
         """Scaffold *name*'s tracking_config.yaml from the project design.
 
         Returns the written path, or None when it failed (reported to the
-        user). Shared by the table's double-click, Add experiment, and the
-        Experiment configs dialog.
+        user). Shared by the table's double-click, Create experiment,
+        Initialize existing directory, and the Experiment configs dialog.
         """
         project = self._current_project()
         if project is None:
@@ -1183,25 +1292,104 @@ class HubWindow(QMainWindow):
         self._refresh_project_view()
         self._refresh_tiles()
 
-    def _project_add_experiment(self) -> None:
+    def _create_experiment(self) -> None:
+        """The replicate does not exist at all: make its directory and
+        scaffold its config from the project design.
+
+        Everything the config needs — experiment type, factors, facets,
+        quality criteria, counting regions — is already settled in
+        project.yaml and inherited from it, so the only thing to ask for is
+        the name."""
         from .. import project as prj
 
         project = self._current_project()
         if project is None:
+            self._warn("Open a Project first — a replicate's design is "
+                       "inherited from its project.yaml.")
             return
         name, ok = QInputDialog.getText(
-            self, "Add experiment", "New replicate directory name:")
+            self, "Create experiment", "New experiment directory name:")
         name = (name or "").strip()
         if not ok or not name:
             return
         ## Anchor on the Project, not the selected directory: with a replicate
         ## open, the latter nested the new replicate inside it.
-        if prj.is_experiment_dir(project.experiment_dir(name)):
+        directory = Path(project.experiment_dir(name))
+        if prj.is_experiment_dir(directory):
             self._warn(f"'{name}' already exists and has a config.")
+            return
+        if directory.exists():
+            ## The other scenario, and it has its own button: initializing
+            ## files what is already in there instead of assuming an empty
+            ## directory.
+            self._warn(
+                f"'{name}' already exists.\n\nUse 'Initialize existing "
+                "directory…' to give the directory you already have a config.")
             return
         if self._create_replicate_config(name) is None:
             return
         self._refresh_project_view()
+        self._refresh_tiles()
+
+    def _project_initialize_experiment(self) -> None:
+        """The replicate's directory exists but its config does not: file
+        whatever is loose in it, scaffold the config, and open the editor.
+
+        Filing first, config second: the Config Editor's own view of the
+        experiment (and the QC that follows a load) reads ``data/``, so a
+        recording still sitting at the root would make the freshly configured
+        replicate look empty."""
+        from .. import layout as layout_mod
+
+        project = self._current_project()
+        if project is None:
+            self._warn("Open a Project first — a replicate's design is "
+                       "inherited from its project.yaml.")
+            return
+        candidates = layout_mod.initializable_dirs(project.project_directory)
+        if not candidates:
+            self._warn(
+                f"Every directory in '{project.name}' already has a "
+                f"{_CANONICAL_CONFIG}.\n\nUse 'Create experiment…' to make a "
+                "new replicate.")
+            return
+        labels = [f"{item.name}  —  {item.status or 'empty'}"
+                  for item in candidates]
+        choice, ok = QInputDialog.getItem(
+            self, "Initialize existing directory",
+            "Directory to make a replicate of "
+            f"'{project.name}':", labels, 0, False)
+        if not ok or not choice:
+            return
+        item = candidates[labels.index(choice)]
+
+        ## Re-classify rather than trusting the listing: the picker was built
+        ## before the user had a chance to change anything on disk.
+        state = layout_mod.classify(item.directory)
+        if state.status in (layout_mod.AMBIGUOUS, layout_mod.UNREADABLE):
+            self._warn(f"'{state.name}': {state.detail or state.status}\n\n"
+                       "This one has to be sorted out by hand.")
+            return
+        if state.status == layout_mod.UNFILED:
+            plan = layout_mod.file_recording(item.directory,
+                                             log=self._log.append_line)
+            if plan.refused:
+                ## A locked workbook or a symlink: stop before writing the
+                ## config, so a retry after the fix still does the whole job.
+                self._warn(f"Could not file '{state.name}': {plan.refused}")
+                return
+            self._log.append_line(f"[file] {state.name}: {plan.describe()}")
+            for skipped_name, why in plan.skipped:
+                self._log.append_line(
+                    f"[file] {state.name}: {skipped_name} skipped — {why}")
+
+        if self._create_replicate_config(item.name) is None:
+            return
+        ## The point of this button is the editor: a scaffolded config still
+        ## needs its rig and its region treatments before the replicate runs.
+        self._launch_subapp("config", directory=str(item.directory))
+        self._refresh_project_view()
+        self._refresh_tiles()
 
     def _project_experiment_configs(self) -> None:
         """Open the per-experiment config manager for the current Project."""
@@ -1275,6 +1463,27 @@ class HubWindow(QMainWindow):
         start = str(self._project_dir) if self._project_dir else os.getcwd()
         dialog = ProjectInfoDialog(self, start_dir=start)
         if dialog.exec() and dialog.saved_dir:
+            self._set_project_dir(dialog.saved_dir)
+
+    def _initialize_existing_directory(self) -> None:
+        """Promote a directory that already exists — often with experiment
+        subdirectories in it — into a Project, keeping its own name.
+
+        The third way in: Open Project wants a project.yaml already there,
+        Create project makes the directory too."""
+        from .. import project as prj
+
+        ## Prefilling a directory that is already a Project would only earn
+        ## the dialog's "that one is already a Project" refusal, so offer the
+        ## selection only when it is the kind of directory this button takes.
+        start = ""
+        if self._project_dir and not prj.is_project_dir(self._project_dir):
+            start = str(self._project_dir)
+        dialog = ProjectInfoDialog(self, start_dir=start,
+                                   initialize_existing=True)
+        if dialog.exec() and dialog.saved_dir:
+            self._log.append_line(
+                f"Initialized {Path(dialog.saved_dir) / prj.PROJECT_FILENAME}")
             self._set_project_dir(dialog.saved_dir)
 
     # ---------------- Tools card ----------------
@@ -2229,7 +2438,7 @@ class HubWindow(QMainWindow):
             tile.set_summary(["no project", "open or create one"])
             self._status_panel.set_rows([
                 ("Project", "no project loaded"),
-                ("Next", "Project tile → Load… or Create project…"),
+                ("Next", "Project tile → Open Project or Create…"),
             ])
 
         # Analyze tile.
@@ -2296,20 +2505,6 @@ class HubWindow(QMainWindow):
         chosen = QFileDialog.getExistingDirectory(self, "Choose project directory", start)
         if chosen:
             self._set_project_dir(chosen)
-
-    def _create_experiment(self) -> None:
-        """Open the Create Experiment wizard; on success, select the new project."""
-        from .create_experiment import ConfigureExperimentDialog
-
-        start = str(self._project_dir.parent) if self._project_dir else os.getcwd()
-        dialog = ConfigureExperimentDialog(self, start_dir=start)
-        if dialog.exec() and dialog.created_path is not None:
-            project = dialog.created_path.parent
-            self._set_project_dir(project)
-            self._log.append_line(
-                f"Created experiment at {project}. "
-                "Assign region treatments in the Config Editor, then add the "
-                "DTrack export to data/ before loading.")
 
     def _set_project_dir(self, path: str | Path) -> None:
         """Select *path* as the working Project.
@@ -3376,9 +3571,16 @@ class ProjectInfoDialog(QDialog):
     that will hold the replicate experiments, the project's display name, and
     free-text notes (rendered near the top of the Project Report)."""
 
-    def __init__(self, parent=None, start_dir: str | None = None):
+    def __init__(self, parent=None, start_dir: str | None = None, *,
+                 initialize_existing: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("Create project")
+        ## Two of the three ways into a Project share this dialog: creating
+        ## the directory outright, and initializing one that is already on
+        ## disk. The design half is identical; only the directory and the
+        ## name differ, so the mode is a flag, not a subclass.
+        self._initialize = bool(initialize_existing)
+        self.setWindowTitle("Initialize existing directory"
+                            if self._initialize else "Create project")
         self.setMinimumWidth(560)
         self.saved_dir: str | None = None
 
@@ -3388,6 +3590,11 @@ class ProjectInfoDialog(QDialog):
         outer = QVBoxLayout(self)
         intro_row = QHBoxLayout()
         intro = QLabel(
+            "Turn a directory you already have into a Project: it keeps its "
+            "own name, its subdirectories become the replicates, and the "
+            "design below is inferred from the first one that has a config. "
+            "This writes project.yaml into it."
+            if self._initialize else
             "A Project is a directory whose subdirectories are replicate "
             "experiments of one design. This writes its project.yaml — "
             "choosing a directory that already is a Project edits it instead."
@@ -3414,6 +3621,13 @@ class ProjectInfoDialog(QDialog):
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("defaults to the directory name")
+        if self._initialize:
+            ## The directory IS the Project, so it names it — shown rather
+            ## than hidden so the user can see what it will be called.
+            self.name_edit.setReadOnly(True)
+            self.name_edit.setToolTip(
+                "The chosen directory's own name — initializing in place "
+                "does not rename it.")
         form.addRow("Project name:", self.name_edit)
 
         self.notes_edit = QPlainTextEdit()
@@ -3496,7 +3710,9 @@ class ProjectInfoDialog(QDialog):
 
     def _browse(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
-            self, "Choose (or create) the Project directory",
+            self,
+            "Choose the existing directory to initialize"
+            if self._initialize else "Choose (or create) the Project directory",
             self.dir_edit.text() or os.getcwd())
         if chosen:
             self.dir_edit.setText(chosen)
@@ -3505,6 +3721,18 @@ class ProjectInfoDialog(QDialog):
         """When the directory already is a Project, edit it: prefill name and
         notes from its project.yaml and say so in the title."""
         directory = self.dir_edit.text().strip()
+        if self._initialize:
+            ## Name follows the directory, always. The design is still worth
+            ## inferring: an initialized directory usually already holds the
+            ## experiments the Project is being wrapped around.
+            self.name_edit.setText(
+                os.path.basename(os.path.normpath(directory))
+                if directory else "")
+            if directory and os.path.isdir(directory):
+                inferred = self._design_from_experiments(directory)
+                if inferred:
+                    self._load_design(inferred)
+            return
         if directory and self._prj.is_project_dir(directory):
             import yaml as _yaml
             try:
@@ -3680,12 +3908,68 @@ class ProjectInfoDialog(QDialog):
             design["counting_regions"] = counting
         return design
 
+    def _resolve_existing_directory(self, directory: str) -> str | None:
+        """The directory to initialize, or None after explaining why not.
+
+        The three ways into a Project stay disjoint: this one is for a
+        directory that exists and has no project.yaml. A missing directory is
+        Create project's job; one that already has a project.yaml is Open
+        Project's."""
+        path = os.path.abspath(os.path.expanduser(directory))
+        name = os.path.basename(os.path.normpath(path))
+        if not os.path.isdir(path):
+            QMessageBox.warning(
+                self, self.windowTitle(),
+                f"'{directory}' is not a directory on disk.\n\n"
+                "Initializing works on a directory you already have; use "
+                "Create project to make a new one.")
+            return None
+        if self._prj.is_project_dir(path):
+            QMessageBox.information(
+                self, self.windowTitle(),
+                f"'{name}' already has a {self._prj.PROJECT_FILENAME} — it is "
+                "a Project already.\n\nUse Open Project to work in it, or "
+                "Edit config… to change its design.")
+            return None
+        ## A project.yaml written beside a tracking_config.yaml makes a
+        ## Project whose only experiment is its own root — zero replicates and
+        ## nothing to load. The Project belongs on the parent.
+        if self._prj.is_experiment_dir(path):
+            parent = os.path.dirname(os.path.normpath(path))
+            resp = QMessageBox.question(
+                self, self.windowTitle(),
+                f"'{name}' is an experiment, not a Project.\n\n"
+                f"Initialize '{os.path.basename(parent)}' instead, so "
+                f"'{name}' becomes one of its replicates?")
+            if resp != QMessageBox.StandardButton.Yes:
+                return None
+            if self._prj.is_project_dir(parent):
+                QMessageBox.information(
+                    self, self.windowTitle(),
+                    f"'{os.path.basename(parent)}' is already a Project — "
+                    "use Open Project to work in it.")
+                return None
+            ## Show the retarget without re-running the prefill: the design
+            ## in the widgets may already have been edited by hand.
+            self.dir_edit.blockSignals(True)
+            self.dir_edit.setText(parent)
+            self.dir_edit.blockSignals(False)
+            self.name_edit.setText(os.path.basename(parent))
+            path = parent
+        return path
+
     def _save(self) -> None:
         directory = self.dir_edit.text().strip()
         if not directory:
-            QMessageBox.warning(self, self.windowTitle(),
-                                "Choose the Project directory.")
+            QMessageBox.warning(
+                self, self.windowTitle(),
+                "Choose the directory to initialize."
+                if self._initialize else "Choose the Project directory.")
             return
+        if self._initialize:
+            directory = self._resolve_existing_directory(directory)
+            if directory is None:
+                return
         design = self._build_design()
         if design is None:
             return
@@ -3693,7 +3977,11 @@ class ProjectInfoDialog(QDialog):
             os.makedirs(directory, exist_ok=True)
             self._prj.create_project_file(
                 directory,
-                self.name_edit.text().strip() or None,
+                ## In place: the directory names the Project, even when the
+                ## confirmation above moved the target up to the parent.
+                os.path.basename(os.path.normpath(directory))
+                if self._initialize
+                else self.name_edit.text().strip() or None,
                 self.notes_edit.toPlainText().strip(),
                 design=design)
         except Exception as err:  # noqa: BLE001

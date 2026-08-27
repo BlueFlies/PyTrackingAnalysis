@@ -44,8 +44,11 @@ class ExperimentType:
     required_counting_regions: tuple[str, ...] | None = None
     #: Whether the user may override fps / mm_per_pixel (False = rig preset only).
     allow_calibration_override: bool = True
-    #: For a type whose plate is fixed by the rig, the number of tracking regions
-    #: per canonical rig name, e.g. ``{"arena_max": 36}``. Empty = no constraint.
+    #: For a type whose plate is fixed by the rig, the tracking-region count
+    #: per canonical rig name, e.g. ``{"arena_max": 36}``. A rig that is run
+    #: in more than one plate size gives a tuple instead, DEFAULT FIRST — the
+    #: first entry is what a config built from scratch is laid out with, and
+    #: every entry validates. Empty = no constraint.
     region_counts: dict = {}
     #: Default for the Low-Transition Exclusion (see CONTEXT.md / ADR-0003):
     #: a fly is kept only if its Transitions count during the Primary Phase is
@@ -126,13 +129,41 @@ class ExperimentType:
         ``None`` when the type has no such flag. Base/Custom: none."""
         return None
 
+    def region_counts_for_rig(self, rig) -> tuple[int, ...]:
+        """Every tracking-region count *rig* may be run with, default first.
+
+        Empty when the type does not fix the plate for this rig."""
+        raw = self.region_counts.get(config_validation.normalize_rig(rig))
+        if not raw:
+            return ()
+        counts = (raw,) if isinstance(raw, int) else tuple(raw)
+        return tuple(n for n in counts if n)
+
     def regions_for_rig(self, rig) -> list[str] | None:
-        """Expected tracking-region names for *rig*, or ``None`` when the type
-        does not fix the plate. A rig with 36 regions yields ``T_0``..``T_35``."""
-        n = self.region_counts.get(config_validation.normalize_rig(rig))
-        if not n:
+        """The region names a config built from scratch gets for *rig*, or
+        ``None`` when the type does not fix the plate. A rig with 36 regions
+        yields ``T_0``..``T_35``.
+
+        The DEFAULT plate: a rig that runs in more than one size validates in
+        any of them (:meth:`regions_match_rig`), but something has to be laid
+        out when there is nothing to read the size off yet."""
+        counts = self.region_counts_for_rig(rig)
+        if not counts:
             return None
-        return [f"T_{i}" for i in range(n)]
+        return [f"T_{i}" for i in range(counts[0])]
+
+    def regions_match_rig(self, rig, names) -> bool:
+        """Whether *names* are a plate this type accepts on *rig*.
+
+        True when the type does not fix the plate — there is nothing to
+        contradict. Otherwise the names must be exactly ``T_0``..``T_{n-1}``
+        for one of the rig's allowed counts: a partial or renamed plate is a
+        config the run cannot line up with its data."""
+        counts = self.region_counts_for_rig(rig)
+        if not counts:
+            return True
+        have = list(names or [])
+        return any(have == [f"T_{i}" for i in range(n)] for n in counts)
 
     def owned_keys(self) -> set[str]:
         """``global:`` keys the type owns — the user must not set them."""
@@ -332,19 +363,23 @@ class ExperimentType:
         return problems
 
     def _validate_required_tracking_regions(self, config: dict) -> list[str]:
-        """When the rig fixes the plate, the tracking regions must be exactly the
-        expected ``T_0``..``T_{n-1}`` set. Skipped when the rig is unset (the
-        'choose a rig' problem fires instead) or the type does not fix regions."""
+        """When the rig fixes the plate, the tracking regions must be exactly
+        the expected ``T_0``..``T_{n-1}`` set — for one of the sizes the rig
+        is run in. Skipped when the rig is unset (the 'choose a rig' problem
+        fires instead) or the type does not fix regions."""
         global_cfg = config.get("global") or {}
-        expected = self.regions_for_rig(global_cfg.get("tracking_rig"))
-        if expected is None:
+        rig = global_cfg.get("tracking_rig")
+        counts = self.region_counts_for_rig(rig)
+        if not counts:
             return []
         have = list((config.get("tracking_regions") or {}).keys())
-        if have != expected:
-            return [f"{self.display_name}: this rig requires exactly "
-                    f"{len(expected)} tracking regions ({expected[0]}..{expected[-1]}); "
-                    f"got {len(have)}."]
-        return []
+        if self.regions_match_rig(rig, have):
+            return []
+        sizes = (str(counts[0]) if len(counts) == 1
+                 else " or ".join(str(n) for n in sorted(counts)))
+        return [f"{self.display_name}: this rig requires exactly "
+                f"{sizes} tracking regions (T_0..T_{{n-1}}); "
+                f"got {len(have)}."]
 
     def _validate_required_counting_regions(self, config: dict) -> list[str]:
         if self.required_counting_regions is None:

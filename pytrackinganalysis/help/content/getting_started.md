@@ -12,9 +12,12 @@ The pipeline creates `analysis/` and `qc/` folders when it writes results.
 
 ## First-time workflow
 
-1. Open the **Analysis Hub** (`pytrack`) and choose the parent folder from **Project -> Load...**.
-2. Make or edit the Project: **Project -> Create/Load -> Create config...** writes `project.yaml` and opens the Project editor. If you point at a folder that is already an Experiment Directory, the Hub offers to create the Project on the parent so that experiment becomes a replicate.
-3. Add or adopt replicates from the Project panel's **Analysis** card. Use **Add experiment...** for a new replicate directory, or **Experiment configs...** to create missing `tracking_config.yaml` files from the project design.
+1. Open the **Analysis Hub** (`pytrack`) and make or open the Project from the **Project -> Create/Load** section. Which button depends on what is already on disk:
+   - **Open Project** - the directory and its `project.yaml` both exist.
+   - **Create project...** - neither exists yet; you choose where it goes and name it, and the directory is created for you.
+   - **Initialize existing directory...** - the directory exists (often with replicate subdirectories already in it) but has no `project.yaml`. It keeps its own name, and the design is inferred from the first replicate that has a config.
+2. Check the design in the Project editor. **Edit config...** reopens it at any time; if you point at a folder that is already an Experiment Directory, the Hub offers to create the Project on the parent so that experiment becomes a replicate.
+3. Add or adopt replicates from the Project panel's **Experiments** card, which mirrors the same three cases one level down: **Create experiment...** for a replicate that does not exist yet, **Initialize existing directory...** for a folder that is already there but has no `tracking_config.yaml` (its loose files are filed into `data/` and `extra_files/` on the way), and **Experiment configs...** to create or edit configs in bulk.
 4. Finish each replicate config in the Config Editor: choose the rig, assign every tracking region to the design factors, and check counting-region aliases.
 5. Load a replicate by **double-clicking its row** in the Project table. This is the Hub's only experiment-loading path, and it runs QC as the experiment loads.
 6. Run a single replicate from **Analyze -> Run Analysis**, or run the whole study from the Project panel with **Create report**. After the PDF exists, the same button reads **Update report**; both labels analyze every replicate, rebuild Combined Analysis, and write the Project report.

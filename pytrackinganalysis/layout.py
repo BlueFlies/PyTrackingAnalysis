@@ -323,6 +323,37 @@ def experiments_in(project_dir) -> list[ExperimentLayout]:
     return found
 
 
+def initializable_dirs(project_dir) -> list[ExperimentLayout]:
+    """Immediate subdirectories of *project_dir* that have no config yet.
+
+    The candidates for "initialize this existing directory as a replicate":
+    :func:`experiments_in` answers "what is already experiment-shaped", which
+    is a narrower question — a folder someone made and dropped loose files
+    into (or has not filled yet) is exactly the one that needs initializing,
+    and it must not be invisible because it is not experiment-shaped *yet*.
+
+    Output directories are excluded by name, as there; a directory that
+    already has a ``tracking_config.yaml`` is a replicate and has nothing to
+    initialize.
+    """
+    found = []
+    seen = set()
+    for name in _entries(project_dir):
+        path = os.path.join(str(project_dir), name)
+        if not os.path.isdir(path):
+            continue
+        if name.lower() in _NOT_REPLICATES:
+            continue
+        if has_config(path):
+            continue
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        found.append(classify(path))
+    return found
+
+
 # ---------------------------------------------------------------------------
 # Filing an Unfiled Recording
 # ---------------------------------------------------------------------------

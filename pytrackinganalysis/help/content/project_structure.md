@@ -64,10 +64,11 @@ MyBatch/
 
 ## Project panel
 
-The Hub's **Project** panel has two cards:
+The Hub's **Project** panel has three cards:
 
-- **Create/Load** chooses the folder, reloads it, and edits or creates `project.yaml`.
-- **Analysis** shows the replicate table plus Project actions: **Experiment configs...**, **Add experiment...**, **Create report** or **Update report**, **Plot editor...**, **AI narrative...**, and Project scripts.
+- **Create/Load** opens or makes the Project and describes the loaded one. **Open Project** takes a directory that already has a `project.yaml`; **Create project...** makes one that does not exist yet; **Initialize existing directory...** writes `project.yaml` into a directory you already have, keeping its name and adopting its subdirectories as replicates; **Edit config...** reopens the Project editor.
+- **Experiments** shows the replicate table plus **Create experiment...** (a replicate that does not exist yet), **Initialize existing directory...** (one whose folder exists but has no `tracking_config.yaml`) and **Experiment configs...** (edit the configs that exist). All three inherit the design from `project.yaml`, so they wait for a Project.
+- **Analysis** holds the Project actions over every replicate: **Create report** or **Update report**, **Plot editor...**, **AI narrative...**, **View reports**, **Removed regions...**, and the Project script runner at the bottom.
 
 Double-click a replicate row to load that experiment. Rows marked **Config: missing** are folders with data but no `tracking_config.yaml`; double-clicking offers to create the config from the project design. Use **Experiment configs...** to create or edit replicate configs in bulk. **Create report** appears before the Project PDF exists; **Update report** appears after it exists. Both run every replicate, rebuild Combined Analysis, and write the Project report.
 

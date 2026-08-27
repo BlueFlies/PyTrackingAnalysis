@@ -69,4 +69,4 @@ Region assignments, aliases, fly counts, and rigs may differ unless you explicit
 
 ## Creating replicate configs
 
-**Experiment configs...** and **Add experiment...** scaffold `tracking_config.yaml` files from `project.yaml`. The scaffold matches the shared design by construction, but you still need to assign region treatments, check aliases, choose the rig when needed, and add the DTrack export under `data/`.
+**Experiment configs...**, **Create experiment...** and **Initialize existing directory...** all scaffold `tracking_config.yaml` files from `project.yaml`. The scaffold matches the shared design by construction, but you still need to assign region treatments, check aliases, choose the rig when needed, and add the DTrack export under `data/`.

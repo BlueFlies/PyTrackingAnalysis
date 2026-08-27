@@ -326,10 +326,15 @@ def test_project_card_has_both_creation_flows(qapp, tmp_path):
     from pytrackinganalysis.apps.hub import HubWindow
 
     win = HubWindow()
-    texts = [b.text() for b in
-             win._cards["project"].findChildren(QPushButton)]
-    assert any("Create experiment" in t for t in texts)
-    assert any("Create project" in t for t in texts)
+    ## Both flows live on the Project tile, one section apart: the project
+    ## itself in Create/Load, the experiment in Experiments.
+    project_texts = [b.text() for b in
+                     win._cards["project"].findChildren(QPushButton)]
+    experiment_texts = [b.text() for b in
+                        win._cards["experiments"].findChildren(QPushButton)]
+    assert any("Create project" in t for t in project_texts)
+    assert any("Create experiment" in t for t in experiment_texts)
+    assert not any("Create experiment" in t for t in project_texts)
     win.close()
 
 
@@ -817,7 +822,8 @@ def test_hub_double_click_creates_and_opens_the_config(qapp, tmp_path,
     win.close()
 
 
-def test_hub_add_experiment_anchors_on_the_project(qapp, tmp_path, monkeypatch):
+def test_hub_create_experiment_anchors_on_the_project(qapp, tmp_path,
+                                                     monkeypatch):
     from PyQt6.QtWidgets import QInputDialog
 
     from pytrackinganalysis.apps.hub import HubWindow
@@ -831,7 +837,66 @@ def test_hub_add_experiment_anchors_on_the_project(qapp, tmp_path, monkeypatch):
     # With a replicate open, the new replicate belongs to the Project — it
     # used to be created inside the currently selected directory.
     win._set_project_dir(str(tmp_path / "Rep1"))
-    win._project_add_experiment()
+    win._create_experiment()
     assert (tmp_path / "Rep2" / "tracking_config.yaml").is_file()
     assert not (tmp_path / "Rep1" / "Rep2").exists()
+    win.close()
+
+
+def test_hub_create_experiment_inherits_the_project_design(qapp, tmp_path,
+                                                           monkeypatch):
+    """Nothing but the name is asked for: the config comes from project.yaml,
+    so the new replicate conforms to the shared design by construction."""
+    import yaml as _yaml
+    from PyQt6.QtWidgets import QInputDialog
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    monkeypatch.setattr(QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: ("Rep2", True)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+    win._create_experiment()
+
+    made = tmp_path / "Rep2"
+    assert (made / "data").is_dir()
+    cfg = _yaml.safe_load((made / "tracking_config.yaml").read_text())
+    sibling = _yaml.safe_load((tmp_path / "Rep1" /
+                               "tracking_config.yaml").read_text())
+    # Design-conformant by construction: the same type and the same factors
+    # as the replicate it will be pooled with.
+    assert cfg["global"]["experiment_type"] == \
+        sibling["global"]["experiment_type"]
+    assert cfg["global"].get("experimental_design_factors") == \
+        sibling["global"].get("experimental_design_factors")
+    # And the Project loads it as a conforming replicate.
+    assert "Rep2" in prj.Project(str(tmp_path)).experiment_names
+    # The row shows up as a configured replicate straight away.
+    names = [win._exp_table.item(r, 0).text()
+             for r in range(win._exp_table.rowCount())]
+    assert "Rep2" in names
+    win.close()
+
+
+def test_hub_create_experiment_defers_to_initialize_for_existing_dirs(
+        qapp, tmp_path, monkeypatch):
+    """The two cases stay disjoint: Create makes the directory, so a folder
+    that is already there is the other button's job."""
+    from PyQt6.QtWidgets import QInputDialog
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    (tmp_path / "Loose").mkdir()
+    monkeypatch.setattr(QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: ("Loose", True)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+    warned = []
+    monkeypatch.setattr(type(win), "_warn",
+                        lambda self, message: warned.append(message))
+    win._create_experiment()
+    assert not (tmp_path / "Loose" / "tracking_config.yaml").exists()
+    assert "Initialize existing directory" in warned[-1]
     win.close()
