@@ -225,6 +225,38 @@ def test_opening_a_valence_max_project_lays_out_36_regions(qapp, tmp_path, dialo
     win.close()
 
 
+def test_a_max_plate_laid_out_by_the_editor_flips_the_first_18(qapp, tmp_path,
+                                                              dialogs):
+    """Arena Max's first 18 wells (T_0..T_17) face the other way, so their X
+    multiplier is -1. The editor used to lay every row out at +1, silently
+    disagreeing with the same config built from scratch."""
+    win = _valence_editor(qapp, tmp_path, "arena_max")
+    regions = win._tracking_tab.dump()["tracking_regions"]
+    assert [regions[f"T_{i}"]["x_location_multiplier"] for i in range(18)] == \
+        [-1] * 18
+    assert [regions[f"T_{i}"]["x_location_multiplier"] for i in range(18, 36)] == \
+        [1] * 18
+    assert all(r["y_location_multiplier"] == 1 for r in regions.values())
+
+    # The same plate the type builds from scratch, well for well.
+    from pytrackinganalysis import experiment_types as et
+    built = et.get_experiment_type("Valence").build_config(
+        rig="arena_max")["tracking_regions"]
+    assert {n: (r["x_location_multiplier"], r["y_location_multiplier"])
+            for n, r in regions.items()} == \
+        {n: (r["x_location_multiplier"], r["y_location_multiplier"])
+         for n, r in built.items()}
+    win.close()
+
+
+def test_a_colosseum_plate_laid_out_by_the_editor_is_all_positive(
+        qapp, tmp_path, dialogs):
+    win = _valence_editor(qapp, tmp_path, "colosseum")
+    regions = win._tracking_tab.dump()["tracking_regions"]
+    assert all(r["x_location_multiplier"] == 1 for r in regions.values())
+    win.close()
+
+
 def test_opening_a_valence_colosseum_project_lays_out_24_regions(qapp, tmp_path, dialogs):
     win = _valence_editor(qapp, tmp_path, "colosseum")
     assert win._tracking_tab.region_names() == [f"T_{i}" for i in range(24)]

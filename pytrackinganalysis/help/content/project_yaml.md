@@ -69,4 +69,6 @@ Region assignments, aliases, fly counts, and rigs may differ unless you explicit
 
 ## Creating replicate configs
 
-**Experiment configs...**, **Create experiment...** and **Initialize existing directory...** all scaffold `tracking_config.yaml` files from `project.yaml`. The scaffold matches the shared design by construction, but you still need to assign region treatments, check aliases, choose the rig when needed, and add the DTrack export under `data/`.
+**Experiment configs...**, **Create experiment...** and **Initialize existing directory...** all scaffold `tracking_config.yaml` files from `project.yaml`. The scaffold matches the shared design by construction, but you still need to assign region treatments, check aliases, choose the rig when needed, and add the DTrack export under `data/`. When the Project already has a replicate, the scaffold is a copy of the *first* one, so its rig and treatments are that recording's, not this one's.
+
+The same validation also runs **before** a config is brought in from outside. **Create experiment...** offers **Copy config from...**, and the chosen file is tested against `design:` exactly as a replicate is at load time. If it would fail, nothing is written and the scaffold stays — a non-conforming replicate would otherwise stop the whole Project from loading. In a legacy Project with no `design:` section, the incoming config is checked against the existing replicates instead. See **Creating experiments**.

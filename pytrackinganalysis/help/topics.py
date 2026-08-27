@@ -34,6 +34,19 @@ TOPICS: tuple[HelpTopic, ...] = (
         "project_structure.md",
     ),
     HelpTopic(
+        "project_create",
+        "Creating and opening a Project",
+        "The Create/Load card: Open, Create, Initialize existing, and Edit config.",
+        "project_create.md",
+    ),
+    HelpTopic(
+        "experiment_create",
+        "Creating experiments",
+        "The Experiments card: Create, Initialize existing, Experiment configs, "
+        "and how a new replicate's config is finished.",
+        "experiment_create.md",
+    ),
+    HelpTopic(
         "project_yaml",
         "Project YAML",
         "What project.yaml owns, what stays in each tracking_config.yaml, and how validation works.",

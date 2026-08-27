@@ -95,7 +95,7 @@ narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
 The main app (`pytrack`): a horizontal **tile strip** across the
-top (Batch · Project · Analyze · Plots · Scripts · AI · Tools — each tile
+top (Batch · Project · Analyze · Plots · Scripts · AI — each tile
 shows only live status, with a **status readout** filling the strip to their
 right: the loaded project and experiment in words), and a full-width
 output/plots area below. All controls live in a

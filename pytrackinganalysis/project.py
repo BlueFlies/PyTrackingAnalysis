@@ -321,86 +321,122 @@ class Project:
 
     def _validate_against_design(self, design_global: dict) -> list[str]:
         problems: list[str] = []
+        for name in self.experiment_names:
+            problems += self._design_problems(name, self.configs[name],
+                                              design_global)
+        return problems
+
+    def _design_problems(self, label: str, config: dict,
+                         design_global: dict) -> list[str]:
+        """Design-mode check for ONE config, named *label* in the messages.
+
+        Split out from the load-time loop so the same test can be run on a
+        config that is not a replicate yet (:meth:`design_problems_for`)."""
+        problems: list[str] = []
         expected_type = self.experiment_type
         counting_names = [str(n) for n in
                           (self.design.get("counting_regions") or [])]
-        for name in self.experiment_names:
-            g = self._global(name)
-            t = experiment_types.get_experiment_type(g.get("experiment_type"))
-            for key, expected in design_global.items():
-                resolver = self._RESOLVERS.get(key)
-                if key == "experiment_type":
-                    actual = t.name
-                    expected_cmp = expected_type.name
-                elif key == "experimental_design_factors":
-                    factors = g.get("experimental_design_factors") or {}
-                    for factor, levels in (expected or {}).items():
-                        theirs = sorted(str(l) for l in
-                                        (factors.get(factor) or []))
-                        ours = sorted(str(l) for l in (levels or []))
-                        if theirs != ours:
-                            problems.append(
-                                f"{name}: factor '{factor}' has levels "
-                                f"{theirs} but the project design requires "
-                                f"{ours}")
-                    extra = set(factors) - set(expected or {})
-                    if extra:
+        g = dict(config.get("global") or {})
+        t = experiment_types.get_experiment_type(g.get("experiment_type"))
+        for key, expected in design_global.items():
+            resolver = self._RESOLVERS.get(key)
+            if key == "experiment_type":
+                actual = t.name
+                expected_cmp = expected_type.name
+            elif key == "experimental_design_factors":
+                factors = g.get("experimental_design_factors") or {}
+                for factor, levels in (expected or {}).items():
+                    theirs = sorted(str(l) for l in
+                                    (factors.get(factor) or []))
+                    ours = sorted(str(l) for l in (levels or []))
+                    if theirs != ours:
                         problems.append(
-                            f"{name}: factors {sorted(extra)} are not in the "
-                            f"project design")
-                    continue
-                elif resolver is not None:
-                    actual = resolver(t, g)
-                    expected_cmp = expected
-                else:
-                    actual = g.get(key)
-                    expected_cmp = expected
-                if _normalize(actual) != _normalize(expected_cmp):
+                            f"{label}: factor '{factor}' has levels "
+                            f"{theirs} but the project design requires "
+                            f"{ours}")
+                extra = set(factors) - set(expected or {})
+                if extra:
                     problems.append(
-                        f"{name}: {key} is {actual!r} but the project design "
-                        f"requires {expected_cmp!r}")
-            if counting_names:
-                have = [str(k) for k in
-                        (self.configs[name].get("counting_regions") or {})]
-                if have != counting_names:
-                    problems.append(
-                        f"{name}: counting_regions are {have} but the project "
-                        f"design requires {counting_names} (in that order; "
-                        f"aliases are experiment-specific)")
+                        f"{label}: factors {sorted(extra)} are not in the "
+                        f"project design")
+                continue
+            elif resolver is not None:
+                actual = resolver(t, g)
+                expected_cmp = expected
+            else:
+                actual = g.get(key)
+                expected_cmp = expected
+            if _normalize(actual) != _normalize(expected_cmp):
+                problems.append(
+                    f"{label}: {key} is {actual!r} but the project design "
+                    f"requires {expected_cmp!r}")
+        if counting_names:
+            have = [str(k) for k in (config.get("counting_regions") or {})]
+            if have != counting_names:
+                problems.append(
+                    f"{label}: counting_regions are {have} but the project "
+                    f"design requires {counting_names} (in that order; "
+                    f"aliases are experiment-specific)")
         return problems
+
+    def design_problems_for(self, config: dict,
+                            label: str = "this config") -> list[str]:
+        """Why *config* would not be a conforming replicate of this Project.
+
+        The same test every replicate passes at load, run against a config
+        that is not in the Project yet — so one copied in from elsewhere can
+        be refused BEFORE it is written, rather than after it has made the
+        whole Project unloadable. Empty list = it would be accepted.
+        """
+        if not isinstance(config, dict) or not isinstance(
+                config.get("global"), dict):
+            return [f"{label}: no 'global:' section — this is not a "
+                    f"{CONFIG_FILENAME}."]
+        if self.design:
+            return self._design_problems(
+                label, config, dict(self.design.get("global") or {}))
+        ## Legacy Project (no design section): the replicates are the
+        ## authority, so a newcomer has to agree with them.
+        return self._agreement_problems(label, config,
+                                        dict(self.design_factors))
 
     def _validate_agreement(self, ref_factors: dict) -> list[str]:
         """Legacy mode (no design section): replicates must agree with the
         first replicate."""
         problems: list[str] = []
-        ref_tt = self.tracking_type_name
         for name in self.experiment_names[1:]:
-            t = experiment_types.get_experiment_type(
-                self._global(name).get("experiment_type"))
-            if t.name != self.experiment_type.name:
+            problems += self._agreement_problems(
+                name, self.configs[name], ref_factors)
+        return problems
+
+    def _agreement_problems(self, label: str, config: dict,
+                            ref_factors: dict) -> list[str]:
+        """Legacy-mode check for ONE config against the Project's reference."""
+        problems: list[str] = []
+        ref_tt = self.tracking_type_name
+        g = dict(config.get("global") or {})
+        t = experiment_types.get_experiment_type(g.get("experiment_type"))
+        if t.name != self.experiment_type.name:
+            return [f"{label}: experiment_type is '{t.name}' but the project "
+                    f"uses '{self.experiment_type.name}'"]
+        tt = t.resolve_tracking_type(g).name
+        if tt != ref_tt:
+            problems.append(
+                f"{label}: tracking_type is '{tt}' but the project uses "
+                f"'{ref_tt}'")
+        factors = g.get("experimental_design_factors") or {}
+        if set(factors) != set(ref_factors):
+            problems.append(
+                f"{label}: design factors {sorted(factors)} do not match "
+                f"the project's {sorted(ref_factors)}")
+            return problems
+        for factor, levels in ref_factors.items():
+            theirs = [str(l) for l in (factors.get(factor) or [])]
+            ours = [str(l) for l in (levels or [])]
+            if sorted(theirs) != sorted(ours):
                 problems.append(
-                    f"{name}: experiment_type is '{t.name}' but the project "
-                    f"uses '{self.experiment_type.name}'")
-                continue
-            tt = t.resolve_tracking_type(self._global(name)).name
-            if tt != ref_tt:
-                problems.append(
-                    f"{name}: tracking_type is '{tt}' but the project uses "
-                    f"'{ref_tt}'")
-            factors = self._global(name).get(
-                "experimental_design_factors") or {}
-            if set(factors) != set(ref_factors):
-                problems.append(
-                    f"{name}: design factors {sorted(factors)} do not match "
-                    f"the project's {sorted(ref_factors)}")
-                continue
-            for factor, levels in ref_factors.items():
-                theirs = [str(l) for l in (factors.get(factor) or [])]
-                ours = [str(l) for l in (levels or [])]
-                if sorted(theirs) != sorted(ours):
-                    problems.append(
-                        f"{name}: factor '{factor}' has levels {theirs} but "
-                        f"the project uses {ours}")
+                    f"{label}: factor '{factor}' has levels {theirs} but "
+                    f"the project uses {ours}")
         return problems
 
     def scaffold_replicate_config(self) -> dict:

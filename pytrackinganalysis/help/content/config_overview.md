@@ -15,7 +15,7 @@ Project-level scripts live in `project.yaml`, not in a replicate's `tracking_con
 
 1. In the Hub Project panel, use **Experiment configs...** to scaffold missing replicate configs from the Project design.
 2. Open a replicate in **Config Editor** to assign rig, tracking-region treatments, and aliases.
-3. Copy an existing config only when the design and region layout truly match; then edit per-replicate details.
+3. Copy an existing config with the Hub's **Copy config from...**, offered right after **Create experiment...**. The chosen file is checked against the project design *before* it is written; a config that would not conform is refused and nothing is overwritten. Copy only when the region layout truly matches as well — conforming to the design does not mean the treatments belong to this recording.
 4. For a standalone experiment outside a Project, the Config Editor's new-file flow can create a starter Experiment Directory.
 
 ## Rules
@@ -27,7 +27,7 @@ Project-level scripts live in `project.yaml`, not in a replicate's `tracking_con
 - `TWOCHOICETRACKER` and `TWOCHOICECOUNTER` need exactly two counting regions, each with an `alias`.
 - Typed Experiment Types, such as Valence, may fix or constrain fields. The editor disables fixed fields and validates required regions before saving.
 
-Validate from the Hub with **Tools -> Validate YAMLs** in the top tile strip. With a Project selected it checks the `project.yaml` *and* every replicate's `tracking_config.yaml` in one pass, reporting each file separately with a count at the end; with a standalone experiment it checks that one config. Use **Experiment configs...** to open a replicate config you want to edit.
+Validate from the Hub with **Project -> Create/Load -> Validate YAMLs**. With a Project selected it checks the `project.yaml` *and* every replicate's `tracking_config.yaml` in one pass, reporting each file separately with a count at the end; with a standalone experiment it checks that one config. Use **Experiment configs...** to open a replicate config you want to edit.
 
 ## Minimal Custom example
 

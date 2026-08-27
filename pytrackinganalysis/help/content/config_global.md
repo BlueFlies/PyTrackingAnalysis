@@ -24,7 +24,7 @@ Typed experiments may lock this field because the type owns it.
 
 The rig sets calibration defaults such as frames per second and millimeters per pixel. Presets include `small_arena`, `arena_max`, `colosseum`, `obscura`, and `movie`. The `movie` rig has no preset calibration, so `fps` and `mm_per_pixel` are required.
 
-Some Experiment Types constrain the allowed rigs. Valence accepts Arena Max (36 wells) and Colosseum (24 or 18 — new configs are laid out with 24), and the Config Editor can lay out the matching plate automatically.
+Some Experiment Types constrain the allowed rigs. Valence accepts Arena Max (36 wells) and Colosseum (24 or 18 — new configs are laid out with 24), and the Config Editor can lay out the matching plate automatically. The layout includes the plate's **geometry**, not just its region names: on Arena Max the first 18 wells come out with an **X multiplier** of `-1` because they face the other way. See **Tracking and counting regions** for the full plate.
 
 ## Experimental design factors
 

@@ -246,14 +246,16 @@ class HubWindow(QMainWindow):
             ("plots", "Plots", "plots", Category.PLOTS),
             ("scripts", "Scripts", "scripts", Category.SCRIPTS),
             ("ai", "AI", "ai", Category.AI),
-            ("tools", "Tools", "tools", Category.TOOLS),
         ):
             tile = StatusTile(key, title, icon_name, cat)
             tile.clicked.connect(self._toggle_panel)
             self._tiles[key] = tile
             strip_lay.addWidget(tile)
         ## The strip's leftover width was dead space; it now carries the
-        ## general status readout (what is open right now).
+        ## general status readout (what is open right now) — and it got wider
+        ## still when the Tools tile went, which is the point: the readout
+        ## says which project and which experiment, and a truncated path
+        ## answers neither.
         self._status_panel = StatusPanel()
         strip_lay.addWidget(self._status_panel, 1)
         main_lay.addWidget(self._strip)
@@ -279,7 +281,6 @@ class HubWindow(QMainWindow):
         self._build_plots_card()
         self._build_scripts_card()
         self._build_ai_card()
-        self._build_tools_card()
 
         self._panels: dict[str, TilePanel] = {}
         panel_map = {
@@ -291,7 +292,6 @@ class HubWindow(QMainWindow):
             "plots": (500, ["plots"]),
             "scripts": (460, ["scripts"]),
             "ai": (440, ["ai"]),
-            "tools": (440, ["tools"]),
         }
         for key, (width, card_keys) in panel_map.items():
             panel = TilePanel(key, width, parent=central)
@@ -358,8 +358,9 @@ class HubWindow(QMainWindow):
         )
         card.add_title_widget(
             HelpButton(
-                "project_structure",
-                tooltip="Project directory layout and naming rules",
+                "project_create",
+                tooltip="Open / Create / Initialize a Project, and its "
+                        "project.yaml",
             )
         )
         form = QFormLayout()
@@ -408,6 +409,15 @@ class HubWindow(QMainWindow):
             "replicates, and project.yaml is written there."
         )
         init_btn.clicked.connect(self._initialize_existing_directory)
+        btn_validate = ActionButton("Validate YAMLs", Category.NEUTRAL,
+                                    icon_name="lint")
+        btn_validate.setToolTip(
+            "Check this Project's project.yaml AND every replicate's "
+            "tracking_config.yaml — parse errors and semantic problems "
+            "(unknown rig, missing calibration, design mismatch) alike. "
+            "Results go to the log.")
+        btn_validate.clicked.connect(self._validate_yaml)
+        self._btn_validate = btn_validate
         ## Two columns, four buttons, no ragged row: the three ways in (the
         ## Project exists / does not exist / the directory does but the
         ## project.yaml does not), then the editor for the one that is open.
@@ -417,6 +427,9 @@ class HubWindow(QMainWindow):
         for i, btn in enumerate((load_btn, new_project_btn,
                                  init_btn, self._btn_edit_cfg)):
             grid.addWidget(btn, i // 2, i % 2)
+        ## Full width on its own row: it is not a fifth way into a Project,
+        ## it is the check you run over the one that is open.
+        grid.addWidget(btn_validate, 2, 0, 1, 2)
         for col in range(2):
             grid.setColumnStretch(col, 1)
         card.add_body(grid)
@@ -639,8 +652,9 @@ class HubWindow(QMainWindow):
             icon_name="project",
         )
         card.add_title_widget(
-            HelpButton("project_structure",
-                       tooltip="Experiment directories and their configs")
+            HelpButton("experiment_create",
+                       tooltip="Create / Initialize a replicate, and how its "
+                               "config is finished")
         )
 
         self._exp_table = QTableWidget(0, 6)
@@ -1330,6 +1344,109 @@ class HubWindow(QMainWindow):
             return
         self._refresh_project_view()
         self._refresh_tiles()
+        ## The scaffold is a starting point, not the config: its rig and its
+        ## region treatments are still blank (or the first replicate's). Both
+        ## ways of finishing it are one click away rather than left to be
+        ## found.
+        self._finish_new_experiment_config(project, name, directory)
+
+    def _finish_new_experiment_config(self, project, name: str,
+                                      directory: Path) -> None:
+        """Offer the two ways to finish a just-created replicate's config:
+        edit the scaffold, or replace it with one copied from elsewhere.
+
+        Copying is the common case for the second and later replicates of a
+        run — the same rig and the same region treatments as an experiment
+        that already works. It is checked against the project design before
+        it is written, and anything that would not conform sends the user to
+        the editor instead, with the scaffold still in place."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Create experiment")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"'{name}' is ready, with a {_CANONICAL_CONFIG} "
+                    "scaffolded from the project design.")
+        box.setInformativeText(
+            "Edit it now, or replace it with a config copied from an "
+            "experiment that is already set up.")
+        edit_btn = box.addButton("Edit config…",
+                                 QMessageBox.ButtonRole.AcceptRole)
+        copy_btn = box.addButton("Copy config from…",
+                                 QMessageBox.ButtonRole.ActionRole)
+        box.setDefaultButton(edit_btn)
+        box.exec()
+        if box.clickedButton() is copy_btn and self._copy_replicate_config(
+                project, name, directory):
+            return
+        ## Either they chose to edit, or the copy did not happen — and a
+        ## replicate left on its scaffold is one nobody has told which rig it
+        ## ran on.
+        self._launch_subapp("config", directory=str(directory))
+
+    def _copy_replicate_config(self, project, name: str,
+                               directory: Path) -> bool:
+        """Replace *name*'s scaffolded config with one chosen from elsewhere.
+
+        Returns True when the copy was made. False means nothing was written
+        — the user cancelled, or the chosen file would not be a conforming
+        replicate of this Project — and the caller opens the editor on the
+        scaffold that is still there."""
+        import yaml as _yaml
+
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, f"Choose a {_CANONICAL_CONFIG} to copy into '{name}'",
+            str(project.project_directory),
+            f"Tracking config ({_CANONICAL_CONFIG});;"
+            "YAML files (*.yaml *.yml);;All files (*)")
+        if not chosen:
+            QMessageBox.information(
+                self, "Copy config",
+                "No file chosen — opening the scaffolded config in the "
+                "Config Editor instead.")
+            return False
+        source = Path(chosen)
+        target = directory / _CANONICAL_CONFIG
+        if source.resolve() == target.resolve():
+            self._warn(f"That is '{name}'s own config.\n\nOpening it in the "
+                       "Config Editor instead.")
+            return False
+        try:
+            with open(source, encoding="utf-8") as handle:
+                config = _yaml.safe_load(handle)
+        except Exception as err:  # noqa: BLE001
+            self._warn(f"'{source.name}' could not be read:\n{err}\n\n"
+                       "Opening the scaffolded config in the Config Editor "
+                       "instead.")
+            return False
+        ## Checked BEFORE it is written: a non-conforming replicate makes the
+        ## whole Project refuse to load, and the user would have to find and
+        ## undo the copy by hand.
+        problems = project.design_problems_for(config, source.name)
+        if problems:
+            self._warn(
+                f"'{source.name}' does not fit this Project's design:\n  - "
+                + "\n  - ".join(problems[:6])
+                + ("\n  - …" if len(problems) > 6 else "")
+                + "\n\nNothing was copied. Opening the scaffolded config in "
+                "the Config Editor instead.")
+            return False
+        try:
+            shutil.copyfile(source, target)
+        except Exception as err:  # noqa: BLE001
+            self._warn(f"Could not copy '{source.name}':\n{err}")
+            return False
+        self._log.append_line(f"Copied {source} to {target}")
+        ## Conforming is not the same as complete — a copied config can still
+        ## be missing its region treatments. Say so rather than let the
+        ## replicate fail at run time.
+        from .. import config_validation
+        remaining = config_validation.validate_config(config)
+        if remaining:
+            self._log.append_line(
+                f"[config] {name}: {len(remaining)} thing(s) still to fix — "
+                + "; ".join(remaining[:3]))
+        self._refresh_project_view()
+        self._refresh_tiles()
+        return True
 
     def _project_initialize_experiment(self) -> None:
         """The replicate's directory exists but its config does not: file
@@ -1485,51 +1602,6 @@ class HubWindow(QMainWindow):
             self._log.append_line(
                 f"Initialized {Path(dialog.saved_dir) / prj.PROJECT_FILENAME}")
             self._set_project_dir(dialog.saved_dir)
-
-    # ---------------- Tools card ----------------
-
-    def _build_tools_card(self) -> None:
-        card = Card(
-            "Tools",
-            category=Category.TOOLS,
-            subtitle="Housekeeping.",
-            icon_name="tools",
-        )
-        card.add_title_widget(
-            HelpButton("outputs", tooltip="Where analysis and QC outputs are written")
-        )
-        btn_validate = ActionButton(
-            "Validate YAMLs", Category.TOOLS, icon_name="lint"
-        )
-        btn_validate.setToolTip(
-            "Check the Project's project.yaml and every replicate's "
-            "tracking_config.yaml — parse errors and semantic problems "
-            "(unknown rig, missing calibration, design mismatch) alike.")
-        btn_validate.clicked.connect(self._validate_yaml)
-        ## "Open analysis folder" removed: a Project has one analysis/ of its
-        ## own plus one per replicate, so the button had no single target.
-        ## qc/ is still unambiguous — only an experiment has one.
-        btn_open_qc = ActionButton(
-            "Open qc folder", Category.TOOLS, icon_name="open"
-        )
-        btn_open_qc.clicked.connect(lambda: self._open_folder("qc"))
-        btn_clear_cache = ActionButton(
-            "Clear matplotlib cache", Category.TOOLS, icon_name="clear"
-        )
-        btn_clear_cache.clicked.connect(self._clear_mpl_cache)
-        # Two columns: full-width stacked buttons made the card oddly wide
-        # and tall for what are small housekeeping actions.
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
-        buttons = (btn_validate, btn_open_qc, btn_clear_cache)
-        for i, b in enumerate(buttons):
-            grid.addWidget(b, i // 2, i % 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        card.add_body(grid)
-        self._cards["tools"] = card
-        self._cards_lay.addWidget(card)
 
     # ---------------- Batch card ----------------
 
@@ -2495,11 +2567,6 @@ class HubWindow(QMainWindow):
                              else [names, "load an experiment first"])
             tile.set_dimmed(not ready)
 
-        # Tools tile.
-        tile = tiles["tools"]
-        tile.set_summary(["folders & YAML"])
-        tile.set_dimmed(False)
-
     def _pick_project_dir(self) -> None:
         start = str(self._project_dir) if self._project_dir else os.getcwd()
         chosen = QFileDialog.getExistingDirectory(self, "Choose project directory", start)
@@ -3271,8 +3338,8 @@ class HubWindow(QMainWindow):
         targets = self._yaml_validation_targets()
         if not targets:
             self._log_issue(
-                "[validate] No YAML here — load an experiment or select a "
-                "Project first.")
+                "[validate] No YAML here — open a Project (or load an "
+                "experiment) first.")
             return
 
         total = 0
@@ -3343,27 +3410,22 @@ class HubWindow(QMainWindow):
                         f"{issue}")
         return problems
 
-    def _open_folder(self, subfolder: str) -> None:
-        ## analysis/ and qc/ belong to an experiment, so the loaded one wins;
-        ## with nothing loaded these are the Project's own output folders.
-        base = self._experiment_dir() or self._project_dir
-        if not base:
-            return
-        target = base / subfolder
-        if not target.exists():
-            self._log_issue(f"[open] {target} does not exist yet.")
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
-
     def _clear_mpl_cache(self) -> None:
-        import matplotlib as mpl
+        """Drop matplotlib's cache directory.
 
-        cache = Path(mpl.get_cachedir())
-        if cache.exists():
-            shutil.rmtree(cache, ignore_errors=True)
-            self._log.append_line(f"[tools] cleared {cache}")
-        else:
-            self._log.append_line(f"[tools] no cache at {cache}")
+        Run on the way out rather than from a button: a stale font cache
+        shows up as a figure that will not render, and by the time anyone
+        goes looking for a button to press they have already lost the run.
+        Never raises — this must not be able to stop the window closing.
+        """
+        try:
+            import matplotlib as mpl
+
+            cache = Path(mpl.get_cachedir())
+            if cache.exists():
+                shutil.rmtree(cache, ignore_errors=True)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _launch_subapp(self, which: str, directory=None) -> None:
         """Launch a child app in a separate process.
@@ -3513,6 +3575,9 @@ class HubWindow(QMainWindow):
         # Child apps are meant to outlive the Hub, but collect any that have
         # already exited so they aren't left defunct.
         self._reap_subapps()
+        ## Last thing before the window goes: the next session starts with a
+        ## cache it built itself.
+        self._clear_mpl_cache()
         super().closeEvent(event)
 
 
@@ -4025,9 +4090,9 @@ class ExperimentConfigsDialog(QDialog):
         intro.setTextFormat(Qt.TextFormat.RichText)
         header_row.addWidget(intro, 1)
         header_row.addWidget(
-            HelpButton("config_overview",
-                       tooltip="What belongs in a replicate "
-                               "tracking_config.yaml"))
+            HelpButton("experiment_create",
+                       tooltip="Creating and finishing replicate "
+                               "tracking_config.yaml files"))
         outer.addLayout(header_row)
 
         self._table = QTableWidget(0, 3)

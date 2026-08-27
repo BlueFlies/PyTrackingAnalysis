@@ -152,6 +152,20 @@ class ExperimentType:
             return None
         return [f"T_{i}" for i in range(counts[0])]
 
+    def tracking_regions_for_rig(self, rig) -> dict | None:
+        """The plate a config built from scratch gets for *rig*: region name →
+        its ``x``/``y`` location multipliers, in order. ``None`` when the type
+        does not fix the plate.
+
+        The ONE place a fixed plate's geometry is decided, so a config built
+        by :meth:`build_config` and one laid out by the Config Editor cannot
+        disagree about which wells face which way. Base: everything +1."""
+        names = self.regions_for_rig(rig)
+        if names is None:
+            return None
+        return {name: {"x_location_multiplier": 1,
+                       "y_location_multiplier": 1} for name in names}
+
     def regions_match_rig(self, rig, names) -> bool:
         """Whether *names* are a plate this type accepts on *rig*.
 

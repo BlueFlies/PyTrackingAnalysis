@@ -4,11 +4,11 @@ The Hub is the main day-to-day surface. It is Project-first: open a Project, man
 
 ## Layout
 
-Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, **AI**, and **Tools**. The first two tiles work on containers (a Batch or a Project); the tiles after them act on the loaded experiment. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
+Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, and **AI**. The first two tiles work on containers (a Batch or a Project); the tiles after them act on the loaded experiment. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
 
 Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
 
-The status readout to the right of the Tools tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
+The status readout to the right of the last tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
 
 ## Batch panel
 
@@ -18,16 +18,17 @@ The selection names a Batch or a Project. Selecting a folder with Projects anywh
 
 The Project panel contains three cards, in the order the work happens: the Project, its experiments, then the analysis over them.
 
-**Create/Load** is the Project itself: one button per way in, then what is loaded — name, experiment type, replicate count, design factors and any load warnings.
+**Create/Load** is the Project itself: one button per way in, then what is loaded — name, experiment type, replicate count, design factors and any load warnings. See the **Creating and opening a Project** help topic.
 
 - **Open Project** - the directory and its `project.yaml` both exist. Picking the one already open re-reads it from disk.
 - **Create project...** - the Project does not exist yet. Choose where it goes and name it; the directory is created and `project.yaml` written into it.
 - **Initialize existing directory...** - the directory exists but has no `project.yaml`. Choose it and it becomes the Project, keeping its own name; any experiment subdirectories already in it become the replicates, and the shared design is inferred from the first one that has a config.
 - **Edit config...** - reopen the Project editor on the selected directory's `project.yaml`. It reads **Create config...** when the selected folder is not a Project yet; if that folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
+- **Validate YAMLs** - not a way in, but the check over the Project that is open: it reads this Project's `project.yaml` *and* every replicate's `tracking_config.yaml` in one pass. See **Validating** below.
 
-**Experiments** is the replicates themselves. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments.
+**Experiments** is the replicates themselves. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments. All three buttons wait for a Project, because a replicate's design is inherited from `project.yaml`. See the **Creating experiments** help topic.
 
-- **Create experiment...** - the replicate does not exist at all. Give it a name; the directory, its `data/` folder and a `tracking_config.yaml` scaffolded from `project.yaml` are created for you. Nothing else is asked, because everything else is the Project's.
+- **Create experiment...** - the replicate does not exist at all. Give it a name; the directory, its `data/` folder and a `tracking_config.yaml` scaffolded from `project.yaml` are created for you. Nothing else is asked, because everything else is the Project's. The scaffold is then finished one of two ways, and the Hub asks which: **Edit config...** opens it in the Config Editor, **Copy config from...** replaces it with a config from an experiment that already works — checked against the project design before it is written, and refused (scaffold intact) if it would not conform.
 - **Experiment configs...** - create or edit each replicate's `tracking_config.yaml`.
 - **Initialize existing directory...** - the directory is already in the Project but has no `tracking_config.yaml`. Pick it from the list of config-less folders: a recording still loose at its root is filed into `data/` and every other loose file into `extra_files/`, the config is scaffolded from the project design, and the Config Editor opens on it so you can set the rig and assign region treatments.
 
@@ -55,9 +56,11 @@ After a replicate is loaded:
 
 When **Faceted** is checked in the Analyze panel, summaries, pairwise comparisons, and plot buttons use the loaded experiment's `facet_cutoffs`. Button labels add `(facet)` so the output mode is visible before you click.
 
-## Tools
+## Validating
 
-The **Tools** tile opens `analysis/` or `qc/`, validates the loaded replicate's YAML, and clears the matplotlib cache.
+**Validate YAMLs** lives at the bottom of the Project panel's **Create/Load** section. With a Project open it checks that Project's `project.yaml` *and* every replicate's `tracking_config.yaml` in one pass — parse errors and semantic problems (unknown rig, missing calibration, design mismatch) alike — reporting each file separately with a count at the end. With a standalone experiment loaded it checks that one config.
+
+There is no Tools tile: folder-opening is the file manager's job, and matplotlib's cache is now cleared automatically every time the Hub closes, so a stale font cache can never break the next session's figures.
 
 ## Output area
 

@@ -833,6 +833,7 @@ def test_hub_create_experiment_anchors_on_the_project(qapp, tmp_path,
                         staticmethod(lambda *a, **k: ("Rep2", True)))
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
+    _stub_finish_dialog(monkeypatch, win)
 
     # With a replicate open, the new replicate belongs to the Project — it
     # used to be created inside the currently selected directory.
@@ -857,6 +858,7 @@ def test_hub_create_experiment_inherits_the_project_design(qapp, tmp_path,
                         staticmethod(lambda *a, **k: ("Rep2", True)))
     win = HubWindow(initial_project=str(tmp_path))
     qapp.processEvents()
+    _stub_finish_dialog(monkeypatch, win)
     win._create_experiment()
 
     made = tmp_path / "Rep2"
@@ -876,6 +878,163 @@ def test_hub_create_experiment_inherits_the_project_design(qapp, tmp_path,
     names = [win._exp_table.item(r, 0).text()
              for r in range(win._exp_table.rowCount())]
     assert "Rep2" in names
+    win.close()
+
+
+def _stub_finish_dialog(monkeypatch, win):
+    """Silence the edit-or-copy offer that follows Create experiment.
+
+    It is a modal, so a test that reaches it without this hangs rather than
+    fails — and its own behaviour is covered by the tests below."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "exec", lambda _box: 0)
+    monkeypatch.setattr(type(win), "_launch_subapp",
+                        lambda self, *a, **k: None)
+
+
+def test_new_experiment_offers_edit_or_copy_and_edits_by_default(
+        qapp, tmp_path, monkeypatch):
+    """After Create experiment the scaffold still needs a rig and region
+    treatments, so both ways of finishing it are offered."""
+    from PyQt6.QtWidgets import QInputDialog, QMessageBox
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    monkeypatch.setattr(QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: ("Rep2", True)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    seen = {}
+
+    def _exec(box):
+        seen["text"] = box.text()
+        seen["labels"] = [b.text() for b in box.buttons()]
+        seen["default"] = box.defaultButton().text()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", _exec)
+    launched = []
+    monkeypatch.setattr(type(win), "_launch_subapp",
+                        lambda self, *a, **k: launched.append((a, k)))
+    win._create_experiment()
+
+    assert seen["labels"] == ["Edit config…", "Copy config from…"]
+    assert seen["default"] == "Edit config…"
+    # clickedButton() is None when exec is stubbed, so this is the edit path.
+    assert launched[-1][0][0] == "config"
+    assert launched[-1][1]["directory"] == str(tmp_path / "Rep2")
+    win.close()
+
+
+def _create_then_copy(qapp, tmp_path, monkeypatch, chosen):
+    """Run Create experiment and take the 'Copy config from…' branch, with
+    the file chooser answering *chosen*. Returns (hub, warnings, launched,
+    information messages)."""
+    from PyQt6.QtWidgets import (QFileDialog, QInputDialog, QMessageBox)
+
+    from pytrackinganalysis.apps.hub import HubWindow
+
+    monkeypatch.setattr(QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: ("Rep2", True)))
+    win = HubWindow(initial_project=str(tmp_path))
+    qapp.processEvents()
+
+    def _exec(box):
+        for button in box.buttons():
+            if "Copy" in button.text():
+                box.setDefaultButton(button)
+                ## QMessageBox.clickedButton() reads the button the box was
+                ## closed with; done() through the button's own click is the
+                ## only way to set it without a real user.
+                button.click()
+                return 0
+        raise AssertionError("no Copy button")
+
+    monkeypatch.setattr(QMessageBox, "exec", _exec)
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (chosen, "")))
+    told = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: told.append(a[2])))
+    warned = []
+    monkeypatch.setattr(type(win), "_warn",
+                        lambda self, message: warned.append(message))
+    launched = []
+    monkeypatch.setattr(type(win), "_launch_subapp",
+                        lambda self, *a, **k: launched.append((a, k)))
+    win._create_experiment()
+    return win, warned, launched, told
+
+
+def test_new_experiment_can_copy_a_conforming_config(qapp, tmp_path,
+                                                     monkeypatch):
+    """The common case for replicate two onwards: the same rig and the same
+    region treatments as one that already works."""
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    source = tmp_path / "Rep1" / "tracking_config.yaml"
+    # Something only the copy can carry, so the assert cannot pass by luck.
+    original = yaml.safe_load(source.read_text())
+    original["global"]["mm_per_pixel_marker"] = "copied"
+    source.write_text(yaml.safe_dump(original), encoding="utf-8")
+
+    win, warned, launched, _told = _create_then_copy(
+        qapp, tmp_path, monkeypatch, str(source))
+    copied = yaml.safe_load(
+        (tmp_path / "Rep2" / "tracking_config.yaml").read_text())
+    assert copied["global"]["mm_per_pixel_marker"] == "copied"
+    assert not warned
+    # A copied config is finished, so the editor is NOT forced open.
+    assert not launched
+    assert "Rep2" in prj.Project(str(tmp_path)).experiment_names
+    win.close()
+
+
+def test_a_copy_that_breaks_the_design_is_refused_and_the_editor_opens(
+        qapp, tmp_path, monkeypatch):
+    """Checked before it is written: a non-conforming replicate makes the
+    whole Project refuse to load, and the user would have to undo it by
+    hand."""
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    scaffolded = yaml.safe_load(
+        (tmp_path / "Rep1" / "tracking_config.yaml").read_text())
+
+    ## OUTSIDE the Project: a config dropped in a subdirectory of it would
+    ## make that subdirectory a non-conforming replicate, and the Project
+    ## would stop loading before Create experiment ever ran.
+    foreign = tmp_path.parent / f"{tmp_path.name}_elsewhere" / \
+        "tracking_config.yaml"
+    foreign.parent.mkdir(exist_ok=True)
+    wrong = yaml.safe_load(yaml.safe_dump(scaffolded))
+    wrong["global"]["experimental_design_factors"] = {"genotype": ["w1118"]}
+    foreign.write_text(yaml.safe_dump(wrong), encoding="utf-8")
+
+    win, warned, launched, _told = _create_then_copy(
+        qapp, tmp_path, monkeypatch, str(foreign))
+    # Nothing was written: the scaffold is untouched and still conforming.
+    kept = yaml.safe_load(
+        (tmp_path / "Rep2" / "tracking_config.yaml").read_text())
+    assert kept["global"].get("experimental_design_factors") == \
+        scaffolded["global"].get("experimental_design_factors")
+    assert warned and "does not fit this Project's design" in warned[-1]
+    assert "genotype" in warned[-1]
+    # And the Project still loads, which is the point of checking first.
+    assert "Rep2" in prj.Project(str(tmp_path)).experiment_names
+    # Flagged, then handed to the editor.
+    assert launched[-1][0][0] == "config"
+    win.close()
+
+
+def test_a_cancelled_copy_flags_the_user_and_opens_the_editor(
+        qapp, tmp_path, monkeypatch):
+    _make_project(tmp_path, names=("Rep1",), with_analysis=False)
+    win, _warned, launched, told = _create_then_copy(qapp, tmp_path,
+                                                    monkeypatch, "")
+    assert told and "No file chosen" in told[-1]
+    assert launched[-1][0][0] == "config"
+    assert (tmp_path / "Rep2" / "tracking_config.yaml").is_file()
     win.close()
 
 

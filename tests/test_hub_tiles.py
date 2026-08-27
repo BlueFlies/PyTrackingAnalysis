@@ -28,8 +28,7 @@ def hub(qapp):  # noqa: F811
     win.close()
 
 
-TILE_ORDER = ["batch", "project", "analyze", "plots", "scripts", "ai",
-              "tools"]
+TILE_ORDER = ["batch", "project", "analyze", "plots", "scripts", "ai"]
 
 
 def _accept_preflight(monkeypatch, keys=None, apply_removals=True):
@@ -68,10 +67,13 @@ def _make_batch(tmp_path, names=("P1", "P2")):
     return tmp_path
 
 
-def test_strip_has_seven_fixed_tiles_and_full_width_output(hub):
+def test_strip_has_six_fixed_tiles_and_full_width_output(hub):
     assert list(hub._tiles) == TILE_ORDER
     assert not hasattr(hub, "_sidebar")
-    assert "tools" in hub._panels
+    # Tools is gone: its one lasting action (Validate YAMLs) moved to the
+    # Project panel, and the width it held went to the status readout.
+    assert "tools" not in hub._panels
+    assert "tools" not in hub._cards
     # Experiments load from the Project panel's table — no Experiment tile.
     assert "experiment" not in hub._panels
     assert "load" not in hub._cards
@@ -86,9 +88,9 @@ def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
     for key in ("analyze", "plots", "scripts", "ai"):
         assert hub._tiles[key].is_dimmed(), key
 
-    # Batch, Project, and Tools are never dimmed (user feedback 2026-08-24):
-    # they are the way in, always available, and say their state in words.
-    for key in ("batch", "project", "tools"):
+    # Batch and Project are never dimmed (user feedback 2026-08-24): they are
+    # the way in, always available, and say their state in words.
+    for key in ("batch", "project"):
         assert not hub._tiles[key].is_dimmed(), key
     assert "no project" in hub._tiles["project"].summary_text()
     assert "no batch" in hub._tiles["batch"].summary_text()
@@ -131,7 +133,6 @@ def test_experiment_cards_are_dimmed_until_something_is_loaded(hub, qapp):  # no
         assert hub._cards[key].is_dimmed(), key
     # Cards whose actions stand on their own never dim.
     assert not hub._cards["project"].is_dimmed()
-    assert not hub._cards["tools"].is_dimmed()
 
     hub._exp = SimpleNamespace(arena=SimpleNamespace(experiment_name="Rep1"),
                                facet_cutoffs=None)
@@ -198,11 +199,11 @@ def test_panels_open_one_at_a_time_and_toggle(hub, qapp):
     assert not hub._panels["analyze"].isVisible()
 
 
-def test_tools_tile_opens_tools_panel(hub):
-    hub._toggle_panel("tools")
-    assert hub._open_panel_key == "tools"
-    assert hub._panels["tools"].isVisible()
-    assert hub._tiles["tools"]._active
+def test_ai_tile_opens_ai_panel(hub):
+    hub._toggle_panel("ai")
+    assert hub._open_panel_key == "ai"
+    assert hub._panels["ai"].isVisible()
+    assert hub._tiles["ai"]._active
     hub._close_panel()
 
 
@@ -412,7 +413,11 @@ def test_strip_has_no_divider_and_uniform_spacing(hub):
 def test_status_panel_fills_the_strip_right_of_the_last_tile(hub):
     lay = hub._strip.layout()
     assert lay.itemAt(lay.count() - 1).widget() is hub._status_panel
-    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles["tools"]
+    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles[TILE_ORDER[-1]]
+    ## The width the Tools tile used to take is the readout's now: it has to
+    ## be wide enough to say which project AND which experiment.
+    tiles_width = sum(hub._tiles[k].width() for k in TILE_ORDER)
+    assert hub._status_panel.width() > hub._strip.width() - tiles_width - 40
 
 
 def test_status_panel_reports_the_project_and_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811
@@ -863,7 +868,11 @@ def test_create_load_offers_the_three_ways_into_a_project(hub):
     assert labels == [
         "Open Project", "Create project…",
         "Initialize existing directory…", "Edit config…",
+        # Not a fifth way in — the check over the Project that is open, on
+        # its own full-width row.
+        "Validate YAMLs",
     ]
+    assert grid.getItemPosition(grid.indexOf(hub._btn_validate)) == (2, 0, 1, 2)
     # Nothing else creeps back into section 1.
     card_labels = {b.text() for b in
                    hub._cards["project"].findChildren(ActionButton)}
@@ -1427,7 +1436,7 @@ def test_batch_tools_are_gone_from_every_card(hub):
     Project workflow (Experiment configs…, Project reports) now owns."""
     from PyQt6.QtWidgets import QPushButton
 
-    for key in ("batch", "tools", "project"):
+    for key in ("batch", "project"):
         labels = [b.text() for b in hub._cards[key].findChildren(QPushButton)]
         assert not any("Batch tools" in t for t in labels), key
     assert not hasattr(hub, "_btn_batch_tools")
@@ -1687,17 +1696,50 @@ def test_suppressed_figures_are_closed_not_leaked(hub, qapp):  # noqa: F811
     plt.close("all")
 
 
-# ---- Tools card ------------------------------------------------------------
+# ---- Validation ------------------------------------------------------------
 
-def test_tools_card_has_no_open_analysis_button(hub):
-    """A Project has its own analysis/ plus one per replicate, so "Open
-    analysis folder" had no single target. qc/ belongs to an experiment
-    alone, so it stays."""
-    labels = [b.text() for b in hub._cards["tools"].findChildren(
-        type(hub._btn_project_report))]
-    assert "Open analysis folder" not in labels
-    assert "Open qc folder" in labels
-    assert "Validate YAMLs" in labels          # renamed from "Validate YAML"
+def test_the_tools_panel_is_gone_and_validate_moved_to_the_project(hub):
+    """Tools held three actions: one was folder-opening the file manager does
+    better, one now happens on close, and Validate YAMLs is Project work — so
+    it lives with the Project it validates."""
+    from pytrackinganalysis.ui.widgets import ActionButton
+
+    assert "tools" not in hub._cards and "tools" not in hub._tiles
+    assert not hasattr(hub, "_open_folder")
+
+    labels = [b.text() for b in
+              hub._cards["project"].findChildren(ActionButton)]
+    assert "Validate YAMLs" in labels
+    # The two that did not survive, anywhere in the Hub.
+    everywhere = [b.text() for card in hub._cards.values()
+                  for b in card.findChildren(ActionButton)]
+    assert "Open qc folder" not in everywhere
+    assert "Clear matplotlib cache" not in everywhere
+
+
+def test_the_matplotlib_cache_is_cleared_on_close(hub, qapp, monkeypatch,
+                                                  tmp_path):
+    """A stale font cache shows up as a figure that will not render, and by
+    then the run is already lost — so it goes on the way out, not on a
+    button nobody thinks to press."""
+    import matplotlib as mpl
+    from PyQt6.QtGui import QCloseEvent
+
+    cache = tmp_path / "mplcache"
+    (cache / "fontlist").mkdir(parents=True)
+    monkeypatch.setattr(mpl, "get_cachedir", lambda: str(cache))
+    hub.closeEvent(QCloseEvent())
+    assert not cache.exists()
+
+
+def test_clearing_the_cache_can_never_block_the_close(hub, monkeypatch):
+    import matplotlib as mpl
+
+    def _boom():
+        raise RuntimeError("no cachedir for you")
+
+    monkeypatch.setattr(mpl, "get_cachedir", _boom)
+    hub._clear_mpl_cache()   # must not raise
 
 
 def test_validate_yamls_covers_the_project_and_every_replicate(

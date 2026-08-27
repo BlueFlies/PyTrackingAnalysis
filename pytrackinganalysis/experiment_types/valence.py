@@ -51,6 +51,19 @@ class ValenceExperimentType(ExperimentType):
     # yaml `min_movement` overrides; 0 turns the flagging off.
     default_min_movement = 140.0
 
+    def tracking_regions_for_rig(self, rig) -> dict | None:
+        """The Valence plate: on Arena Max the first 18 wells (T_0..T_17) face
+        the opposite way, so their X axis is flipped to -1 and the remaining
+        18 are +1; the Colosseum is all +1 at either of its sizes."""
+        names = self.regions_for_rig(rig)
+        if names is None:
+            return None
+        flip = (_MAX_XFLIP_COUNT
+                if config_validation.normalize_rig(rig) == "arena_max" else 0)
+        return {name: {"x_location_multiplier": -1 if i < flip else 1,
+                       "y_location_multiplier": 1}
+                for i, name in enumerate(names)}
+
     def report_intro(self) -> str:
         return ("A two-choice light-preference (valence) assay. Positive PI means "
                 "the animals prefer Light over NoLight. The recording is split into "
@@ -262,15 +275,12 @@ class ValenceExperimentType(ExperimentType):
         g["min_movement"] = _clean_number(min_movement) if min_movement is not None \
             else _clean_number(self.default_min_movement)
 
-        names = self.regions_for_rig(rig) or []
-        flip = _MAX_XFLIP_COUNT if config_validation.normalize_rig(rig) == "arena_max" else 0
+        ## One source for the plate's geometry — the Config Editor lays out
+        ## the same wells the same way (``tracking_regions_for_rig``).
         tracking_regions = {
-            name: {
-                "experimental_factors": "",
-                "x_location_multiplier": -1 if i < flip else 1,
-                "y_location_multiplier": 1,
-            }
-            for i, name in enumerate(names)
+            name: {"experimental_factors": "", **multipliers}
+            for name, multipliers in
+            (self.tracking_regions_for_rig(rig) or {}).items()
         }
         return {
             "global": g,

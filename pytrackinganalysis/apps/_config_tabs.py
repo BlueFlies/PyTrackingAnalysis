@@ -65,6 +65,11 @@ RIG_MM_PER_PIXEL: dict[str, float | None] = {
 }
 
 
+#: Widest a Parameter-override field gets. Every value there is a few
+#: characters; the placeholders ("required for 'movie' rig") set the floor.
+_OVERRIDE_FIELD_WIDTH = 200
+
+
 def _parse_cutoffs(text: str) -> list[int]:
     """Parse the facet-cutoff field into whole minutes.
 
@@ -273,50 +278,78 @@ class GlobalTab(QWidget):
         outer.addSpacing(12)
         outer.addWidget(_section_label("Parameter overrides (leave blank to use rig defaults)"))
 
-        pform = QFormLayout()
-        pform.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        ## Two columns of narrow fields, not one column of full-width ones:
+        ## every value here is a handful of characters, and a text box the
+        ## width of the window said otherwise while pushing the section to
+        ## twice the height it needs.
+        left = QFormLayout()
+        right = QFormLayout()
+        for form in (left, right):
+            form.setFieldGrowthPolicy(
+                QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
 
         self.fps = QLineEdit()
         self.fps.setPlaceholderText("required for 'movie' rig")
         # textEdited (not textChanged) fires only for typing, so programmatic
         # setText during load/rig-change does not falsely mark an override.
         self.fps.textEdited.connect(lambda t: self._mark_override("fps", t))
-        pform.addRow("fps:", self.fps)
+        left.addRow("fps:", self.fps)
 
         self.mm_per_pixel = QLineEdit()
         self.mm_per_pixel.setPlaceholderText("required for 'movie' rig")
         self.mm_per_pixel.textEdited.connect(
             lambda t: self._mark_override("mm_per_pixel", t)
         )
-        pform.addRow("mm_per_pixel:", self.mm_per_pixel)
+        left.addRow("mm_per_pixel:", self.mm_per_pixel)
 
         self.speed_window = QLineEdit()
         self.speed_window.setPlaceholderText("default 1")
-        pform.addRow("speed_window_seconds:", self.speed_window)
+        left.addRow("speed_window_seconds:", self.speed_window)
 
         self.micromove_min = QLineEdit()
         self.micromove_min.setPlaceholderText("default 0.2")
         self.micromove_max = QLineEdit()
         self.micromove_max.setPlaceholderText("default 2")
         mmrow = QHBoxLayout()
+        mmrow.setContentsMargins(0, 0, 0, 0)
         mmrow.addWidget(self.micromove_min)
         mmrow.addWidget(QLabel("–"))
         mmrow.addWidget(self.micromove_max)
-        pform.addRow("micromove_speed_mm_sec [min–max]:", mmrow)
+        left.addRow("micromove_speed_mm_sec [min–max]:", mmrow)
 
         self.walking_speed = QLineEdit()
         self.walking_speed.setPlaceholderText("default 2")
-        pform.addRow("walking_speed_mm_sec:", self.walking_speed)
+        right.addRow("walking_speed_mm_sec:", self.walking_speed)
 
         self.sleep_threshold = QLineEdit()
         self.sleep_threshold.setPlaceholderText("default 5")
-        pform.addRow("sleep_threshold_min:", self.sleep_threshold)
+        right.addRow("sleep_threshold_min:", self.sleep_threshold)
 
         self.interaction_distances = QLineEdit()
         self.interaction_distances.setPlaceholderText("e.g. 8  (pairwise only)")
-        pform.addRow("interaction_distances (mm):", self.interaction_distances)
+        right.addRow("interaction_distances (mm):", self.interaction_distances)
 
-        outer.addLayout(pform)
+        for field in (self.fps, self.mm_per_pixel, self.speed_window,
+                      self.walking_speed, self.sleep_threshold,
+                      self.interaction_distances):
+            field.setMaximumWidth(_OVERRIDE_FIELD_WIDTH)
+        for field in (self.fps, self.mm_per_pixel,
+                      self.interaction_distances):
+            ## These three carry a placeholder that says something ("0.145
+            ## (Arena Max)"), so they get the room to say it.
+            field.setMinimumWidth(_OVERRIDE_FIELD_WIDTH)
+        for field in (self.micromove_min, self.micromove_max):
+            ## Two to a row, so half the width each (less the dash).
+            field.setMaximumWidth(_OVERRIDE_FIELD_WIDTH // 2)
+
+        pcols = QHBoxLayout()
+        pcols.addLayout(left)
+        pcols.addSpacing(24)
+        pcols.addLayout(right)
+        ## The columns keep their natural width; the leftover goes here rather
+        ## than stretching the fields back out.
+        pcols.addStretch(1)
+        outer.addLayout(pcols)
         outer.addStretch()
 
         # Apply initial placeholders for the default-selected rig
@@ -981,12 +1014,21 @@ class TrackingRegionsTab(QWidget):
                 out.append(item.text().strip())
         return out
 
-    def set_region_names(self, names) -> None:
+    def set_region_names(self, names, multipliers: dict | None = None) -> None:
         """Replace the table with one blank-treatment row per name in *names*
-        (used to lay out an Experiment Type's fixed plate)."""
+        (used to lay out an Experiment Type's fixed plate).
+
+        *multipliers* maps a region name to its ``x_location_multiplier`` /
+        ``y_location_multiplier`` — the plate's geometry, which is not all +1
+        for every rig (Valence on Arena Max flips T_0..T_17). Without it every
+        row would come out +1 and the laid-out plate would silently disagree
+        with the one ``build_config`` writes."""
         self.table.setRowCount(0)
         for name in names:
-            self._add_row(name=name)
+            axes = (multipliers or {}).get(name) or {}
+            self._add_row(name=name,
+                          x=axes.get("x_location_multiplier", 1),
+                          y=axes.get("y_location_multiplier", 1))
 
     # ------------------------------------------------------------------
     # Load / dump

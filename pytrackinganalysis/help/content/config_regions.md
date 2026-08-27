@@ -12,6 +12,16 @@ For each row:
 - Set **X multiplier** and **Y multiplier** to `1` or `-1` when a mirrored arena needs its coordinates flipped.
 - Use **Generate N regions** for Custom layouts, or let a typed rig such as Valence on Arena Max or Colosseum lay out the required plate. Arena Max is always 36 wells (`T_0`..`T_35`); the Colosseum is run at either 24 (`T_0`..`T_23`) or 18 (`T_0`..`T_17`), and both validate. A config laid out from scratch gets 24 — to run 18, remove the last six rows. An existing plate of either size is left alone.
 
+## Plate geometry on a typed rig
+
+When an Experiment Type fixes the plate, it owns the **X** and **Y multipliers** as well as the region names, and the editor lays them out that way:
+
+- **Valence on Arena Max** — the first 18 wells (`T_0`..`T_17`) face the opposite direction, so their **X multiplier** is `-1`; `T_18`..`T_35` are `+1`. Every **Y multiplier** is `+1`.
+- **Valence on the Colosseum** — all `+1`, at either plate size.
+- **Custom layouts and untyped rigs** — everything is laid out at `+1`, and you set the flips yourself.
+
+A plate laid out by the Config Editor and one built from scratch by the Experiment Type are now the same plate, well for well. (Earlier versions laid every editor row out at `+1`, which silently disagreed with the built config for Arena Max.) You can still override any individual row by hand when a recording genuinely differs; the layout only decides what a *fresh* plate starts as, and an existing one is never rewritten without asking.
+
 In a Project, region-to-treatment assignments remain per replicate. The shared design says which factor levels exist; each recording still chooses which physical region belongs to which level.
 
 ## Counting regions

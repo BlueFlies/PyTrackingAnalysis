@@ -43,4 +43,4 @@ Project-level outputs are written at the Project root.
 
 A Batch Run writes only into each Project: their replicates' analyses and the Project-level Combined Analysis, figures, and reports listed above. The Batch folder itself gains at most a `batch.yaml`; there are no batch-level analysis outputs. See the **Batch runs** help topic.
 
-The Hub **Tools** panel opens `analysis/` and `qc/` for the currently selected directory. If a replicate is loaded, those buttons open the replicate folders; at a Project root, they open Project-level folders when they exist.
+The Hub has no folder-opening buttons: a Project has an `analysis/` of its own *and* one per replicate, so *Open analysis folder* had no single target, and *Open qc folder* was one click on a path the run already logs. Open the folder you want from the paths listed above.

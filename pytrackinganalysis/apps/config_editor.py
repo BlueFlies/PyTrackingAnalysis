@@ -57,7 +57,10 @@ class ConfigEditorWindow(QMainWindow):
 
     def __init__(self, initial_path: str | None = None) -> None:
         super().__init__()
-        self.resize(1200, 820)
+        ## 25% narrower than it was (1200): the widest thing in it is the
+        ## regions table, and the Parameter-override fields that used to
+        ## stretch to fill the rest are now two narrow columns.
+        self.resize(900, 820)
         self._current_path: Optional[Path] = None
         self._disk_text: str = ""  # yaml serialized at last load/save
         # True while _load_path is populating the tabs, so the experiment-type
@@ -301,7 +304,7 @@ class ConfigEditorWindow(QMainWindow):
         rig = self._global_tab.tracking_rig.currentData()
         expected = t.regions_for_rig(rig) if hasattr(t, "regions_for_rig") else None
         if expected and not self._tracking_tab.region_names():
-            self._tracking_tab.set_region_names(expected)
+            self._tracking_tab.set_region_names(expected, self._plate(t, rig))
         self._current_path = path
         self._disk_text = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
         self._set_title(path)
@@ -356,6 +359,16 @@ class ConfigEditorWindow(QMainWindow):
                 self._counting_tab.add_region(key, aliases)
             self._tabs.setCurrentWidget(self._counting_tab)
 
+    @staticmethod
+    def _plate(experiment_type, rig) -> dict | None:
+        """The rig's plate geometry from the Experiment Type, or None.
+
+        The type owns which wells face which way (Valence on Arena Max flips
+        T_0..T_17); laying the plate out without asking it produced an all-+1
+        table that disagreed with the same config built from scratch."""
+        getter = getattr(experiment_type, "tracking_regions_for_rig", None)
+        return getter(rig) if getter is not None else None
+
     def _maybe_populate_tracking_regions(self, rig: str) -> None:
         """Lay out a typed Experiment Type's fixed plate when the rig is chosen.
 
@@ -393,7 +406,7 @@ class ConfigEditorWindow(QMainWindow):
             )
             if resp != QMessageBox.StandardButton.Yes:
                 return
-        self._tracking_tab.set_region_names(expected)
+        self._tracking_tab.set_region_names(expected, self._plate(t, rig))
         self._tabs.setCurrentWidget(self._tracking_tab)
 
     def _write(self, path: Path) -> None:
