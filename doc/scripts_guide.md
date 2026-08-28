@@ -1,4 +1,4 @@
-\# PyTrackingAnalysis — Scripts & the Script Editor
+# PyTrackingAnalysis — Scripts & the Script Editor
 
 Scripts are saved, re-runnable analysis recipes. Instead of clicking the same
 sequence of Hub buttons for every experiment, you record the sequence once —
@@ -36,8 +36,8 @@ Project-level scripting (`project.yaml`).
     under `scripts:` — or, for the replicates of a Project, centrally in the
     Project's `project.yaml` under `experiment_scripts:` (one recipe for
     every replicate, never copied around).
-  - **Project Scripts** use project-level actions (run in experiments,
-    combined analysis, publication figures, project report, AI narrative) and
+  - **Project Scripts** use project-level actions (validate design, run in
+    experiments, project report, publication figures, AI narrative) and
     live in `project.yaml` under `scripts:`. See [§8](#8-project-scripts-two-level-scripting).
 - A file can hold **any number of scripts**, each with its own name.
 - Steps execute **top to bottom**. State flows through the run: the
@@ -51,14 +51,16 @@ Project-level scripting (`project.yaml`).
 
 There are two routes into the same editor:
 
-- **Experiment scripts** — launch the Config Editor (`pytrack-config`, or
-  **Edit config…** from the Hub), open the experiment's
-  `tracking_config.yaml`, and click the **scripts icon** in its top bar.
-- **Project scripts** — click **Edit scripts…** on the Hub's Project card.
-  The editor opens on `project.yaml` with a **level switcher** in the top
-  bar: *Project scripts* shows the project-action palette; *Experiment
-  scripts* shows the familiar experiment palette editing the centrally-held
-  `experiment_scripts:` recipes.
+- **Experiment scripts** — open the experiment's `tracking_config.yaml` in
+  the Config Editor (`pytrack-config` directly, or **Experiment configs…** in
+  the Hub's Project panel → **Experiments** card), then click the **scripts
+  icon** in its top bar.  (The Hub's **Edit config…** button is the *Project*
+  editor — it opens `project.yaml`, not a replicate's config.)
+- **Project scripts** — click **Edit scripts…** in the Hub's Project panel →
+  **Analysis** card.  The editor opens on `project.yaml` with a **level
+  switcher** in the top bar: *Project scripts* shows the project-action
+  palette; *Experiment scripts* shows the familiar experiment palette editing
+  the centrally-held `experiment_scripts:` recipes.
 
 The editor opens as its own window, titled with the YAML file it edits. It is
 non-modal, so you can keep the Config Editor and Hub open alongside it.
@@ -107,7 +109,8 @@ and restored when you re-enable the checkbox.
 
 **Preview + Save (bottom).** A live YAML rendering of the current script —
 exactly what will be written to disk. **Save** writes *all* scripts back into
-the `tracking_config.yaml` (everything else in the file is preserved);
+the YAML the editor is open on — a `tracking_config.yaml`, or the relevant
+section of a `project.yaml` (everything else in the file is preserved);
 **Reload** discards unsaved changes and re-reads the file.
 
 ---
@@ -128,7 +131,8 @@ A typical everyday recipe — load, drop bad trackers, analyse, report:
 6. Click **Save**.
 
 The script now appears in the Hub's **Scripts** tile after that replicate is
-loaded. Click **Reload** in the Project panel if the Hub was already open.
+loaded. If the Hub already had it loaded, click **Reload** in the Scripts
+panel to re-read the file.
 
 **Rule of thumb: start standalone experiment scripts with `Load experiment`.**
 Steps that need an experiment raise *"no experiment loaded — add a 'Load
@@ -156,7 +160,9 @@ from the Hub after loading an experiment, and scripts run through
 
 Filters change the in-memory experiment for the rest of the run — steps after
 a filter only see the surviving trackers. Order matters: filter *before* the
-analysis steps.
+analysis steps.  (In the palette the two filters sit under **QC** and **Run
+QC** under **Analyze**; they are grouped together here because that is the
+order you use them in.)
 
 ### Analyze
 
@@ -222,8 +228,8 @@ The **Scripts** card lists every script in the currently-selected YAML:
   over from one script to the next (a script without a load step continues on
   whatever the previous script loaded).
 
-Runs execute on a background thread — the log streams to the **Output** tab
-when the run completes, failures (with tracebacks) also land in the
+Runs execute on a background thread — the log streams to the **Output** tab in
+real time as each step runs, failures (with tracebacks) also land in the
 **Errors** tab, and figures open as plot tabs.
 
 If an experiment is already loaded in the Hub, a script that has *no*
@@ -233,14 +239,18 @@ fresh.
 
 ### From a Project
 
-The Hub's Project card has its own **Script** picker and **Run script**
-button for Project Scripts — including the built-in **Standard pipeline**.
-See §8.
+The Hub's Project panel → **Analysis** card has its own **Script** picker and
+**Run script** button for Project Scripts — including the two built-ins,
+**Report pipeline** and **Standard pipeline**.  A **Batch Run** runs a
+designated Project Script in every Project of a folder; see the user guide
+§8.5.  See §8 below for the actions themselves.
 
 ### Editing while the Hub is open
 
-The Hub re-reads scripts when the project is (re)loaded. After saving in the
-Script Editor, click **Reload** in the Hub's Project card to pick up changes.
+The Hub re-reads scripts when the Project is (re)loaded — reopening it from
+**Open Project** re-reads it from disk. After saving experiment scripts in the
+Script Editor, **Reload** in the Hub's **Scripts** panel picks up the changes
+without reloading anything else.
 
 ---
 
@@ -254,13 +264,13 @@ exactly one place, the `run_in_experiments` bridge.
 
 ### Project actions
 
-| Action | What it does |
-|--------|--------------|
-| `validate_design` | Re-checks every replicate against the project design; fails the script on any mismatch. A cheap guard for the top of a pipeline. |
-| `run_in_experiments` | Runs a named **Experiment Script** in every replicate (see below). |
-| `render_publication_figures` | Writes the pooled publication figures to `figures/` from `plot_specs.yaml` (SVG, PDF, or both) — the Plot Editor's saves, headless. Skips itself when the project has no `plot_specs.yaml`. |
-| `project_report` | **The whole Create-report button in one step**: analyzes every replicate (with its own report), pools the results into `analysis/`, then builds `<project>_report.pdf`. Nothing needs to run before it. Options: create per-replicate reports, skip already-analyzed. |
-| `generate_ai_narrative` | Asks an AI provider to write the project narrative. **Soft-fails by default** — a provider error is logged and the script continues. |
+| Action | Parameters | What it does |
+|--------|------------|--------------|
+| `validate_design` | — | Re-checks every replicate against the project design; fails the script on any mismatch. A cheap guard for the top of a pipeline. |
+| `run_in_experiments` | `script` (name), `only` (replicate names; blank = all) | Runs a named **Experiment Script** in every replicate — or just the ones named in `only` (see below). |
+| `render_publication_figures` | `format` (`svg` / `pdf` / `both`, default `svg`) | Writes the pooled publication figures to `figures/` from `plot_specs.yaml` — the Plot Editor's saves, headless. Skips itself when the project has no `plot_specs.yaml`. |
+| `project_report` | `reports` (per-replicate reports, default on), `skip_analyzed` (default off) | **The whole Create-report button in one step**: analyzes every replicate (with its own report), pools the results into `analysis/`, then builds `<project>_report.pdf`. Nothing needs to run before it. Leave `skip_analyzed` off to match the button, which always re-analyzes; note that a replicate whose removed regions have not reached its saved analysis is re-run even when it *is* on. |
+| `generate_ai_narrative` | `provider` (`anthropic` / `openai`), `soft_fail` (default on) | Asks an AI provider to write the project narrative from the Combined Analysis. **Soft-fails by default** — a provider error is logged and the script continues. |
 
 ### The `run_in_experiments` bridge
 
@@ -276,27 +286,54 @@ replicate does **not** stop the others; all failures are summarized when the
 script ends. Because each replicate is loaded fresh, the script does *not*
 need a `load_experiment` step.
 
+The optional **`only:`** parameter narrows the run to a list of replicate
+directory names; blank means every replicate. The Inspector renders it as a
+checkable replicate list when the editor is open on a `project.yaml`. A name
+matching no replicate is logged and counted in the failure summary while the
+run continues — and the Hub pre-checks the script before running, so an
+unknown `only:` name (or a script name that resolves nowhere) aborts with a
+message before anything runs.
+
 > **Migrating from the old batch mode:** the retired *Batch experiments* mode
 > ran a script named `batch` from each sub-folder's own config. That still
-> works unchanged through the fallback: add a `project.yaml` to the parent
-> (Hub → Create project) and run a Project Script containing
-> `run_in_experiments` with `script: batch`.
+> works unchanged through the fallback: give the parent a `project.yaml` with
+> the Hub's **Initialize existing directory…** button, then run a Project
+> Script containing `run_in_experiments` with `script: batch`.
 
-### The built-in Standard pipeline
+### The two built-in pipelines
 
-The Project card's script picker always offers **Standard pipeline
-(built-in)** — it is never written to your yaml, so it always matches the
-shipped default:
+The Analysis card's script picker always offers both built-ins. Neither is
+ever written to your yaml, so both always match the shipped default.
+
+**Standard pipeline**
 
 1. `validate_design`
 2. `project_report`
 3. `render_publication_figures` (SVG)
 
+**Report pipeline**
+
+1. `project_report`
+2. `render_publication_figures` (SVG) — dropped for a Project that has no
+   `plot_specs.yaml`, so an unattended run never invents uncurated
+   default-spec figures
+
+The Report pipeline is the **Create report** button plus curated figures, and
+it is what a **Batch Run** executes in every Project unless another script is
+designated (user guide §8.5). It omits the `validate_design` gate on purpose:
+that would fail Projects mid-migration and stop an overnight run. Its steps
+are also what every new `project.yaml` is seeded with, under the script name
+`batch`.
+
+In both, the figure step comes *after* the report: `project_report` is what
+analyzes the replicates, and `render_publication_figures` reads their saved
+summaries.
+
 Zero authoring gets a complete project run; your own scripts appear alongside
-it in the picker.
+the built-ins in the picker.
 
 > **Retired actions.** `run_all_analyses` and `build_combined_analysis` used
-> to be separate steps. A script action mirrors a Project-card button, and
+> to be separate steps. A script action mirrors an Analysis-card button, and
 > there is no Run-all or Build-combined button — both are part of what
 > **Create report** does — so both actions were folded into `project_report`.
 > Scripts you saved before that still run: the retired steps are absorbed

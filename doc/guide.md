@@ -14,6 +14,7 @@
    - [Analysis Hub](#52-analysis-hub-pytrack-hub)
    - [Config Editor](#53-config-editor-pytrack-config)
    - [QC Viewer](#54-qc-viewer-pytrack-qc)
+   - [Plot Editor](#55-plot-editor-pytrack-plots)
 6. [Running the pipeline from a notebook or script](#6-running-the-pipeline-from-a-notebook-or-script)
 7. [Understanding the outputs](#7-understanding-the-outputs)
 8. [Projects: replicates and combined analysis](#8-projects-replicates-and-combined-analysis)
@@ -77,7 +78,7 @@ Restart the terminal so `uv` is on `PATH`.
 **Clone the repository and create the environment**
 
 ```powershell
-git clone https://github.com/your-org/PyTrackingAnalysis.git
+git clone https://github.com/spletcher1/PyTrackingAnalysis.git
 cd PyTrackingAnalysis
 
 # Create a virtual environment using the Python version in .python-version (3.13)
@@ -127,7 +128,7 @@ Restart the terminal (or run `source ~/.zshrc` / `source ~/.bash_profile`).
 **Clone the repository and create the environment**
 
 ```bash
-git clone https://github.com/your-org/PyTrackingAnalysis.git
+git clone https://github.com/spletcher1/PyTrackingAnalysis.git
 cd PyTrackingAnalysis
 uv sync
 ```
@@ -188,7 +189,7 @@ sudo dnf install xcb-util-cursor libxkbcommon-x11
 **Clone the repository and create the environment**
 
 ```bash
-git clone https://github.com/your-org/PyTrackingAnalysis.git
+git clone https://github.com/spletcher1/PyTrackingAnalysis.git
 cd PyTrackingAnalysis
 uv sync
 ```
@@ -299,11 +300,12 @@ per-experiment). Opening the Project **hard-validates** every replicate's
 resolved config against it (a config omitting a key the type defaults still
 matches a design stating that default); region→treatment assignments, fly
 counts, and rigs may differ. The Create/Edit Project dialog edits the design
-and **Add experiment** scaffolds new replicate configs from it — so an empty
+and **Create experiment** scaffolds new replicate configs from it — so an empty
 Project is a valid starting point. Projects also have their own scripts:
 `project.yaml` can carry **Project Scripts** (`scripts:`) and centrally-held
-**Experiment Scripts** (`experiment_scripts:`); the Project card's script
-picker always includes the built-in **Standard pipeline**. See
+**Experiment Scripts** (`experiment_scripts:`); the Analysis card's script
+picker always includes the built-in **Report pipeline** and **Standard
+pipeline**. See
 **scripts_guide.md §8**. Flies from
 the same treatments are **pooled across replicates** for the combined plots,
 data, and statistics: the Combined Analysis stacks each replicate's
@@ -338,8 +340,9 @@ There are three equally valid ways to create one:
 2. **Copy an existing config** — copy a working `tracking_config.yaml` into
    the new experiment directory and edit it.
    Inside a Project, **Experiment configs…** scaffolds a design-conformant
-   config for every experiment directory that lacks one (and **Add
-   experiment…** does it for a directory that does not exist yet).
+   config for every experiment directory that lacks one; **Create
+   experiment…** does it for a directory that does not exist yet, and
+   **Initialize existing directory…** for one that exists without a config.
 3. **Write it by hand** — any text editor works; the file is plain YAML.
 
 Rules that make a file *valid*:
@@ -354,9 +357,9 @@ Rules that make a file *valid*:
   `counting_regions` entries.
 - Every `counting_regions` entry must have an `alias` key.
 
-Check at any time with the Hub's **Tools → Validate YAMLs** button in the top tile strip.
-With a Project selected it validates the `project.yaml` and every replicate's
-`tracking_config.yaml` in one pass; parse errors and semantic problems are
+Check at any time with **Validate YAMLs**, on its own row at the bottom of the
+Project panel's **Create/Load** card.  With a Project selected it validates
+the `project.yaml` and every replicate's `tracking_config.yaml` in one pass; parse errors and semantic problems are
 reported per file in the Output and Errors tabs, with a total at the end.
 
 ### 4.1 `global` — required fields
@@ -429,14 +432,22 @@ Rules for a typed experiment:
   `tracking_type`-driven behavior described below, unchanged. Existing configs
   keep working as-is.
 
-The fastest way to start is **Project → Create/Load → Create experiment…** in
-the Analysis Hub: pick the type and rig, optionally set facets (default 10, 70)
-and design factors, and it writes a ready-to-edit `tracking_config.yaml` and the
-`data/`/`analysis/`/`qc/` folders. For Valence it also lays out the plate — 36
-regions for Arena Max (with the first 18 X-flipped) or 24 for Colosseum, plus the
-Light/NoLight aliases. You then assign each region's treatment and drop the DTrack
-export into `data/`. You can also pick the Experiment Type from the dropdown at the
-top of the Config Editor's **Global** tab. See `docs/adr/0001` and `0002`.
+The fastest way to start is to make the Project first: **Project →
+Create/Load → Create project…** in the Analysis Hub, where you choose the
+Experiment Type, the design factors and levels, the facets (default 10, 70)
+and the quality criteria **once**, for every replicate. Then **Project →
+Experiments → Create experiment…** scaffolds each replicate from that design —
+its `tracking_config.yaml` plus the `data/`/`analysis/`/`qc/` folders — and
+asks only for the directory name, because everything else is the Project's.
+The Hub then offers two ways to finish the scaffold: **Edit config…** opens it
+in the Config Editor, **Copy config from…** replaces it with the config of a
+replicate that already works (checked against the design before it is
+written). For Valence the Config Editor lays out the plate as soon as you pick
+the rig — 36 regions for Arena Max (with the first 18 X-flipped) or 24 for
+Colosseum, plus the Light/NoLight aliases. You then assign each region's
+treatment and drop the DTrack export into `data/`. You can also pick the
+Experiment Type from the dropdown at the top of the Config Editor's **Global**
+tab. See `docs/adr/0001` and `0002`.
 
 The rest of §4.1 describes the fields a **Custom** experiment sets directly.
 
@@ -742,6 +753,7 @@ uv run pytrack-config /path/to/Trial1
 python -m pytrackinganalysis hub /path/to/Trial1
 python -m pytrackinganalysis config /path/to/Trial1
 python -m pytrackinganalysis qc /path/to/Trial1
+python -m pytrackinganalysis plots /path/to/MyProject
 ```
 
 **Desktop launcher / taskbar icon (Linux).** The apps set their own window
@@ -760,13 +772,16 @@ All four apps persist the light/dark theme choice to
 `~/.config/pytrackinganalysis/ui.json`.  Recent projects — and the last-used
 AI provider/model — are tracked there too.
 
+Every app's top bar and most cards carry a **?** button that opens the in-app
+help on that topic — the same ground as this guide, one screen at a time.
+
 ---
 
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
 The Hub's layout (see `docs/adr/0007` and `docs/adr/0009`) is a **tile
-strip** across the top — seven compact live-status tiles:
-**Batch · Project · Analyze · Plots · Scripts · AI · Tools**
+strip** across the top — six compact live-status tiles:
+**Batch · Project · Analyze · Plots · Scripts · AI**
 — with the **output area at full width** underneath. The first two tiles
 work on containers (a Batch or a Project); the tiles after them act on the
 loaded experiment. A tile
@@ -781,9 +796,9 @@ the cards inside its panel, so the state reads the same from the strip and
 from the open panel. The panel still contains exactly the control that fixes
 the missing state (the dimmed Analyze tile opens the panel that tells you to
 load an experiment first), and a dimmed tile or card stays clickable
-throughout. **Batch**, **Project**, and **Tools** are never dimmed — the two
-entry points and the housekeeping tools are always available, and say their
-state in words ("no project - open or create one") rather than by greying.
+throughout. **Batch** and **Project** are never dimmed — the two entry points
+are always available, and say their state in words ("no project - open or
+create one") rather than by greying.
 The four experiment-level tiles - Analyze, Plots, Scripts, AI - dim together
 until a replicate is loaded.
 
@@ -791,7 +806,7 @@ The Hub is **Project-first** (`docs/adr/0008`): an experiment is loaded only
 by double-clicking its row in the Project panel's replicates table, so there
 is one subject at a time because there is one way to change it.  There is no
 Experiment tile — the Project tile reports the loaded experiment on its
-second line, and the **status readout** filling the strip right of the Tools tile
+second line, and the **status readout** filling the strip right of the AI tile
 spells the same state out in full: project name and type, path, replicate and
 analysis counts, and the loaded experiment (design factors in its tooltip).
 
@@ -809,45 +824,65 @@ The panels:
   button; **right-click** it to fix a blocked experiment or edit its removed
   regions, and **Rescan folder** walks the tree again after changes made
   outside the app.  A **Script** picker names the **designated Project Script**
-  (default: the built-in **Report pipeline**), and **Run batch** runs it in
-  every checked Project (§8.5) — after a **review window** that states the
-  target list, offers to file any recording still sitting loose at an
-  experiment root, and previews (or declines) the removal sheet.
-- **Project** — two cards, **Create/Load** and **Analysis** (the panel itself is
-  already titled Project, so neither card repeats it).
-  **Create/Load** picks the folder (an experiment directory *or* a Project; the
-  text box shows just the folder name to stay readable; hover it for the full
-  path), **Load…** opens or re-scans it, and one button edits the Project's own
-  config: **Edit config…** when `project.yaml` is present, **Create config…**
-  when it is missing (which writes a default and opens the same Project
-  editor).  Pointing it at a folder that is *itself* an experiment
-  makes **Create config…** offer the **parent** instead, so the experiment
-  becomes a replicate — a `project.yaml` written beside a
-  `tracking_config.yaml` would be a Project with nothing to load.  Beside it,
-  **Create project…** does the same for a directory you pick, so a new Project
-  can be started without first opening it, and **Create experiment…** scaffolds
-  a standalone experiment directory from an Experiment Type.  There is
-  no tracking-config picker here — `project.yaml` is fixed at the Project
-  root, and each experiment's `tracking_config.yaml` lives one level down
-  (use **Experiment configs…** in the Analysis card); QC is experiment-level
-  and opens on load.
-- **Analysis** (the second card in the Project panel; populated when the
-  selected directory is — or sits inside — a Project) —
-  the main working surface for replicates: a table with per-replicate status
-  (**Experiment, Config, Flies, Excluded, Flagged, Report**; **double-click a
-  row to load that replicate** — this is the only way to load an experiment,
-  and it runs QC as it loads), plus **Experiment configs…** and
-  **Add experiment…** (below), the project-level actions — **Create report** or
-  **Update report**, **Plot editor…**, **AI narrative…**, **View reports**
-  (opens the project report and every replicate report in the desktop's PDF
-  viewer; enabled only once both kinds exist) — and a **Script** picker with
-  **Run script** / **Edit scripts…** (§8.3; the built-in **Report
-  pipeline** and **Standard pipeline** are always available).  Subdirectories that hold no
-  `tracking_config.yaml` are listed too, in italics with **Config: missing**
-  — they are not replicates until they have one.
-- **Analyze** — **Run Analysis**, **Run QC only**, **Create PDF Report** for
-  the loaded experiment.  All tasks run on a background thread; stdout/stderr
-  streams to the **Output** tab in real time.
+  (default: the built-in **Report pipeline**), an opt-in **AI narrative of
+  the batch** checkbox (§8.5), and **Run batch** runs the script in every
+  checked Project (§8.5) — after a **review window** that states the target
+  list, offers to file any recording still sitting loose at an experiment
+  root, and previews (or declines) the removal sheet.
+- **Project** — three cards, in the order the work happens: **Create/Load**
+  (the Project itself), **Experiments** (its replicates), **Analysis** (what
+  you do with them).  None repeats the word Project, because the panel is
+  already titled with it.
+  - **Create/Load** — the read-only path box shows the selected folder (hover it
+    for the full path), and there is one button per state a folder can be in:
+    **Open Project** for a directory that already has a `project.yaml` (picking
+    the one already open re-reads it from disk — there is no separate Reload
+    button, the picker *is* the reload); **Create project…** for a Project that
+    does not exist yet (you choose where it goes, name it, and fill in the
+    design); **Initialize existing directory…** for a directory that exists but
+    has no `project.yaml` (it keeps its name, its subdirectories become the
+    replicates, and the design is inferred from the first one that has a
+    config).  **Edit config…** reopens the Project editor on the loaded
+    `project.yaml`, and reads **Create config…** when the selected folder is not
+    a Project yet; pointing the Hub at a folder that is *itself* an experiment
+    makes it offer the **parent** instead, so the experiment becomes a
+    replicate — a `project.yaml` written beside a `tracking_config.yaml` would
+    be a Project with nothing to load.  Full width on its own row below them,
+    **Validate YAMLs** checks the open Project's `project.yaml` *and* every
+    replicate's `tracking_config.yaml` in one pass.  A summary line under the
+    buttons describes what is loaded.  There is no tracking-config picker here —
+    `project.yaml` is fixed at the Project root, and each experiment's
+    `tracking_config.yaml` lives one level down (use **Experiment configs…** in
+    the Experiments card); QC is experiment-level and opens on load.
+  - **Experiments** — the replicates themselves: a table with per-replicate
+    status (**Experiment, Config, Flies, Excluded, Flagged, Report**;
+    **double-click a row to load that replicate** — this is the only way to load
+    an experiment, and it runs QC as it loads), and the same three cases one
+    level down — **Create experiment…** (the replicate does not exist; it is
+    scaffolded from the project design and only its name is asked for),
+    **Initialize existing directory…** (the directory is in the Project but has
+    no config; any loose recording is filed into `data/`, every other loose file
+    into `extra_files/`, and the config is scaffolded from the design), and
+    **Experiment configs…** (create or edit each replicate's config in bulk).
+    All three wait for a Project, because a replicate's design is inherited from
+    `project.yaml`.  Subdirectories that hold no `tracking_config.yaml` are
+    listed too, in italics with **Config: missing** — they are not replicates
+    until they have one.
+  - **Analysis** — the project-level actions over every replicate: **Create
+    report** or **Update report** (the label follows whether
+    `<project>_report.pdf` exists), **Plot editor…**, **AI narrative…**,
+    **View reports** (opens the project report and every replicate report in the
+    desktop's PDF viewer; enabled only once both kinds exist), and **Removed
+    regions…** (§9.2.1).  At the bottom, a **Script** picker with **Run script** /
+    **Edit scripts…** (§8.3; the built-in **Report pipeline** and **Standard
+    pipeline** are always available).
+- **Analyze** — a **Faceted** checkbox (its label shows the configured
+  cutoffs, and the buttons it applies to gain a `(facet)` suffix while it is
+  on) over **Run Analysis**, **Run QC only**, **Create PDF Report**,
+  **Summarize** and **Run pairwise comparisons** for the loaded experiment.
+  Run Analysis and Create PDF Report ask for optional run notes.  All tasks run
+  on a background thread; stdout/stderr streams to the **Output** tab in real
+  time.
 - **Plots** — dynamically populated with the faceted plots valid for the loaded
   tracking type (`plot_pi_facet`, `plot_totaldistance_facet`, etc.).  Each click
   adds a new tab to the PlotDock.  Toggle **Interactive plots** in the top bar
@@ -868,8 +903,10 @@ The panels:
   the saved summary so stale prose never sits beside fresh figures —
   regenerate it afterwards if wanted.  A failed call shows an error and never
   blocks the report.
-- **Tools** — validate YAML, open the `analysis/` or `qc/` folder in the system
-  file browser, and clear the matplotlib cache.
+
+There is **no Tools tile**: **Validate YAMLs** moved to the bottom of the
+**Create/Load** card, opening a folder is the file manager's job, and
+matplotlib's cache is now cleared automatically every time the Hub closes.
 
 #### The output area (below the strip)
 
@@ -880,9 +917,11 @@ The panels:
   validation problems, dismissed warning pop-ups, …) so they can't get lost in
   the normal output.  When issues arrive while you're on another tab, the tab
   title shows an unseen count, e.g. **Errors (3)**; viewing the tab resets it.
-- Every plot or artifact opens as an additional closable tab.  The
-  **Clear plots** button in the tab-bar corner closes all of them at once and
-  returns to the Output tab (Output and Errors are never closed).
+- Every plot or artifact opens as an additional closable tab.  Three buttons
+  in the tab-bar corner clear things separately: **Clear Analysis Tabs**
+  closes every plot and artifact tab at once and returns to the Output tab
+  (Output and Errors are never closed), while **Clear Output** and **Clear
+  Errors** empty those two logs.
 
 ---
 
@@ -920,7 +959,8 @@ Scripts are stored under the `scripts:` key of the surrounding
 `tracking_config.yaml`.  The Hub's **Scripts** card reads the same file, so
 saving in the Script Editor makes scripts immediately runnable from the Hub.
 
-Opened on a Project's `project.yaml` (Project view → **Edit scripts…**), the
+Opened on a Project's `project.yaml` (Project panel → Analysis card →
+**Edit scripts…**), the
 same editor gains a **level switcher**: **Project scripts** (the
 project-action palette — §8.3) and **Experiment scripts** (the familiar
 experiment palette, held centrally for every replicate).
@@ -954,7 +994,7 @@ Publication figures for Valence experiments (see `docs/adr/0004`), rendered by
 summarized, exclusion-filtered data.
 
 - **Project-level tool.** Open a **Project directory** (or launch from the
-  Hub's Project card): the four faceted plots show all flies **pooled across
+  Hub's Analysis card): the four faceted plots show all flies **pooled across
   replicates** (built from the replicates' filtered summaries), and a
   **Mark experiments** option gives each replicate its own point shape with a
   legend. `plot_specs.yaml` and `figures/` live at the **project root**.
@@ -1091,7 +1131,7 @@ The available plot methods depend on `tracking_type`:
 
 ### Projects from Python
 
-The `Project` object (§8) mirrors everything the Hub's Project view does:
+The `Project` object (§8) mirrors everything the Hub's Project panel does:
 
 ```python
 from pytrackinganalysis.project import Project, create_project_file
@@ -1154,6 +1194,7 @@ outputs to the Project root — see the last table below).
 | `*_Stats.txt` | Pairwise statistical comparisons across treatment groups: independent two-sample **Welch's** t-test (unequal variance) when there are exactly two treatment levels, Tukey HSD when there are three or more. Each line carries both groups' N, mean and SD, and any trackers dropped for having no numeric value in the window are counted explicitly. Faceted runs append a note stating how many uncorrected tests were run and the Bonferroni-adjusted threshold. Pass `equal_var=True` to `run_pairwise_comparisons` for the classic Student's test. |
 | `*_plot_*.png` | One PNG per plot type, named after the plot method |
 | `*_AI_Summary.txt` | (Optional) The saved AI Summary; provenance (provider, model, date) on the first line. The report embeds it while this file exists; **every `run_analysis()` deletes it** so it can never describe a stale run |
+| `ai_narrative.md` | (Optional) The same AI Summary as Markdown, under a fixed, name-independent filename so `**/ai_narrative.md` finds every narrative in a tree. Written and deleted with its `.txt` sibling |
 | `<name>_report.pdf` | **Written to the experiment directory root** (beside `tracking_config.yaml`), named and titled after that directory. Multi-page PDF: cover with status lines → notes and AI Summary (when present) → analysis figures (per-phase when faceted) → statistical-comparisons table → structured experiment summary → QC figures (data quality plus per-tracker transitions/min and movement bars) |
 
 The experiment directory root also holds two **inputs** you may edit by hand:
@@ -1186,8 +1227,8 @@ regenerated by a run.
 
 A **Project** groups replicate experiment directories of one design under a
 parent directory marked by a `project.yaml` (layout and design rules in §3;
-`docs/adr/0005`).  It replaces the retired batch-over-experiments mode: the Hub's Project view
-runs every replicate, pools their results into a Combined Analysis, renders
+`docs/adr/0005`).  It replaces the retired batch-over-experiments mode: the
+Hub's Project panel runs every replicate, pools their results into a Combined Analysis, renders
 project-level publication figures, and builds a Project Report.
 
 ### 8.1 Creating a Project
@@ -1196,16 +1237,20 @@ project-level publication figures, and builds a Project Report.
   directory and edit the project **design** (experiment type, design factors
   and levels, facets, quality criteria, counting-region names).  The design
   is seeded from the Experiment Type's defaults.  An empty Project is valid —
-  add replicates with **Add experiment…**, which scaffolds each new
-  `tracking_config.yaml` *from the design*.
-- **Existing replicates / retired batch-over-experiments parent** — run **Create project** on the
-  parent: the dialog infers the design from the first replicate and writes
-  `project.yaml`; nothing inside the replicate directories changes.
+  add replicates with **Experiments → Create experiment…**, which scaffolds
+  each new `tracking_config.yaml` *from the design*.
+- **Existing replicates / retired batch-over-experiments parent** — run
+  **Initialize existing directory…** on the parent: it keeps its own name, its
+  subdirectories become the replicates, the dialog infers the design from the
+  first replicate that has a config, and `project.yaml` is written there;
+  nothing inside the replicate directories changes.
 - **Existing folders without configs** — the subdirectories are listed in the
   replicate table as **Config: missing**.  **Experiment configs…** gives each
   one a `tracking_config.yaml` from the project design (**Create all
   missing** does the lot), then opens any of them in the Config Editor to
   assign that recording's regions.  Existing configs are never overwritten.
+  For a single folder, **Initialize existing directory…** does the same and
+  also files a recording still sitting loose at its root into `data/`.
 
 Opening a Project **hard-validates** every replicate's resolved config
 against the design and refuses to load on a mismatch, naming the offending
@@ -1213,10 +1258,10 @@ replicate and key.  Region→treatment assignments, counting-region aliases,
 fly counts, and rigs may differ; differing cutoffs or quality criteria are
 surfaced as warnings, not errors.
 
-### 8.2 The Project view workflow
+### 8.2 The Project panel workflow
 
-With a Project selected, the Hub shows the **Project view** (§5.2): the
-replicate table plus project actions.  For a full refresh, use **Create
+With a Project selected, the Hub's **Project** panel (§5.2) holds the
+replicate table plus the project actions.  For a full refresh, use **Create
 report** before `<project>_report.pdf` exists or **Update report** after it
 exists; both labels run every replicate, rebuild Combined Analysis, and write
 the Project report.
@@ -1275,15 +1320,23 @@ failure summary while the run continues; the Hub additionally **pre-checks**
 scripts before running, so unknown `only:` names or a script name that
 resolves nowhere abort with a message before anything runs.
 
-The Project view's **Script** picker always includes two built-ins — zero
-authoring gets a complete run.  The **Standard pipeline** runs validate
-design → run all analyses → build combined analysis → render publication
-figures → project report.  The **Report pipeline** runs run all analyses →
-build combined analysis → render publication figures *only when the Project
-has a `plot_specs.yaml`* → project report — the **Create report** button
-plus curated figures, and the default designated script for Batch Runs
-(§8.5).  **Edit scripts…** opens the Script Editor on `project.yaml`
-with the level switcher (§5.3).
+The Analysis card's **Script** picker always includes two built-ins — zero
+authoring gets a complete run.  Neither is ever written to `project.yaml`, so
+both track the shipped default.
+
+- **Standard pipeline** — `validate_design` → `project_report` →
+  `render_publication_figures` (SVG).
+- **Report pipeline** — `project_report` → `render_publication_figures`
+  (SVG), the latter dropped for a Project with no `plot_specs.yaml`.  This is
+  the **Create report** button plus curated figures, and the default
+  designated script for Batch Runs (§8.5); it omits the `validate_design`
+  gate, which would fail Projects mid-migration.
+
+Both put the figure step *after* the report: `project_report` is what analyzes
+the replicates, and `render_publication_figures` reads their saved summaries,
+so the other order fails on a Project nobody has analyzed yet.  **Edit
+scripts…** opens the Script Editor on `project.yaml` with the level switcher
+(§5.3).
 
 ### 8.4 Fixed pipeline from Python
 
@@ -1299,16 +1352,16 @@ at least one `.xlsx`; other directories are skipped.  Optional arguments:
 `cutoffs` (override every experiment's facet cutoffs), `qc_cutoff` (default
 0.9), and `force_preprocessing`.  It needs no `project.yaml` and builds
 nothing at the parent level — for the pooled Combined Analysis and Project
-Report, use the `Project` API (§6) or the Hub's Project view; to run many
+Report, use the `Project` API (§6) or the Hub's Project panel; to run many
 *Projects* at once, use a Batch Run (§8.5).
 
 **Preparing many folders at once:** the Hub's **Batch tools** dialog (copy
 one master YAML into every sub-directory, bulk-rename sub-directories,
 convert flat layouts into the `data/` structure, combine summary CSVs) was
 removed in favour of the Project workflow: **Experiment configs…** scaffolds
-a design-conformant config per replicate (§8.2), **Add experiment…** creates
-the `data/` structure for a new one, and Combined Analysis pools the summary
-CSVs (§6).
+a design-conformant config per replicate (§8.2), **Create experiment…**
+creates the `data/` structure for a new one, and Combined Analysis pools the
+summary CSVs (§6).
 
 ### 8.5 Batch Runs: many Projects at once
 
@@ -1340,22 +1393,41 @@ The designation resolves per Project, in order:
 A name that resolves nowhere fails that Project; the run continues and the
 summary says so.
 
-The default designation is the built-in **Report pipeline** (§8.3): run all
-analyses → build combined analysis → render publication figures *only when
-the Project has a `plot_specs.yaml`* → project report.  Zero authoring
-therefore makes a Batch Run mean "press **Create report** on every
-Project", without rendering uncurated default-spec figures unattended.
+The default designation is the built-in **Report pipeline** (§8.3):
+`project_report` → `render_publication_figures`, the figure step dropped for
+a Project with no `plot_specs.yaml`.  Zero authoring therefore makes a Batch
+Run mean "press **Create report** on every Project", without rendering
+uncurated default-spec figures unattended.
 `batch.yaml` is lazy — it is written only when the designation is changed
 away from that default (a `script:` key) or a `project_scripts:` section is
 authored by hand; leaving the default selected never creates the file.
+
+### The Batch AI narrative
+
+The Batch panel also carries an opt-in **AI narrative of the batch**
+checkbox.  With it ticked (the provider is chosen *before* the run starts),
+the Batch Run finishes by reading every Project's `analysis/ai_narrative.md`
+and asking the provider to synthesize them into **`batch_ai_narrative.md`**
+at the Batch root: results across the batch, compromised designs, and
+Projects that lost many flies — deliberately skipping the per-Project detail
+that lives one level down.  It is a **synthesis, not a pooling**; a Batch
+never combines data across Projects.
+
+Because the default `batch` script rebuilds each Combined Analysis, and that
+deletes the Project's narrative, most Projects have none left by the time the
+batch narrative is written — so a Project without one gets a narrative
+generated first (an extra provider call, logged as one).  A Project that
+cannot produce one is named and skipped, and the front matter of
+`batch_ai_narrative.md` records which Projects the prose actually covers.
 
 ### Results
 
 Per-replicate results always land in each experiment's own `analysis/` and
 `qc/` folders; the pooled artifacts land at the Project root (§7) — the two
 levels never mix outputs.  A Batch Run writes only into each Project the
-same way: the Batch folder itself gains at most a `batch.yaml`, and no
-batch-level analysis outputs exist.
+same way: the Batch folder itself gains at most a `batch.yaml` and, when the
+narrative was requested, a `batch_ai_narrative.md`; no batch-level *analysis*
+outputs exist.
 
 ---
 
@@ -1848,7 +1920,7 @@ prj.create_report()
 
 Put `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` in a `.env` file (next to
 where you launch from, or `~/.config/pytrackinganalysis/.env`).  The Hub's
-**AI** card (per-experiment summary) and the Project view's **AI narrative…**
+**AI** card (per-experiment summary) and the Analysis card's **AI narrative…**
 then light up; without a key they stay disabled and everything else works
 unchanged.
 
