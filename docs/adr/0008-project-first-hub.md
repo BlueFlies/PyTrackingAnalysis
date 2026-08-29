@@ -92,3 +92,23 @@ between replicates.
   that only care about navigation must stub `_load_experiment` (which takes
   the target directory); a failed load calls `_warn`, which is modal and will
   hang a headless run.
+
+## Amendment (2026-08-29): an analyzed replicate loads without QC
+
+Double-click ran `Load + QC` for every replicate and opened the QC viewer
+and the Analyze panel afterwards. That is the right first contact with a
+recording, but for a replicate whose analysis already exists it re-ran the
+QC suite and re-opened a viewer on artifacts that had not changed, every
+time the user hopped between replicates. The double-click now reads the
+table's own status: a replicate **with** a saved analysis is loaded as it is
+(`Load` — the experiment object is built, `run_qc` is not called, the QC
+viewer is not launched) and the Experiment group (ADR-0012) opens with no
+panel; **Run QC** and **Run Analysis** sit in that group for anyone who
+wants either redone. A replicate **without** one keeps the full path: `Load
++ QC`, the QC viewer, the Analyze panel. A stale analysis (ADR-0010) still
+counts as analyzed — the table flags staleness, and re-running is one click.
+
+The loaded experiment is named, on the Experiment tile and in the status
+readout, by its **directory** — the name the replicates table lists — not by
+the recording's own name (the xlsx basename, which is the rig's name and the
+same for every replicate).

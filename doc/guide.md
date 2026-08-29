@@ -779,36 +779,45 @@ help on that topic — the same ground as this guide, one screen at a time.
 
 ### 5.2 Analysis Hub (`pytrack-hub`)
 
-The Hub's layout (see `docs/adr/0007` and `docs/adr/0009`) is a **tile
-strip** across the top — six compact live-status tiles:
-**Batch · Project · Analyze · Plots · Scripts · AI**
-— with the **output area at full width** underneath. The first two tiles
-work on containers (a Batch or a Project); the tiles after them act on the
-loaded experiment. A tile
-shows only status (the project's name and replicate health, the loaded
-experiment's fly counts, whether analysis is faceted, …); **clicking it
-drops an anchored panel** holding all of that area's controls. One panel is
-open at a time; **Esc** or clicking anywhere else closes it, and **running
-tasks leave panels in place** while the streaming log and plots remain
-visible below. Tiles never move or hide: a tile whose subject is missing is
-dimmed with a hint — greyed surface, muted title, greyed icon — and so are
-the cards inside its panel, so the state reads the same from the strip and
-from the open panel. The panel still contains exactly the control that fixes
-the missing state (the dimmed Analyze tile opens the panel that tells you to
-load an experiment first), and a dimmed tile or card stays clickable
-throughout. **Batch** and **Project** are never dimmed — the two entry points
-are always available, and say their state in words ("no project - open or
-create one") rather than by greying.
-The four experiment-level tiles - Analyze, Plots, Scripts, AI - dim together
+The Hub's layout (see `docs/adr/0007`, `docs/adr/0009`, and
+`docs/adr/0012`) is a **tile ribbon** across the top — three wide live-status
+tiles, one per level of the containment hierarchy:
+**Batch · Project · Experiment**
+— with the **output area at full width** underneath. Batch and Project work
+on containers (a Batch or a Project); **Experiment** is the loaded replicate,
+and **clicking it expands a second row of four sub-tiles** beneath it —
+**Analyze · Plots · Scripts · AI** — the tools that act on that experiment.
+Clicking Experiment again folds them away — so does choosing Batch or
+Project, or clicking into the output area: the expanded row counts as the
+one open thing. A tile shows only status (the
+project's name and replicate health, the loaded experiment's fly counts,
+whether analysis is faceted, …); **clicking a Batch, Project, or sub-tile
+drops an anchored panel** holding all of that area's controls, under the
+ribbon's last row. One panel is open at a time; **Esc** or clicking anywhere
+else closes it, and **running tasks leave panels in place** while the
+streaming log and plots remain visible below. Tiles never move or hide: a
+tile whose subject is missing is dimmed with a hint — greyed surface, muted
+title, greyed icon — and so are the cards inside its panel, so the state
+reads the same from the ribbon and from the open panel. The panel still
+contains exactly the control that fixes the missing state (the dimmed Analyze
+tile opens the panel that tells you to load an experiment first), and a
+dimmed tile or card stays clickable throughout. **Batch** and **Project** are
+never dimmed — the two entry points are always available, and say their
+state in words ("no project - open or create one") rather than by greying.
+**Experiment** is the one exception the other way: with nothing loaded it is
+dimmed *and* inert, because it holds no fix — its hint says where the fix is
+("double-click a replicate in Project"). The four sub-tiles dim together
 until a replicate is loaded.
 
 The Hub is **Project-first** (`docs/adr/0008`): an experiment is loaded only
 by double-clicking its row in the Project panel's replicates table, so there
-is one subject at a time because there is one way to change it.  There is no
-Experiment tile — the Project tile reports the loaded experiment on its
-second line, and the **status readout** filling the strip right of the AI tile
-spells the same state out in full: project name and type, path, replicate and
-analysis counts, and the loaded experiment (design factors in its tooltip).
+is one subject at a time because there is one way to change it.  Loading a
+replicate lights the Experiment tile — its name and tracking type on one
+line, its fly counts (total, excluded, flagged) on the other, each worded to
+fit the tile without an ellipsis — and opens the Analyze panel; the **status readout** filling the strip right of the
+Experiment tile spells the same state out in full: project name and type,
+path, replicate and analysis counts, and the loaded experiment (design
+factors in its tooltip).
 
 The panels:
 
@@ -853,11 +862,15 @@ The panels:
     buttons describes what is loaded.  There is no tracking-config picker here —
     `project.yaml` is fixed at the Project root, and each experiment's
     `tracking_config.yaml` lives one level down (use **Experiment configs…** in
-    the Experiments card); QC is experiment-level and opens on load.
+    the Experiments card); QC is experiment-level and runs on the first load.
   - **Experiments** — the replicates themselves: a table with per-replicate
     status (**Experiment, Config, Flies, Excluded, Flagged, Report**;
     **double-click a row to load that replicate** — this is the only way to load
-    an experiment, and it runs QC as it loads), and the same three cases one
+    an experiment. A replicate with no analysis yet runs QC as it loads, opens
+    the QC viewer, and lands in the Analyze panel; an already-analyzed one is
+    loaded as it is — no QC re-run, no QC viewer — and its Experiment group
+    opens, where **Run QC** and **Run Analysis** redo either on request), and
+    the same three cases one
     level down — **Create experiment…** (the replicate does not exist; it is
     scaffolded from the project design and only its name is asked for),
     **Initialize existing directory…** (the directory is in the Project but has
@@ -885,9 +898,7 @@ The panels:
   time.
 - **Plots** — dynamically populated with the faceted plots valid for the loaded
   tracking type (`plot_pi_facet`, `plot_totaldistance_facet`, etc.).  Each click
-  adds a new tab to the PlotDock.  Toggle **Interactive plots** in the top bar
-  to switch between static PNG rendering (fast) and a live canvas with pan /
-  zoom / save toolbar.
+  adds a new tab to the PlotDock, rendered as a static PNG.
 - **Scripts** — lists saved analysis recipes from the active YAML's `scripts:`
   section.  **Run Script** / **Run All** executes them and routes each step's
   log output to the Output tab and each figure to a PlotDock tab.  Author

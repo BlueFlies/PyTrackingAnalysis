@@ -151,8 +151,39 @@ _PLOT_ICON_BY_LABEL: dict[str, str] = {
 }
 
 
+#: Tracking types as the Experiment tile names them: a word or two of
+#: plain English rather than the enum's shouting (``TWOCHOICETRACKER``).
+_TRACKING_TYPE_LABELS = {
+    "TRACKER": "tracker",
+    "TWOCHOICETRACKER": "two-choice tracker",
+    "XCHOICETRACKER": "X-choice tracker",
+    "DDROPTRACKER": "D-drop tracker",
+    "PAIRWISEINTERACTIONTRACKER": "pairwise tracker",
+    "CENTROPHOBISMTRACKER": "centrophobism tracker",
+    "COUNTER": "counter",
+    "TWOCHOICECOUNTER": "two-choice counter",
+    "PAIRWISEINTERACTIONCOUNTER": "pairwise counter",
+}
+
+
+def _tracking_type_label(exp) -> str | None:
+    """The loaded experiment's tracking type in plain words, or None when
+    the object cannot say (a partial experiment, a test double)."""
+    try:
+        name = exp.parameters.get_tracking_type().name
+    except Exception:  # noqa: BLE001
+        return None
+    return _TRACKING_TYPE_LABELS.get(str(name), str(name).lower())
+
+
 class HubWindow(QMainWindow):
     """The Analysis Hub main window."""
+
+    #: The four tiles the Experiment tile expands into (ADR-0012). Their
+    #: panels anchor under the sub-strip, so opening one expands it.
+    _EXPERIMENT_SUBTILES = ("analyze", "plots", "scripts", "ai")
+    #: The sub-strip's fixed height: one tile plus its bottom margin.
+    _SUB_STRIP_HEIGHT = StatusTile.HEIGHT + 8
 
     _BATCH_PROJECT_COLUMN_MAX_WIDTH = PROJECT_COLUMN_MAX_WIDTH
 
@@ -164,7 +195,9 @@ class HubWindow(QMainWindow):
         self._exp: ExperimentMod.Experiment | None = None
         self._project_dir: Path | None = None
         self._worker: TaskWorker | None = None
-        self._open_analyze_after_load = False
+        #: What to reveal once a load finishes: "analyze" (the panel) or
+        #: "group" (the Experiment tile's sub-strip) — or nothing.
+        self._reveal_after_load: str | None = None
         # (app_name, Popen) for child apps launched from the Tools card. They run
         # independently of the Hub; tracked only so an immediate failure is visible.
         self._subapps: list[tuple[str, object]] = []
@@ -197,15 +230,10 @@ class HubWindow(QMainWindow):
 
         # ── Top bar ─────────────────────────────────────────────────────
         self._top_bar = TopBar("PyTrackingAnalysis — Analysis Hub")
-        self._interactive_checkbox = QCheckBox("Interactive plots")
-        self._interactive_checkbox.setToolTip(
-            "When checked, figures embed as live matplotlib canvases with "
-            "zoom/pan/save toolbars. When unchecked, they render as static "
-            "PNGs (faster)."
-        )
-        self._interactive_checkbox.toggled.connect(
-            lambda _on: self._refresh_tiles())
-        self._top_bar.add_right(self._interactive_checkbox)
+        ## No "Interactive plots" toggle (user feedback 2026-08-29): it was
+        ## never checked, so figures always render as static PNGs — the
+        ## PlotDock still supports live canvases (add_figure interactive=)
+        ## for any caller that wants one.
         self._top_bar.add_right(make_topbar_help_button(self, topic_id="getting_started"))
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(
@@ -224,10 +252,24 @@ class HubWindow(QMainWindow):
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(0)
 
-        # The tile strip: compact live-status chips; every control lives in
-        # the tile's anchored panel.
+        # The tile ribbon (ADR-0012): a strip of three container tiles —
+        # Batch · Project · Experiment — and, under it, the sub-strip the
+        # Experiment tile expands into: the four experiment-level tiles.
+        # Tiles are compact live-status chips; every control lives in a
+        # tile's anchored panel.
+        self._ribbon = QWidget()
+        self._ribbon.setObjectName("TileRibbon")
+        ribbon_lay = QVBoxLayout(self._ribbon)
+        ribbon_lay.setContentsMargins(0, 0, 0, 0)
+        ribbon_lay.setSpacing(0)
         self._strip = QFrame()
         self._strip.setObjectName("TileStrip")
+        ## Fixed vertically: when the sub-strip hides, the ribbon keeps its
+        ## taller geometry until the next relayout, and a Preferred strip
+        ## would stretch into that space — so a panel anchored to "the
+        ## strip's bottom" that instant landed a sub-strip too low.
+        self._strip.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                  QSizePolicy.Policy.Fixed)
         strip_lay = QHBoxLayout(self._strip)
         strip_lay.setContentsMargins(10, 8, 10, 8)
         ## Distinct chips with a hairline seam (user feedback 2026-08-22):
@@ -236,12 +278,43 @@ class HubWindow(QMainWindow):
         strip_lay.setSpacing(2)
         self._tiles: dict[str, StatusTile] = {}
         ## Leftmost: the containment hierarchy reads left-to-right — a Batch
-        ## holds Projects, a Project holds experiments (ADR-0009).
+        ## holds Projects, a Project holds experiments (ADR-0009), and the
+        ## loaded experiment holds the tools that act on it (ADR-0012). The
+        ## three are one width, 1.75x a regular tile: three equal levels,
+        ## and room for a replicate name with its counts.
         for key, title, icon_name, cat in (
             ## LOAD, not NEUTRAL: the batch glyph tints LOAD-blue, and the
             ## title matches its icon (user feedback 2026-08-22).
             ("batch", "Batch", "batch", Category.LOAD),
             ("project", "Project", "project", Category.NEUTRAL),
+            ("experiment", "Experiment", "experiment", Category.LOAD),
+        ):
+            tile = StatusTile(key, title, icon_name, cat, wide=True)
+            self._tiles[key] = tile
+            strip_lay.addWidget(tile)
+        self._tiles["batch"].clicked.connect(self._toggle_panel)
+        self._tiles["project"].clicked.connect(self._toggle_panel)
+        ## The Experiment tile opens no panel: it expands the sub-strip.
+        self._tiles["experiment"].clicked.connect(self._toggle_experiment)
+        ## The strip's leftover width was dead space; it now carries the
+        ## general status readout (what is open right now) — and it got wider
+        ## still when the Tools tile went, which is the point: the readout
+        ## says which project and which experiment, and a truncated path
+        ## answers neither.
+        self._status_panel = StatusPanel()
+        strip_lay.addWidget(self._status_panel, 1)
+        ribbon_lay.addWidget(self._strip)
+
+        ## The sub-strip: hidden until the Experiment tile expands it. Its
+        ## tiles sit left-aligned under the Experiment tile (the indent is
+        ## set when it opens — see _place_sub_strip) so they read as that
+        ## tile's contents rather than a second, unrelated row.
+        self._sub_strip = QFrame()
+        self._sub_strip.setObjectName("TileSubStrip")
+        sub_lay = QHBoxLayout(self._sub_strip)
+        sub_lay.setContentsMargins(10, 0, 10, 8)
+        sub_lay.setSpacing(2)
+        for key, title, icon_name, cat in (
             ("analyze", "Analyze", "basic", Category.ANALYZE),
             ("plots", "Plots", "plots", Category.PLOTS),
             ("scripts", "Scripts", "scripts", Category.SCRIPTS),
@@ -250,15 +323,15 @@ class HubWindow(QMainWindow):
             tile = StatusTile(key, title, icon_name, cat)
             tile.clicked.connect(self._toggle_panel)
             self._tiles[key] = tile
-            strip_lay.addWidget(tile)
-        ## The strip's leftover width was dead space; it now carries the
-        ## general status readout (what is open right now) — and it got wider
-        ## still when the Tools tile went, which is the point: the readout
-        ## says which project and which experiment, and a truncated path
-        ## answers neither.
-        self._status_panel = StatusPanel()
-        strip_lay.addWidget(self._status_panel, 1)
-        main_lay.addWidget(self._strip)
+            sub_lay.addWidget(tile)
+        sub_lay.addStretch(1)
+        self._sub_strip.setFixedHeight(self._SUB_STRIP_HEIGHT)
+        self._sub_strip.hide()
+        self._experiment_expanded = False
+        ribbon_lay.addWidget(self._sub_strip)
+        ## Any transient surplus height goes here, never to a row.
+        ribbon_lay.addStretch(1)
+        main_lay.addWidget(self._ribbon)
 
         # The output area — the whole point of the redesign: full width,
         # full height below the strip.
@@ -303,7 +376,7 @@ class HubWindow(QMainWindow):
             self._panels[key] = panel
         self._open_panel_key: str | None = None
         self._batch_panel_root: Path | None = None
-        self._load_qc_ready_to_open_analyze = False
+        self._load_ready = False
         ## App-level filter: a click outside the open panel (and outside the
         ## strip) closes it; the click itself is NOT swallowed. A dedicated
         ## QObject (never the window itself) — see ClickAwayFilter.
@@ -338,6 +411,8 @@ class HubWindow(QMainWindow):
         ## legible without any surrounding surface.
         self._strip.setStyleSheet(
             "QFrame#TileStrip { background: transparent; border: none; }")
+        self._sub_strip.setStyleSheet(
+            "QFrame#TileSubStrip { background: transparent; border: none; }")
         for tile in self._tiles.values():
             tile.restyle()
         self._status_panel.restyle()
@@ -1099,8 +1174,25 @@ class HubWindow(QMainWindow):
             return
         ## The table is the only way to load an experiment (ADR-0008). The
         ## selection stays on the Project — only the loaded experiment moves.
-        if self._load_experiment(target, open_analyze=True):
+        ## An analyzed replicate loads as it is — no QC re-run, no QC viewer
+        ## — and its Experiment group opens, where Run QC / Run Analysis wait
+        ## for anyone who wants them redone (user feedback 2026-08-29). An
+        ## unanalyzed one still gets Load + QC, the QC viewer, and Analyze.
+        analyzed = self._replicate_is_analyzed(name)
+        if self._load_experiment(target, run_qc=not analyzed,
+                                 reveal="group" if analyzed else "analyze"):
             self._close_panel()
+
+    def _replicate_is_analyzed(self, name: str) -> bool:
+        """Whether *name* has a saved analysis (the table's own cheap
+        status — no data load). False when it cannot be told."""
+        project = self._current_project()
+        if project is None:
+            return False
+        try:
+            return bool(project.experiment_status(name)["analyzed"])
+        except Exception:  # noqa: BLE001
+            return False
 
     def _create_replicate_config(self, name: str):
         """Scaffold *name*'s tracking_config.yaml from the project design.
@@ -2271,8 +2363,17 @@ class HubWindow(QMainWindow):
         if panel is None:
             return
         self._close_panel()
+        ## An experiment-level panel hangs from a sub-strip tile, so the
+        ## sub-strip must be showing for the panel to have an anchor — the
+        ## auto-open after a load (Analyze) reaches here with it collapsed.
+        ## Choosing a container tile instead folds the sub-strip away: the
+        ## expanded Experiment group counts as "the open thing", and one
+        ## thing is open at a time (user feedback 2026-08-29).
+        if key in self._EXPERIMENT_SUBTILES:
+            self._expand_experiment()
+        else:
+            self._collapse_experiment()
         central = self.centralWidget()
-        strip_bottom = self._strip.mapTo(central, self._strip.rect().bottomLeft()).y()
         tile = self._tiles.get(key)
         if tile is not None:
             x = tile.mapTo(central, tile.rect().bottomLeft()).x()
@@ -2280,9 +2381,87 @@ class HubWindow(QMainWindow):
         else:
             x = central.width() - 8 - 440
         ## rect().bottom* coordinates are inclusive; +1 starts the panel just
-        ## below the strip while preserving the caller-owned bottom margin.
-        panel.open_at(x, strip_bottom + 1, central.height() - 8)
+        ## below the ribbon while preserving the caller-owned bottom margin.
+        panel.open_at(x, self._ribbon_bottom() + 1, central.height() - 8)
         self._open_panel_key = key
+
+    def _ribbon_bottom(self) -> int:
+        """The y (central-widget coordinates) of the ribbon's last row: the
+        strip, or the sub-strip while the Experiment tile is expanded. The
+        sub-strip's height is fixed, so this is right even before Qt has
+        laid out a sub-strip shown a moment ago."""
+        central = self.centralWidget()
+        bottom = self._strip.mapTo(central, self._strip.rect().bottomLeft()).y()
+        if self._experiment_expanded:
+            bottom += self._SUB_STRIP_HEIGHT
+        return bottom
+
+    def _reanchor_open_panel(self) -> None:
+        """Re-open the open panel where its tile is now (window resize, the
+        sub-strip expanding or collapsing under a container panel)."""
+        key = getattr(self, "_open_panel_key", None)
+        if key is not None:
+            self._open_panel_key = None
+            self._open_panel(key)
+
+    # ---- The Experiment tile: a group, not a panel (ADR-0012) ----
+
+    def _toggle_experiment(self, _key: str = "experiment") -> None:
+        """The Experiment tile's click: expand or collapse its sub-strip.
+        Inert with nothing loaded — the tile is un-clickable then, but the
+        guard also covers a stale signal."""
+        if self._exp is None:
+            return
+        if self._experiment_expanded:
+            self._collapse_experiment()
+        else:
+            self._expand_experiment()
+
+    def _expand_experiment(self) -> None:
+        """Show the experiment-level tiles under the Experiment tile. An
+        open Batch or Project panel closes first — the group and a container
+        panel are never open together (user feedback 2026-08-29)."""
+        if self._experiment_expanded:
+            return
+        if self._open_panel_key not in self._EXPERIMENT_SUBTILES:
+            self._close_panel()
+        self._experiment_expanded = True
+        self._place_sub_strip()
+        self._sub_strip.show()
+        self._tiles["experiment"].set_active(True)
+        self._settle_ribbon_layout()
+
+    def _collapse_experiment(self) -> None:
+        """Hide the experiment-level tiles; a panel hanging from one of them
+        goes with them."""
+        if not self._experiment_expanded:
+            return
+        if self._open_panel_key in self._EXPERIMENT_SUBTILES:
+            self._close_panel()
+        self._experiment_expanded = False
+        self._sub_strip.hide()
+        self._tiles["experiment"].set_active(False)
+        self._settle_ribbon_layout()
+        self._reanchor_open_panel()
+
+    def _place_sub_strip(self) -> None:
+        """Indent the sub-strip so its first tile starts under the Experiment
+        tile's left edge."""
+        lay = self._sub_strip.layout()
+        margins = lay.contentsMargins()
+        indent = max(10, self._tiles["experiment"].geometry().x())
+        lay.setContentsMargins(indent, margins.top(), margins.right(),
+                               margins.bottom())
+
+    def _settle_ribbon_layout(self) -> None:
+        """Lay the ribbon out NOW. Qt defers geometry for a widget shown a
+        moment ago, and a panel anchored to a sub-strip tile needs that
+        tile's real position, not the pending one."""
+        for widget in (self.centralWidget(), self._ribbon.parentWidget(),
+                       self._ribbon, self._sub_strip):
+            lay = widget.layout() if widget is not None else None
+            if lay is not None:
+                lay.activate()
 
     def _close_panel(self) -> None:
         if self._open_panel_key is None:
@@ -2296,18 +2475,24 @@ class HubWindow(QMainWindow):
         self._open_panel_key = None
 
     def _handle_click_away(self, event) -> None:
-        ## Click-away closes the open panel. The click itself still lands.
-        if getattr(self, "_open_panel_key", None) is None:
+        ## Click-away closes the open panel — and folds the sub-strip away,
+        ## with or without a panel hanging from it (user feedback
+        ## 2026-08-29). The click itself still lands.
+        open_key = getattr(self, "_open_panel_key", None)
+        expanded = getattr(self, "_experiment_expanded", False)
+        if open_key is None and not expanded:
             return
-        panel = self._panels.get(self._open_panel_key)
-        if panel is None or not panel.isVisible():
+        panel = self._panels.get(open_key) if open_key is not None else None
+        if open_key is not None and (panel is None or not panel.isVisible()):
             return
         widget = QApplication.widgetAt(event.globalPosition().toPoint())
         if widget is not None and widget.window() is not self:
             return
         probe = widget
         while probe is not None:
-            if probe is panel or probe is self._strip:
+            ## The ribbon covers both strips: a click on a tile (either row)
+            ## is the tile's to decide.
+            if probe is panel or probe is self._ribbon:
                 return
             probe = probe.parentWidget()
         if self._open_panel_key == "batch":
@@ -2319,14 +2504,15 @@ class HubWindow(QMainWindow):
             else:
                 return
         self._close_panel()
+        self._collapse_experiment()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
-        ## Keep an open panel anchored when the window resizes.
-        if getattr(self, "_open_panel_key", None) is not None:
-            key = self._open_panel_key
-            self._open_panel_key = None
-            self._open_panel(key)
+        ## Keep the sub-strip under its tile and an open panel anchored when
+        ## the window resizes.
+        if getattr(self, "_experiment_expanded", False):
+            self._place_sub_strip()
+        self._reanchor_open_panel()
 
     def _refresh_tiles(self) -> None:
         """Live tile summaries — cheap sources only (no data loads).
@@ -2363,15 +2549,30 @@ class HubWindow(QMainWindow):
             if card is not None:
                 card.set_dimmed(not ready)
 
+    def _loaded_experiment_name(self) -> str | None:
+        """The loaded experiment as the replicates table names it — its
+        directory — so the Experiment tile, the status readout, and the
+        table agree (user feedback 2026-08-29). The recording's own name
+        (the xlsx basename the arena carries, often the same rig name for
+        every replicate) is only the fallback for an object without a
+        directory. None when nothing is loaded."""
+        if self._exp is None:
+            return None
+        directory = getattr(self._exp, "project_directory", None)
+        if directory:
+            return Path(directory).name
+        return str(getattr(getattr(self._exp, "arena", None),
+                           "experiment_name", "loaded"))
+
     def _loaded_experiment_line(self, short: bool = True) -> str | None:
         """The loaded experiment as one line — its name and headline counts,
         read from attributes computed at load time (never a fresh summarize).
-        None when nothing is loaded. *short* abbreviates for a 196px tile; the
-        strip's status panel has room for whole words."""
+        None when nothing is loaded. *short* abbreviates for a regular-width
+        tile; the wide Experiment tile and the strip's status panel have room
+        for whole words."""
         if self._exp is None:
             return None
-        name = str(getattr(getattr(self._exp, "arena", None),
-                           "experiment_name", "loaded"))
+        name = self._loaded_experiment_name()
         flagged = getattr(self._exp, "flagged_flies", None)
         excluded = getattr(self._exp, "excluded_flies", None)
         bits = [name]
@@ -2382,6 +2583,44 @@ class HubWindow(QMainWindow):
         if flagged is not None:
             bits.append(f"{len(flagged)} " + ("flag" if short else "flagged"))
         return " · ".join(bits)
+
+    def _experiment_tile_lines(self) -> list[str] | None:
+        """The Experiment tile's two lines — which experiment, and its
+        flies — each one complete thought, chosen to FIT the tile: every
+        line is offered most-detailed first and the tile measures which
+        version renders without eliding (user feedback 2026-08-29: no "…",
+        no wrapping). Same load-time attributes as the status readout,
+        never a fresh summarize. None when nothing is loaded."""
+        if self._exp is None:
+            return None
+        tile = self._tiles["experiment"]
+        name = self._loaded_experiment_name()
+        ## Which experiment: its name, with its tracking type when that
+        ## still fits on the line.
+        tracking = _tracking_type_label(self._exp)
+        which = [name]
+        if tracking:
+            which.insert(0, f"{name} — {tracking}")
+        ## Its flies: whole words, then abbreviations, then just the total.
+        flagged = getattr(self._exp, "flagged_flies", None)
+        excluded = getattr(self._exp, "excluded_flies", None)
+        total = flagged.attrs.get("n_total") if flagged is not None else None
+        long_bits, short_bits = [], []
+        if total:
+            long_bits.append(f"{total} flies")
+            short_bits.append(f"{total} flies")
+        if excluded is not None:
+            long_bits.append(f"{len(excluded)} excluded")
+            short_bits.append(f"{len(excluded)} ex")
+        if flagged is not None:
+            long_bits.append(f"{len(flagged)} flagged")
+            short_bits.append(f"{len(flagged)} flag")
+        flies = [" · ".join(long_bits), " · ".join(short_bits)]
+        if total:
+            flies.append(f"{total} flies")
+        if not long_bits:
+            flies = ["no fly counts yet"]
+        return [tile.fitting(which), tile.fitting(flies)]
 
     def _set_status_for_project(self, project, root, n_reps: int,
                                 analyzed: int, pending: int) -> None:
@@ -2453,8 +2692,8 @@ class HubWindow(QMainWindow):
                                   "load a folder of projects"])
 
         # Project tile: the effective project (enclosing one when a
-        # replicate is loaded). With the Experiment tile gone (ADR-0008) its
-        # second line becomes the load status once something is loaded.
+        # replicate is loaded). Its second line is the replicates' state; the
+        # loaded experiment is the Experiment tile's to report (ADR-0012).
         root = self._project_root()
         tile = tiles["project"]
         tile.set_dimmed(False)          # always available — see the Batch tile
@@ -2469,10 +2708,7 @@ class HubWindow(QMainWindow):
                     pending = len(project.unconfigured_dirs())
                 except Exception:  # noqa: BLE001
                     pending = 0
-                loaded = self._loaded_experiment_line()
-                if loaded is not None:
-                    line = loaded
-                elif pending and not n_reps:
+                if pending and not n_reps:
                     line = f"{pending} folder(s) await configs"
                 elif pending:
                     line = f"{n_reps} reps · {analyzed} ✓ · {pending} pend"
@@ -2513,6 +2749,28 @@ class HubWindow(QMainWindow):
                 ("Next", "Project tile → Open Project or Create…"),
             ])
 
+        # Experiment tile: the loaded replicate, and the gate on the four
+        # tiles beneath it (ADR-0012). Unlike Batch and Project it is not a
+        # way in — nothing loads from it — so with no experiment it is dimmed
+        # AND inert: the sub-strip it would open has nothing to act on.
+        tile = tiles["experiment"]
+        loaded = self._experiment_tile_lines()
+        if loaded is None:
+            tile.set_summary(["no experiment loaded",
+                              "double-click a replicate in Project"])
+            ## Collapse on the UNLOAD transition (lit -> dimmed), not on
+            ## every refresh with nothing loaded: refreshes run after every
+            ## task and checkbox toggle, and a sub-tile panel opened with
+            ## nothing loaded (a programmatic open) must survive them.
+            if not tile.is_dimmed():
+                self._collapse_experiment()
+            tile.set_dimmed(True)
+            tile.set_clickable(False)
+        else:
+            tile.set_summary(loaded)
+            tile.set_dimmed(False)
+            tile.set_clickable(True)
+
         # Analyze tile.
         tile = tiles["analyze"]
         if self._exp is None:
@@ -2525,13 +2783,12 @@ class HubWindow(QMainWindow):
 
         # Plots tile.
         tile = tiles["plots"]
-        mode = ("interactive" if self._interactive_checkbox.isChecked()
-                else "static PNGs")
         if self._exp is None:
-            tile.set_summary([mode, "load an experiment first"])
+            tile.set_summary(["load an experiment first"])
             tile.set_dimmed(True)
         else:
-            tile.set_summary([mode, f"{len(self._plot_buttons)} plot types"])
+            tile.set_summary([f"{len(self._plot_buttons)} plot types",
+                              "tabs in the output area"])
             tile.set_dimmed(False)
 
         # Scripts tile. Experiment Scripts run against the loaded experiment,
@@ -2753,9 +3010,8 @@ class HubWindow(QMainWindow):
             if self._discard_figures(figures, "script"):
                 self._log.append_line(msg)
                 return
-            interactive = self._interactive_checkbox.isChecked()
             for title, fig in figures:
-                self._plot_dock.add_figure(title, fig, interactive=interactive)
+                self._plot_dock.add_figure(title, fig, interactive=False)
             self._log.append_line(msg)
 
         def _on_fail(msg: str) -> None:
@@ -2770,13 +3026,21 @@ class HubWindow(QMainWindow):
     # Behaviour — loading an Experiment
     # ==================================================================
 
+    #: The task names a load runs under; _on_task_finished reveals after them.
+    _LOAD_TASKS = ("Load", "Load + QC")
+
     def _load_experiment(
             self, directory: str | Path | None = None, *,
-            open_analyze: bool = False) -> bool:
+            run_qc: bool = True, reveal: str | None = None) -> bool:
         """Load *directory* as the current experiment (the replicates table
         passes the row's directory). Without one, fall back to the selected
         directory — the standalone-experiment path, which the Hub itself no
-        longer offers (ADR-0008) but the Python API still supports."""
+        longer offers (ADR-0008) but the Python API still supports.
+
+        *run_qc* runs the QC suite as part of the load and opens the QC
+        viewer on its artifacts; off, the experiment is loaded as it is.
+        *reveal* is what to show when the load finishes: ``"analyze"`` (the
+        Analyze panel) or ``"group"`` (the Experiment tile's sub-strip)."""
         from .. import project as prj
 
         target = Path(directory) if directory is not None else self._project_dir
@@ -2797,41 +3061,47 @@ class HubWindow(QMainWindow):
         # built Experiment back to the GUI thread without a custom signal.
         result_holder: list = []
 
-        def _do_load_and_qc() -> str:
+        def _do_load() -> str:
             exp = ExperimentMod.Experiment(str(project_dir), config_path=config_name)
             result_holder.append(exp)
             print(str(exp))
-            exp.run_qc()
-            return f"Loaded experiment and ran QC ({project_dir})."
+            if run_qc:
+                exp.run_qc()
+                return f"Loaded experiment and ran QC ({project_dir})."
+            return (f"Loaded experiment ({project_dir}) — already analyzed, "
+                    "QC not re-run; Run QC / Run Analysis in the Experiment "
+                    "group redo it.")
 
         def _on_ok(msg: str) -> None:
             if result_holder:
                 self._exp = result_holder[0]
                 self._on_experiment_ready()
-                self._load_qc_ready_to_open_analyze = True
-                # Launch the QC viewer so it picks up the freshly-saved qc/
-                # artifacts — of the experiment just loaded, which is not the
-                # selected directory (that stays on the Project).
-                self._launch_subapp("qc", directory=str(project_dir))
+                self._load_ready = True
+                if run_qc:
+                    # Launch the QC viewer so it picks up the freshly-saved
+                    # qc/ artifacts — of the experiment just loaded, which is
+                    # not the selected directory (that stays on the Project).
+                    self._launch_subapp("qc", directory=str(project_dir))
             self._log.append_line(msg)
 
         def _on_fail(msg: str) -> None:
-            self._open_analyze_after_load = False
-            self._load_qc_ready_to_open_analyze = False
+            self._reveal_after_load = None
+            self._load_ready = False
             self._log_issue(msg)
             self._warn("Failed to load experiment — see Output for details.")
 
         self._log.append_line(f"Loading experiment from {project_dir}…")
         # Don't pop QC artifacts as Hub tabs — the QC viewer (auto-launched on
         # success) is the canonical surface for them.
-        self._open_analyze_after_load = bool(open_analyze)
-        self._load_qc_ready_to_open_analyze = False
+        self._reveal_after_load = reveal
+        self._load_ready = False
         started = self._spawn_task_with_callbacks(
-            "Load + QC", _do_load_and_qc, _on_ok, _on_fail, surface_artifacts=False,
+            "Load + QC" if run_qc else "Load", _do_load, _on_ok, _on_fail,
+            surface_artifacts=False,
         )
         if not started:
-            self._open_analyze_after_load = False
-            self._load_qc_ready_to_open_analyze = False
+            self._reveal_after_load = None
+            self._load_ready = False
         return bool(started)
 
     def _on_experiment_ready(self) -> None:
@@ -2952,10 +3222,9 @@ class HubWindow(QMainWindow):
             if self._discard_figures([(title, f) for f in figs], "plot"):
                 self._log.append_line(msg)
                 return
-            interactive = self._interactive_checkbox.isChecked()
             for i, fig in enumerate(figs):
                 tab_title = title if len(figs) == 1 else f"{title} ({i+1})"
-                self._plot_dock.add_figure(tab_title, fig, interactive=interactive)
+                self._plot_dock.add_figure(tab_title, fig, interactive=False)
             self._log.append_line(msg)
 
         def _on_fail(msg: str) -> None:
@@ -3252,15 +3521,13 @@ class HubWindow(QMainWindow):
         )
 
     def _on_task_finished(self, worker: TaskWorker) -> None:
-        open_analyze = (
-            self._open_analyze_after_load
-            and self._load_qc_ready_to_open_analyze
-            and getattr(worker, "task_name", None) == "Load + QC"
-            and self._exp is not None
-        )
-        if getattr(worker, "task_name", None) == "Load + QC":
-            self._open_analyze_after_load = False
-            self._load_qc_ready_to_open_analyze = False
+        is_load = getattr(worker, "task_name", None) in self._LOAD_TASKS
+        reveal = (self._reveal_after_load
+                  if is_load and self._load_ready and self._exp is not None
+                  else None)
+        if is_load:
+            self._reveal_after_load = None
+            self._load_ready = False
         if self._worker is worker:
             self._worker = None
         self._progress.setVisible(False)
@@ -3276,8 +3543,10 @@ class HubWindow(QMainWindow):
         self._refresh_project_view()
         self._refresh_batch_view()
         self._refresh_tiles()
-        if open_analyze:
+        if reveal == "analyze":
             self._open_panel("analyze")
+        elif reveal == "group":
+            self._expand_experiment()
 
     def _set_busy(self, busy: bool) -> None:
         for btn in (

@@ -1,7 +1,9 @@
-"""Tile strip widgets for the Analysis Hub (ADR-0007).
+"""Tile strip widgets for the Analysis Hub (ADR-0007, ADR-0012).
 
 A :class:`StatusTile` is a compact, clickable live-status chip in the strip
-across the top of the Hub; all of a tile's controls live in its
+across the top of the Hub — a *wide* one for the three container levels
+(Batch · Project · Experiment) and a regular one for the experiment-level
+tiles the Experiment tile expands into; all of a tile's controls live in its
 :class:`TilePanel` — an anchored overlay that drops down under the tile,
 hosting the full existing Card widgets. Panels are persistent hidden children
 of the Hub's central widget (state survives open/close; ``findChildren``
@@ -43,32 +45,52 @@ class StatusTile(QFrame):
 
     Tiles never hide or move (ADR-0007): an inapplicable tile is *dimmed*
     but stays clickable — its panel holds the control that fixes the
-    missing state.
+    missing state. The one exception is a tile that opens no panel of its
+    own (the Experiment group tile, ADR-0012): ``set_clickable(False)``
+    makes it inert as well as dimmed, since it holds no fix to offer.
+
+    *wide* tiles are ``WIDE_SCALE`` the regular width range, with a
+    proportionally longer summary cap. The cap is a last resort: a summary
+    that must not elide is chosen with :meth:`fitting`, which measures.
     """
 
     clicked = pyqtSignal(str)
 
-    #: Hard cap so a chatty summary can never widen the strip.
+    #: Hard cap so a chatty summary can never widen the strip — per regular
+    #: tile; a wide tile scales it (see ``max_line_chars``).
     _MAX_LINE_CHARS = 26
+    #: Regular width range (ADR-0007): six fixed 196px tiles once forced a
+    #: 1416px minimum window that no 1366x768 laptop could show.
+    MIN_WIDTH = 118
+    MAX_WIDTH = 196
+    #: The container tiles' width relative to a regular tile (ADR-0012):
+    #: 1.75x, then reduced by a quarter (user feedback 2026-08-29) so the
+    #: status readout keeps most of the strip.
+    WIDE_SCALE = 1.75 * 0.75
+    HEIGHT = 84
 
     def __init__(self, key: str, title: str, icon_name: str,
-                 category: Category, parent: QWidget | None = None) -> None:
+                 category: Category, parent: QWidget | None = None, *,
+                 wide: bool = False) -> None:
         super().__init__(parent)
         self.key = key
         self._category = category
         self._dimmed = False
         self._active = False
+        self._clickable = True
+        self._wide = wide
         #: (left, right) corner radii. With hairline seams between chips a
         #: gentle radius keeps the seams from flaring near the corners.
         self._radii = (5, 5)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        ## A width RANGE, not a fixed size: six fixed 196px tiles forced a
-        ## 1416px minimum window that no 1366x768 laptop could show.
+        ## A width RANGE, not a fixed size (see MIN_WIDTH / MAX_WIDTH).
+        scale = self.WIDE_SCALE if wide else 1.0
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
                            QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(118)
-        self.setMaximumWidth(196)
-        self.setFixedHeight(84)
+        self.setMinimumWidth(round(self.MIN_WIDTH * scale))
+        self.setMaximumWidth(round(self.MAX_WIDTH * scale))
+        self.setFixedHeight(self.HEIGHT)
+        self._max_line_chars = round(self._MAX_LINE_CHARS * scale)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
@@ -97,8 +119,8 @@ class StatusTile(QFrame):
         full = [str(line) for line in lines]
         clipped = []
         for line in full[:2]:
-            if len(line) > self._MAX_LINE_CHARS:
-                line = line[: self._MAX_LINE_CHARS - 1] + "…"
+            if len(line) > self._max_line_chars:
+                line = line[: self._max_line_chars - 1] + "…"
             clipped.append(line)
         self._summary_lbl.setText("\n".join(clipped))
         ## The untruncated summary is always one hover away.
@@ -106,6 +128,44 @@ class StatusTile(QFrame):
 
     def summary_text(self) -> str:
         return self._summary_lbl.text()
+
+    def max_line_chars(self) -> int:
+        """The summary cap this tile's width affords."""
+        return self._max_line_chars
+
+    def text_width_budget(self) -> int:
+        """Pixels a summary line has at the tile's full width — the width
+        it gets whenever the window is at least ~1000px wide."""
+        margins = self.layout().contentsMargins()
+        return self.maximumWidth() - margins.left() - margins.right()
+
+    def fits(self, text: str) -> bool:
+        """Whether *text* would show whole: inside the pixel budget AND
+        under the character cap ``set_summary`` applies regardless."""
+        return (len(text) <= self._max_line_chars
+                and self._summary_lbl.fontMetrics().horizontalAdvance(text)
+                <= self.text_width_budget())
+
+    def fitting(self, candidates: list[str]) -> str:
+        """The first of *candidates* (most to least detailed) that fits, or
+        the last as the fallback — the caller's shortest way to say it."""
+        for text in candidates:
+            if self.fits(text):
+                return text
+        return candidates[-1]
+
+    def is_wide(self) -> bool:
+        return self._wide
+
+    def set_clickable(self, clickable: bool) -> None:
+        """Whether a press emits ``clicked``. Off, the tile is inert — used
+        only for a tile with nothing to open (see the class docstring)."""
+        self._clickable = clickable
+        self.setCursor(Qt.CursorShape.PointingHandCursor if clickable
+                       else Qt.CursorShape.ArrowCursor)
+
+    def is_clickable(self) -> bool:
+        return self._clickable
 
     def set_dimmed(self, dimmed: bool) -> None:
         if dimmed != self._dimmed:
@@ -168,8 +228,16 @@ class StatusTile(QFrame):
         mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
         self._icon_lbl.setPixmap(self._icon.pixmap(QSize(16, 16), mode))
 
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        """Prefer the top of the width range. The content hint of a wide
+        tile is barely wider than a regular tile's, so left to Qt the three
+        container tiles would sit at ~208px whatever the window; the
+        Preferred policy still lets them shrink to the minimum when the
+        window is narrow."""
+        return QSize(self.maximumWidth(), self.HEIGHT)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self._clickable:
             self.clicked.emit(self.key)
         super().mousePressEvent(event)
 
@@ -183,7 +251,7 @@ class StatusPanel(QFrame):
     """
 
     #: Kept to the tile height so the strip stays one band.
-    _HEIGHT = 84
+    _HEIGHT = StatusTile.HEIGHT
     _MAX_ROWS = 4
 
     def __init__(self, parent: QWidget | None = None) -> None:

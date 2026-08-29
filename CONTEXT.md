@@ -94,22 +94,29 @@ Excluded Fly across the Project with its reason, and an opt-in AI-written
 narrative (same rule as AI Summary: it summarizes, never analyzes).
 
 **Analysis Hub**:
-The main app (`pytrack`): a horizontal **tile strip** across the
-top (Batch · Project · Analyze · Plots · Scripts · AI — each tile
-shows only live status, with a **status readout** filling the strip to their
-right: the loaded project and experiment in words), and a full-width
-output/plots area below. All controls live in a
-tile's **anchored panel** (one open at a time; a running task greys the
-cards in place rather than closing the panel).
+The main app (`pytrack`): a horizontal **tile ribbon** across the
+top — three wide **container tiles** (Batch · Project · Experiment, one per
+level of the hierarchy; each shows only live status, with a **status
+readout** filling the strip to their right: the loaded project and
+experiment in words) and, when the Experiment tile is expanded, a
+**sub-strip** of four **sub-tiles** beneath it (Analyze · Plots · Scripts ·
+AI — the tools that act on the loaded experiment; ADR-0012) — and a
+full-width output/plots area below. All controls live in a tile's
+**anchored panel** under the ribbon's last row (one open at a time; a
+running task greys the cards in place rather than closing the panel).
 Tiles never move or hide — an inapplicable tile dims and its panel holds the
-fix. The **selection names the working container — a Batch or a Project** —
+fix; the Experiment tile alone is also *inert* while dimmed, since it holds
+no fix (nothing loads from it). The **selection names the working container
+— a Batch or a Project** —
 and does only that one job: selecting a Batch lights the Batch tile and dims
 the rest; double-clicking a row in its projects table is an ordinary selection
 change down to that Project (no drill-in state, no up-button; ADR-0009). The
 Hub is **Project-first**: an experiment is loaded only by
-double-clicking its row in the Project panel's replicates table, and the
-Project tile reports the loaded experiment (ADR-0008).
-_Avoid_: card column (the pre-2026-08 layout), Experiment tile (removed)
+double-clicking its row in the Project panel's replicates table (ADR-0008),
+and the Experiment tile reports the loaded experiment (ADR-0012).
+_Avoid_: card column (the pre-2026-08 layout), Experiment *panel* (ADR-0008
+removed it; the ADR-0012 tile is a group, not a panel), "strip" for the
+whole two-row ribbon
 
 **Experiment Script**:
 A saved, re-runnable step list of experiment-level actions (run analysis,

@@ -346,7 +346,7 @@ def test_the_selection_never_leaves_the_project(qapp, tmp_path, monkeypatch):
 
     _make_project(tmp_path)
     loaded: list = []
-    def _fake_load(self, directory=None, *, open_analyze=False):
+    def _fake_load(self, directory=None, *, run_qc=True, reveal=None):
         loaded.append(str(directory))
 
     monkeypatch.setattr(HubWindow, "_load_experiment", _fake_load)

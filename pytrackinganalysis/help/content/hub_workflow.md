@@ -4,11 +4,11 @@ The Hub is the main day-to-day surface. It is Project-first: open a Project, man
 
 ## Layout
 
-Across the top is a live tile strip: **Batch**, **Project**, **Analyze**, **Plots**, **Scripts**, and **AI**. The first two tiles work on containers (a Batch or a Project); the tiles after them act on the loaded experiment. Tiles show status only. Click a tile to open its anchored panel. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
+Across the top is a live tile ribbon: **Batch**, **Project**, and **Experiment**, one per level of the hierarchy. Batch and Project work on containers; Experiment is the loaded replicate. Click **Experiment** to expand a row of four sub-tiles beneath it — **Analyze**, **Plots**, **Scripts**, and **AI**, the tools that act on the loaded experiment — and click it again to fold them away (choosing Batch or Project, or clicking into the output, folds them away too). Tiles show status only. Click Batch, Project, or a sub-tile to open its anchored panel under the ribbon. One panel opens at a time; Esc or clicking elsewhere closes it. Running tasks keep the panel in place while the output streams below.
 
-Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate.
+Dimmed tiles still open. Their panels usually contain the next control you need, such as the Project browser or the reminder to load a replicate. The Experiment tile is the exception: with nothing loaded it has nothing to expand, so it stays dimmed and inert until you double-click a replicate.
 
-The status readout to the right of the last tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
+The status readout to the right of the Experiment tile shows the current Project, path, replicate and analysis counts, and the loaded experiment. Hover it for design details.
 
 ## Batch panel
 
@@ -26,7 +26,7 @@ The Project panel contains three cards, in the order the work happens: the Proje
 - **Edit config...** - reopen the Project editor on the selected directory's `project.yaml`. It reads **Create config...** when the selected folder is not a Project yet; if that folder is a single Experiment Directory, the Hub offers to create the Project on its parent so the experiment becomes a replicate.
 - **Validate YAMLs** - not a way in, but the check over the Project that is open: it reads this Project's `project.yaml` *and* every replicate's `tracking_config.yaml` in one pass. See **Validating** below.
 
-**Experiments** is the replicates themselves. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate and run QC. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments. All three buttons wait for a Project, because a replicate's design is inherited from `project.yaml`. See the **Creating experiments** help topic.
+**Experiments** is the replicates themselves. It shows the replicate table with config, fly, excluded, flagged, and report status. Double-click a row to load that replicate. A replicate without an analysis runs QC as it loads and opens the QC viewer and the Analyze panel; an analyzed one loads as it is and opens the Experiment group, where **Run QC** and **Run Analysis** redo either on request. Rows with **Config: missing** are folders with data but no `tracking_config.yaml`; create the config before assigning region treatments. All three buttons wait for a Project, because a replicate's design is inherited from `project.yaml`. See the **Creating experiments** help topic.
 
 - **Create experiment...** - the replicate does not exist at all. Give it a name; the directory, its `data/` folder and a `tracking_config.yaml` scaffolded from `project.yaml` are created for you. Nothing else is asked, because everything else is the Project's. The scaffold is then finished one of two ways, and the Hub asks which: **Edit config...** opens it in the Config Editor, **Copy config from...** replaces it with a config from an experiment that already works — checked against the project design before it is written, and refused (scaffold intact) if it would not conform.
 - **Experiment configs...** - create or edit each replicate's `tracking_config.yaml`.
@@ -48,7 +48,7 @@ For a custom sequence, use **Edit scripts...** and make a Project Script. Script
 After a replicate is loaded:
 
 - **Analyze** runs the loaded experiment's analysis, QC-only task, report build, summary export, or pairwise comparisons. Run Analysis and Create PDF Report ask for optional run notes. The **Outputs** help topic lists every file these write and where it lands; **QC Viewer** covers the per-tracker quality table.
-- **Plots** shows only plots valid for the loaded tracking type. The top-bar **Interactive plots** toggle controls whether plot tabs are live canvases or faster static PNGs.
+- **Plots** shows only plots valid for the loaded tracking type. Each plot opens as a static PNG tab in the output area.
 - **Scripts** runs experiment scripts from the loaded replicate's `scripts:` block.
 - **AI** creates an optional AI Summary for the loaded experiment, when an AI provider key is available.
 

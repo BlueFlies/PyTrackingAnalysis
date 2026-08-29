@@ -1,9 +1,11 @@
 """Tests for the Hub tile-strip redesign (ADR-0007), the Project-first Hub
-(ADR-0008), and the Batch level (ADR-0009): the strip's seven tiles, their
-live summaries and dimming across loading states, the anchored panels
-(open/close/one-at-a-time/auto-close-on-launch), loading an experiment by
-double-clicking its row in the replicates table, and the Batch panel's
-projects table, script picker, and Batch Run."""
+(ADR-0008), the Batch level (ADR-0009), and the Experiment group tile
+(ADR-0012): the ribbon's three container tiles and the four experiment-level
+tiles the Experiment tile expands into, their live summaries and dimming
+across loading states, the anchored panels (open/close/one-at-a-time/
+auto-close-on-launch), loading an experiment by double-clicking its row in
+the replicates table, and the Batch panel's projects table, script picker,
+and Batch Run."""
 
 from __future__ import annotations
 
@@ -28,7 +30,33 @@ def hub(qapp):  # noqa: F811
     win.close()
 
 
-TILE_ORDER = ["batch", "project", "analyze", "plots", "scripts", "ai"]
+#: Every tile, in ribbon order: the strip's three container tiles, then the
+#: sub-strip's four experiment-level tiles (ADR-0012).
+CONTAINER_TILES = ["batch", "project", "experiment"]
+SUBTILES = ["analyze", "plots", "scripts", "ai"]
+TILE_ORDER = CONTAINER_TILES + SUBTILES
+
+
+def _fake_exp(name="Rep1", tracking=None, n_total=None, excluded=None,
+              flagged=None):
+    """The least an object needs to count as the loaded experiment for the
+    tile refresh (its lines are read from attributes, never summarized)."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    flagged_df = None
+    if n_total is not None or flagged is not None:
+        flagged_df = pd.DataFrame({"fly": list(range(flagged or 0))})
+        flagged_df.attrs["n_total"] = n_total
+    exp = SimpleNamespace(
+        arena=SimpleNamespace(experiment_name=name),
+        flagged_flies=flagged_df,
+        excluded_flies=None if excluded is None else list(range(excluded)))
+    if tracking is not None:
+        exp.parameters = SimpleNamespace(
+            get_tracking_type=lambda: SimpleNamespace(name=tracking))
+    return exp
 
 
 def _accept_preflight(monkeypatch, keys=None, apply_removals=True):
@@ -67,25 +95,263 @@ def _make_batch(tmp_path, names=("P1", "P2")):
     return tmp_path
 
 
-def test_strip_has_six_fixed_tiles_and_full_width_output(hub):
+def test_ribbon_has_three_container_tiles_over_four_sub_tiles(hub):
     assert list(hub._tiles) == TILE_ORDER
     assert not hasattr(hub, "_sidebar")
     # Tools is gone: its one lasting action (Validate YAMLs) moved to the
     # Project panel, and the width it held went to the status readout.
     assert "tools" not in hub._panels
     assert "tools" not in hub._cards
-    # Experiments load from the Project panel's table — no Experiment tile.
+    # Experiments load from the Project panel's table — the Experiment tile
+    # is a group (it expands the sub-strip), not a panel (ADR-0012).
     assert "experiment" not in hub._panels
     assert "load" not in hub._cards
+    strip = hub._strip.layout()
+    assert [strip.itemAt(i).widget() for i in range(3)] == \
+        [hub._tiles[k] for k in CONTAINER_TILES]
+    sub = hub._sub_strip.layout()
+    assert [sub.itemAt(i).widget() for i in range(4)] == \
+        [hub._tiles[k] for k in SUBTILES]
     # The output dock owns nearly the full window width under the strip.
     assert hub._plot_dock.width() > hub.width() - 80
+
+
+def test_container_tiles_are_wide_and_one_width(hub):
+    """Batch, Project, and Experiment are the three container levels, drawn
+    at one width — WIDE_SCALE (1.75x, then a quarter off; 2026-08-29) a
+    regular tile — so the hierarchy reads as three equal levels; the four
+    experiment-level tiles keep the regular width, and the status readout
+    takes the whole of what the container tiles leave."""
+    from pytrackinganalysis.apps._hub_tiles import StatusTile
+
+    scale = StatusTile.WIDE_SCALE
+    assert scale == pytest.approx(1.75 * 0.75)
+    wide = [hub._tiles[k] for k in CONTAINER_TILES]
+    assert all(t.is_wide() for t in wide)
+    assert {t.minimumWidth() for t in wide} == {round(StatusTile.MIN_WIDTH * scale)}
+    assert {t.maximumWidth() for t in wide} == {round(StatusTile.MAX_WIDTH * scale)}
+    assert len({t.width() for t in wide}) == 1
+    ## At a comfortable window width they get the whole of it, not just the
+    ## content hint (which is barely wider than a regular tile's).
+    assert wide[0].width() == round(StatusTile.MAX_WIDTH * scale)
+    lay = hub._strip.layout()
+    spacing = lay.spacing() * 3
+    margins = lay.contentsMargins().left() + lay.contentsMargins().right()
+    assert hub._status_panel.width() == \
+        hub._strip.width() - sum(t.width() for t in wide) - spacing - margins
+    regular = [hub._tiles[k] for k in SUBTILES]
+    assert not any(t.is_wide() for t in regular)
+    assert {t.minimumWidth() for t in regular} == {StatusTile.MIN_WIDTH}
+    assert {t.maximumWidth() for t in regular} == {StatusTile.MAX_WIDTH}
+    assert wide[0].max_line_chars() > regular[0].max_line_chars()
+
+
+def test_experiment_tile_is_inert_until_an_experiment_loads(hub, qapp):
+    """Unlike Batch and Project, the Experiment tile is not a way in —
+    nothing loads from it — so with no experiment it is dimmed AND inert."""
+    tile = hub._tiles["experiment"]
+    assert tile.is_dimmed()
+    assert not tile.is_clickable()
+    assert "no experiment" in tile.summary_text()
+    hub._toggle_experiment()
+    qapp.processEvents()
+    assert not hub._experiment_expanded
+    assert not hub._sub_strip.isVisible()
+
+    hub._exp = _fake_exp("Rep1")
+    hub._refresh_tiles()
+    assert not tile.is_dimmed()
+    assert tile.is_clickable()
+    assert "Rep1" in tile.summary_text()
+    ## Loading alone does not expand it — that is the click's job.
+    assert not hub._experiment_expanded
+
+
+def test_experiment_tile_expands_the_sub_tiles_and_collapses_them(hub, qapp):
+    hub._exp = _fake_exp()
+    hub._refresh_tiles()
+    for key in SUBTILES:
+        assert not hub._tiles[key].isVisible(), key
+
+    hub._toggle_experiment()
+    qapp.processEvents()
+    assert hub._experiment_expanded
+    assert hub._sub_strip.isVisible()
+    assert hub._tiles["experiment"]._active
+    for key in SUBTILES:
+        assert hub._tiles[key].isVisible(), key
+    central = hub.centralWidget()
+
+    def _top_left(widget):
+        return widget.mapTo(central, widget.rect().topLeft())
+
+    ## Left-aligned under the Experiment tile, on the row below it.
+    assert _top_left(hub._tiles["analyze"]).x() == _top_left(hub._tiles["experiment"]).x()
+    assert _top_left(hub._tiles["analyze"]).y() > _top_left(hub._tiles["experiment"]).y() \
+        + hub._tiles["experiment"].height()
+
+    ## A sub tile opens its (existing) panel, anchored under the sub-strip.
+    hub._toggle_panel("plots")
+    qapp.processEvents()
+    panel = hub._panels["plots"]
+    assert hub._open_panel_key == "plots"
+    assert panel.isVisible()
+    assert hub._tiles["plots"]._active
+    assert panel.x() == _top_left(hub._tiles["plots"]).x()
+    assert panel.y() == hub._ribbon_bottom() + 1
+    assert panel.y() > _top_left(hub._sub_strip).y() + hub._sub_strip.height() - 1
+
+    ## Collapsing takes the sub tiles and the panel hanging from one of them.
+    hub._toggle_experiment()
+    qapp.processEvents()
+    assert not hub._experiment_expanded
+    assert not hub._tiles["experiment"]._active
+    assert hub._open_panel_key is None
+    assert not panel.isVisible()
+    for key in SUBTILES:
+        assert not hub._tiles[key].isVisible(), key
+
+
+def test_opening_an_experiment_panel_expands_the_sub_strip(hub, qapp):
+    """Programmatic opens (the auto-open after Load + QC) reach _open_panel
+    with the sub-strip collapsed: the panel needs its tile for an anchor."""
+    hub._open_panel("analyze")
+    qapp.processEvents()
+    assert hub._experiment_expanded
+    assert hub._sub_strip.isVisible()
+    assert hub._panels["analyze"].y() == hub._ribbon_bottom() + 1
+    assert hub._panels["analyze"].y() > hub._strip.height() + hub._SUB_STRIP_HEIGHT
+
+
+def test_choosing_a_container_tile_collapses_the_sub_strip(hub, qapp):
+    """One thing open at a time: the expanded Experiment group counts, so
+    choosing Batch or Project folds it away along with any sub-tile panel
+    (user feedback 2026-08-29), and the container panel opens under the
+    strip — never over the sub tiles."""
+    hub._exp = _fake_exp()
+    hub._refresh_tiles()
+    hub._toggle_experiment()
+    hub._toggle_panel("plots")
+    qapp.processEvents()
+    assert hub._experiment_expanded
+    assert hub._panels["plots"].isVisible()
+
+    hub._toggle_panel("project")
+    qapp.processEvents()
+    assert not hub._experiment_expanded
+    assert not hub._sub_strip.isVisible()
+    assert not hub._tiles["experiment"]._active
+    assert not hub._panels["plots"].isVisible()
+    assert hub._open_panel_key == "project"
+    ## Flush with the strip — measured from the ribbon's top and the tile
+    ## height, not from the strip's own reported bottom: the strip once
+    ## stretched into the sub-strip's not-yet-reclaimed space, so the two
+    ## agreed with each other and both were a row too low.
+    from pytrackinganalysis.apps._hub_tiles import StatusTile
+
+    central = hub.centralWidget()
+    ribbon_top = hub._ribbon.mapTo(central, hub._ribbon.rect().topLeft()).y()
+    margins = hub._strip.layout().contentsMargins()
+    strip_height = StatusTile.HEIGHT + margins.top() + margins.bottom()
+    assert hub._strip.height() == strip_height
+    assert hub._panels["project"].y() == ribbon_top + strip_height
+
+    ## And the sub-strip alone, with no panel hanging from it.
+    hub._close_panel()
+    hub._toggle_experiment()
+    qapp.processEvents()
+    assert hub._experiment_expanded
+    hub._toggle_panel("batch")
+    qapp.processEvents()
+    assert not hub._experiment_expanded
+    assert hub._open_panel_key == "batch"
+
+
+def test_expanding_the_group_closes_an_open_container_panel(hub, qapp):
+    """The other direction of the same rule: clicking Experiment with the
+    Project (or Batch) panel open closes that panel (user feedback
+    2026-08-29)."""
+    hub._exp = _fake_exp()
+    hub._refresh_tiles()
+    for key in ("project", "batch"):
+        hub._open_panel(key)
+        qapp.processEvents()
+        assert hub._panels[key].isVisible()
+        hub._toggle_experiment()
+        qapp.processEvents()
+        assert hub._experiment_expanded
+        assert hub._open_panel_key is None
+        assert not hub._panels[key].isVisible()
+        assert not hub._tiles[key]._active
+        hub._toggle_experiment()
+        qapp.processEvents()
+
+
+def test_a_click_on_the_output_collapses_the_sub_strip(hub, monkeypatch, qapp):
+    """Click-away folds the sub-strip like it closes a panel — with a
+    sub-tile panel open or without one; a click on the ribbon does not."""
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtWidgets import QApplication
+
+    class _Press:
+        def globalPosition(self):
+            return QPointF(0, 0)
+
+    def _clicking(widget):
+        monkeypatch.setattr(QApplication, "widgetAt",
+                            staticmethod(lambda _p: widget))
+
+    hub._exp = _fake_exp()
+    hub._refresh_tiles()
+    hub._toggle_experiment()
+    hub._toggle_panel("analyze")
+    qapp.processEvents()
+
+    _clicking(hub._tiles["scripts"])          # on the sub-strip: stays
+    hub._handle_click_away(_Press())
+    assert hub._experiment_expanded
+    assert hub._open_panel_key == "analyze"
+
+    _clicking(hub._log)                       # the output: both go
+    hub._handle_click_away(_Press())
+    assert hub._open_panel_key is None
+    assert not hub._experiment_expanded
+    assert not hub._sub_strip.isVisible()
+
+    hub._toggle_experiment()                  # expanded, no panel
+    qapp.processEvents()
+    _clicking(hub._tiles["experiment"])
+    hub._handle_click_away(_Press())
+    assert hub._experiment_expanded
+    _clicking(hub._err_log)
+    hub._handle_click_away(_Press())
+    assert not hub._experiment_expanded
+
+
+def test_unloading_the_experiment_collapses_the_sub_strip(hub, qapp):
+    hub._exp = _fake_exp()
+    hub._refresh_tiles()
+    hub._toggle_experiment()
+    hub._toggle_panel("analyze")
+    qapp.processEvents()
+    assert hub._experiment_expanded
+    assert hub._open_panel_key == "analyze"
+
+    hub._exp = None
+    hub._refresh_tiles()
+    qapp.processEvents()
+    assert not hub._experiment_expanded
+    assert not hub._sub_strip.isVisible()
+    assert hub._open_panel_key is None
+    assert hub._tiles["experiment"].is_dimmed()
+    assert not hub._tiles["experiment"].is_clickable()
 
 
 def test_tiles_dim_with_hints_when_nothing_is_loaded(hub):
     # Every experiment-dependent tile waits on a load, Scripts included (its
     # recipes run against the loaded experiment) and AI too — a provider key
     # with nothing to summarize is not "ready".
-    for key in ("analyze", "plots", "scripts", "ai"):
+    for key in ("experiment", "analyze", "plots", "scripts", "ai"):
         assert hub._tiles[key].is_dimmed(), key
 
     # Batch and Project are never dimmed (user feedback 2026-08-24): they are
@@ -394,11 +660,16 @@ def test_cards_live_inside_panels_and_stay_functional(hub):
 
 
 def test_tile_summary_lines_are_hard_capped(hub):
-    tile = hub._tiles["project"]
-    tile.set_summary(["x" * 100, "y" * 100, "third line is dropped"])
-    text = tile.summary_text()
-    assert all(len(line) <= 26 for line in text.splitlines())
-    assert len(text.splitlines()) == 2
+    from pytrackinganalysis.apps._hub_tiles import StatusTile
+
+    for key, cap in (("analyze", 26),
+                     ("project", round(26 * StatusTile.WIDE_SCALE))):
+        tile = hub._tiles[key]
+        assert tile.max_line_chars() == cap
+        tile.set_summary(["x" * 100, "y" * 100, "third line is dropped"])
+        text = tile.summary_text()
+        assert all(len(line) <= cap for line in text.splitlines()), key
+        assert len(text.splitlines()) == 2
 
 
 def test_strip_has_no_divider_and_uniform_spacing(hub):
@@ -413,10 +684,10 @@ def test_strip_has_no_divider_and_uniform_spacing(hub):
 def test_status_panel_fills_the_strip_right_of_the_last_tile(hub):
     lay = hub._strip.layout()
     assert lay.itemAt(lay.count() - 1).widget() is hub._status_panel
-    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles[TILE_ORDER[-1]]
+    assert lay.itemAt(lay.count() - 2).widget() is hub._tiles[CONTAINER_TILES[-1]]
     ## The width the Tools tile used to take is the readout's now: it has to
     ## be wide enough to say which project AND which experiment.
-    tiles_width = sum(hub._tiles[k].width() for k in TILE_ORDER)
+    tiles_width = sum(hub._tiles[k].width() for k in CONTAINER_TILES)
     assert hub._status_panel.width() > hub._strip.width() - tiles_width - 40
 
 
@@ -656,56 +927,213 @@ def test_create_config_on_an_experiment_folder_targets_the_parent(
     assert opened == [str(tmp_path)]
 
 
-def test_project_tile_shows_the_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811
-    """With the Experiment tile gone, the Project tile carries load status."""
-    class _Arena:
-        experiment_name = "Rep1"
-
-    class _Exp:
-        arena = _Arena()
-
+def test_experiment_tile_shows_the_loaded_experiment(hub, qapp, tmp_path):  # noqa: F811
+    """Load status is the Experiment tile's (ADR-0012); the Project tile
+    keeps reporting the Project's replicates whatever is loaded."""
     _make_project(tmp_path)
     hub._set_project_dir(str(tmp_path / "Rep1"))
     qapp.processEvents()
     assert "2 replicates" in hub._tiles["project"].summary_text()
+    assert "no experiment" in hub._tiles["experiment"].summary_text()
 
-    hub._exp = _Exp()
+    hub._exp = _fake_exp("Rep1")
     hub._refresh_tiles()
     text = hub._tiles["project"].summary_text()
     assert "Proj" in text
-    assert "Rep1" in text
+    assert "2 replicates" in text
+    assert "Rep1" not in text
+    assert "Rep1" in hub._tiles["experiment"].summary_text()
+    assert "Rep1" in hub._status_panel.status_text()
+
+
+def test_experiment_tile_lines_are_whole_thoughts_that_fit(hub):
+    """Two lines — which experiment, and its flies — each complete, and
+    each chosen to render inside the tile without an ellipsis (user
+    feedback 2026-08-29). Nothing about what the tile opens."""
+    tile = hub._tiles["experiment"]
+    hub._exp = _fake_exp("Rep1", tracking="TWOCHOICETRACKER", n_total=12,
+                         excluded=1, flagged=0)
+    hub._refresh_tiles()
+    lines = tile.summary_text().splitlines()
+    assert lines == ["Rep1 — two-choice tracker",
+                     "12 flies · 1 excluded · 0 flagged"]
+    assert all(tile.fits(line) for line in lines)
+    assert "…" not in tile.summary_text()
+    assert "Analyze" not in tile.summary_text()
+    assert not tile._summary_lbl.wordWrap()
+
+
+def test_experiment_tile_drops_detail_rather_than_eliding(hub):
+    """A long name costs the tracking type, not the name's tail; a wide
+    count line falls back to abbreviations, then to the total alone."""
+    tile = hub._tiles["experiment"]
+    name = "Replicate_2026-08-29_chr_vs_ctrl"
+    hub._exp = _fake_exp(name, tracking="PAIRWISEINTERACTIONTRACKER",
+                         n_total=1200, excluded=150, flagged=300)
+    hub._refresh_tiles()
+    lines = tile.summary_text().splitlines()
+    assert lines[0] == name
+    assert "…" not in tile.summary_text()
+    assert all(tile.fits(line) for line in lines)
+    assert lines[1].startswith("1200 flies")
+    ## The full detail is one hover away, as for every tile.
+    assert "1200 flies" in tile.toolTip()
+
+    ## Only a name that cannot fit on its own reaches the character cap.
+    hub._exp = _fake_exp("x" * 80)
+    hub._refresh_tiles()
+    assert tile.summary_text().splitlines()[0].endswith("…")
+
+
+def test_experiment_tile_names_the_replicate_as_the_table_does(hub, qapp, tmp_path):  # noqa: F811
+    """The recording's own name (the xlsx basename — the same rig name for
+    every replicate) is not the replicate's name: the tile and the status
+    readout show the directory name the Experiments table lists (user
+    feedback 2026-08-29)."""
+    _make_project(tmp_path)
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    exp = _fake_exp("MaxIRSetup", n_total=12)
+    exp.project_directory = str(tmp_path / "Rep2")
+    hub._exp = exp
+    hub._refresh_tiles()
+    assert hub._tiles["experiment"].summary_text().splitlines()[0] == "Rep2"
+    assert "MaxIRSetup" not in hub._tiles["experiment"].summary_text()
+    assert "Rep2" in hub._status_panel.status_text()
+    assert "MaxIRSetup" not in hub._status_panel.status_text()
+
+
+def test_experiment_tile_without_counts_still_names_the_experiment(hub):
+    tile = hub._tiles["experiment"]
+    hub._exp = _fake_exp("Rep2")
+    hub._refresh_tiles()
+    assert tile.summary_text().splitlines() == ["Rep2", "no fly counts yet"]
+
+
+def _unanalyze(tmp_path, name):
+    """Strip *name*'s saved analysis so the table reads it as not analyzed."""
+    for path in (tmp_path / name / "analysis").glob("*.csv"):
+        path.unlink()
 
 
 def test_double_clicking_a_replicate_loads_it(hub, qapp, tmp_path, monkeypatch):  # noqa: F811
-    """The replicates table is the only way in: one double-click loads."""
-    _make_project(tmp_path)
+    """The replicates table is the only way in: one double-click loads. An
+    analyzed replicate loads as it is and reveals the Experiment group; one
+    with no analysis yet loads with QC and reveals the Analyze panel (user
+    feedback 2026-08-29)."""
+    _make_project(tmp_path)                    # both replicates analyzed
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
     loaded: list = []
 
-    def _fake_load(self, directory=None, *, open_analyze=False):
-        loaded.append((str(directory), open_analyze))
+    def _fake_load(self, directory=None, *, run_qc=True, reveal=None):
+        loaded.append((str(directory), run_qc, reveal))
 
     monkeypatch.setattr(type(hub), "_load_experiment", _fake_load)
 
-    row = next(r for r in range(hub._exp_table.rowCount())
-               if hub._exp_table.item(r, 0).text() == "Rep2")
-    hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
+    def _double_click(name):
+        row = next(r for r in range(hub._exp_table.rowCount())
+                   if hub._exp_table.item(r, 0).text() == name)
+        hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
 
-    assert loaded == [(str(tmp_path / "Rep2"), True)]
+    _double_click("Rep2")
+    assert loaded == [(str(tmp_path / "Rep2"), False, "group")]
     # The row that was double-clicked is the load target; the selection is
     # still the Project, so its actions keep working on the whole set.
     assert str(hub._project_dir) == str(tmp_path)
 
+    _unanalyze(tmp_path, "Rep2")
+    _double_click("Rep2")
+    assert loaded[-1] == (str(tmp_path / "Rep2"), True, "analyze")
+
+
+def test_double_clicking_an_analyzed_replicate_loads_it_without_qc(
+        hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """An analyzed replicate is loaded as it is: no QC re-run, no QC viewer,
+    and the Experiment group opens with no panel — Run QC / Run Analysis
+    are in that group for anyone who wants them redone (user feedback
+    2026-08-29)."""
+    from types import SimpleNamespace
+
+    from pytrackinganalysis.apps import hub as hub_mod
+
+    _make_project(tmp_path)                    # both replicates analyzed
+    hub._set_project_dir(str(tmp_path))
+    qapp.processEvents()
+    hub._open_panel("project")
+    qapp.processEvents()
+
+    completed: list[str] = []
+    launched: list[str] = []
+
+    class _FakeExperiment:
+        facet_cutoffs = None
+
+        def __init__(self, project_directory, config_path=None):
+            self.project_directory = str(project_directory)
+            self.config_path = config_path
+            ## The recording's name — the rig's, the same for every replicate.
+            self.arena = SimpleNamespace(experiment_name="MaxIRSetup")
+            self.parameters = SimpleNamespace(
+                get_tracking_type=lambda: SimpleNamespace(name="TWOCHOICETRACKER"))
+
+        def run_qc(self):
+            completed.append("qc")
+
+        def __str__(self):
+            return "fake experiment"
+
+    pending: dict = {}
+
+    def _fake_spawn(label, task, on_ok, on_fail, **kwargs):
+        pending.update({"label": label, "task": task, "on_ok": on_ok,
+                        "worker": SimpleNamespace(task_name=label)})
+        return True
+
+    monkeypatch.setattr(hub_mod.ExperimentMod, "Experiment", _FakeExperiment)
+    monkeypatch.setattr(hub, "_spawn_task_with_callbacks", _fake_spawn)
+    monkeypatch.setattr(hub, "_launch_subapp",
+                        lambda app, **k: launched.append(app))
+
+    row = next(r for r in range(hub._exp_table.rowCount())
+               if hub._exp_table.item(r, 0).text() == "Rep2")
+    hub._exp_table.itemDoubleClicked.emit(hub._exp_table.item(row, 0))
+    qapp.processEvents()
+
+    assert pending["label"] == "Load"
+    assert hub._open_panel_key is None
+
+    msg = pending["task"]()
+    pending["on_ok"](msg)
+    hub._on_task_finished(pending["worker"])
+    qapp.processEvents()
+
+    assert completed == []
+    assert launched == []
+    assert "not re-run" in msg
+    assert hub._exp.project_directory == str(tmp_path / "Rep2")
+    assert hub._experiment_expanded
+    assert hub._sub_strip.isVisible()
+    assert hub._tiles["experiment"]._active
+    assert hub._open_panel_key is None
+    assert not hub._panels["analyze"].isVisible()
+    ## Named as the table names it, not by the recording.
+    assert hub._tiles["experiment"].summary_text().startswith("Rep2")
+    assert "Experiment: Rep2" in hub._status_panel.status_text()
+    assert "MaxIRSetup" not in hub._status_panel.status_text()
+
 
 def test_replicate_double_click_opens_analyze_after_load_finishes(
         hub, qapp, tmp_path, monkeypatch):  # noqa: F811
+    """A replicate with no analysis yet: Load + QC, the QC viewer, then the
+    Analyze panel once the load finishes."""
     from pathlib import Path
     from types import SimpleNamespace
 
     from pytrackinganalysis.apps import hub as hub_mod
 
     _make_project(tmp_path)
+    _unanalyze(tmp_path, "Rep2")
     hub._set_project_dir(str(tmp_path))
     qapp.processEvents()
     hub._open_panel("project")
@@ -741,9 +1169,11 @@ def test_replicate_double_click_opens_analyze_after_load_finishes(
         })
         return True
 
+    launched: list[str] = []
     monkeypatch.setattr(hub_mod.ExperimentMod, "Experiment", _FakeExperiment)
     monkeypatch.setattr(hub, "_spawn_task_with_callbacks", _fake_spawn)
-    monkeypatch.setattr(hub, "_launch_subapp", lambda *a, **k: None)
+    monkeypatch.setattr(hub, "_launch_subapp",
+                        lambda app, **k: launched.append(app))
 
     row = next(r for r in range(hub._exp_table.rowCount())
                if hub._exp_table.item(r, 0).text() == "Rep2")
@@ -761,6 +1191,7 @@ def test_replicate_double_click_opens_analyze_after_load_finishes(
     qapp.processEvents()
 
     assert completed == ["qc"]
+    assert launched == ["qc"]
     assert hub._exp.project_directory == str(tmp_path / "Rep2")
     assert hub._open_panel_key == "analyze"
     assert hub._panels["analyze"].isVisible()
@@ -774,6 +1205,7 @@ def test_failed_replicate_load_does_not_open_analyze_for_stale_experiment(
     from types import SimpleNamespace
 
     _make_project(tmp_path)
+    _unanalyze(tmp_path, "Rep2")
     hub._set_project_dir(str(tmp_path))
     hub._exp = SimpleNamespace(
         project_directory=str(tmp_path / "Rep1"),
