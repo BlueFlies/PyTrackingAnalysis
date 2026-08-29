@@ -55,7 +55,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     # Tracking-specific (new to PyTrackingAnalysis)
     "track":      ("fa5s.route",               Category.ANALYZE),
     "batch":      ("fa5s.layer-group",         Category.LOAD),
-    "experiment": ("fa5s.flask",               Category.LOAD),
+    "experiment": ("fa5s.flask",               Category.QC),
     "distance":   ("fa5s.ruler-horizontal",    Category.PLOTS),
     "quality":    ("fa5s.check-circle",        Category.QC),
     "xy":         ("fa5s.crosshairs",          Category.PLOTS),

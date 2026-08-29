@@ -182,8 +182,8 @@ class HubWindow(QMainWindow):
     #: The four tiles the Experiment tile expands into (ADR-0012). Their
     #: panels anchor under the sub-strip, so opening one expands it.
     _EXPERIMENT_SUBTILES = ("analyze", "plots", "scripts", "ai")
-    #: The sub-strip's fixed height: one tile plus its bottom margin.
-    _SUB_STRIP_HEIGHT = StatusTile.HEIGHT + 8
+    #: The sub-strip's fixed height: one compact tile plus its bottom margin.
+    _SUB_STRIP_HEIGHT = StatusTile.COMPACT_HEIGHT + 8
 
     _BATCH_PROJECT_COLUMN_MAX_WIDTH = PROJECT_COLUMN_MAX_WIDTH
 
@@ -287,7 +287,10 @@ class HubWindow(QMainWindow):
             ## title matches its icon (user feedback 2026-08-22).
             ("batch", "Batch", "batch", Category.LOAD),
             ("project", "Project", "project", Category.NEUTRAL),
-            ("experiment", "Experiment", "experiment", Category.LOAD),
+            ## QC red, not LOAD blue: three levels want three colors, and
+            ## blue is Batch's (user feedback 2026-08-29). Red is otherwise
+            ## unused on the ribbon — purple is the Scripts sub-tile's.
+            ("experiment", "Experiment", "experiment", Category.QC),
         ):
             tile = StatusTile(key, title, icon_name, cat, wide=True)
             self._tiles[key] = tile
@@ -308,7 +311,10 @@ class HubWindow(QMainWindow):
         ## The sub-strip: hidden until the Experiment tile expands it. Its
         ## tiles sit left-aligned under the Experiment tile (the indent is
         ## set when it opens — see _place_sub_strip) so they read as that
-        ## tile's contents rather than a second, unrelated row.
+        ## tile's contents rather than a second, unrelated row. They are
+        ## title-only (user feedback 2026-08-29): the Experiment tile above
+        ## already says what is loaded, so each sub-tile needs only its
+        ## name — its status is a hover away, in the tooltip.
         self._sub_strip = QFrame()
         self._sub_strip.setObjectName("TileSubStrip")
         sub_lay = QHBoxLayout(self._sub_strip)
@@ -320,7 +326,7 @@ class HubWindow(QMainWindow):
             ("scripts", "Scripts", "scripts", Category.SCRIPTS),
             ("ai", "AI", "ai", Category.AI),
         ):
-            tile = StatusTile(key, title, icon_name, cat)
+            tile = StatusTile(key, title, icon_name, cat, compact=True)
             tile.clicked.connect(self._toggle_panel)
             self._tiles[key] = tile
             sub_lay.addWidget(tile)
@@ -361,10 +367,15 @@ class HubWindow(QMainWindow):
             ## Three sections, top to bottom: project identity, the
             ## replicates, then what to do with them (ADR-0005).
             "project": (640, ["project", "experiments", "projectview"]),
-            "analyze": (460, ["analyze"]),
-            "plots": (500, ["plots"]),
-            "scripts": (460, ["scripts"]),
-            "ai": (440, ["ai"]),
+            ## Experiment-level panels are a column of buttons, and a button
+            ## only needs its label: these widths give the longest label in
+            ## each panel a little air and no more (user feedback
+            ## 2026-08-29 — the 440–500px panels stretched every button to
+            ## twice what it said).
+            "analyze": (310, ["analyze"]),
+            "plots": (260, ["plots"]),
+            "scripts": (390, ["scripts"]),
+            "ai": (270, ["ai"]),
         }
         for key, (width, card_keys) in panel_map.items():
             panel = TilePanel(key, width, parent=central)

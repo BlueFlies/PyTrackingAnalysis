@@ -789,7 +789,8 @@ and **clicking it expands a second row of four sub-tiles** beneath it —
 **Analyze · Plots · Scripts · AI** — the tools that act on that experiment.
 Clicking Experiment again folds them away — so does choosing Batch or
 Project, or clicking into the output area: the expanded row counts as the
-one open thing. A tile shows only status (the
+one open thing. The sub-tiles are title-only chips (their status is in the
+tooltip); a container tile shows only status (the
 project's name and replicate health, the loaded experiment's fly counts,
 whether analysis is faceted, …); **clicking a Batch, Project, or sub-tile
 drops an anchored panel** holding all of that area's controls, under the

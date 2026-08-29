@@ -26,7 +26,9 @@ counts, then the loaded experiment) depending on state.
 - **The Experiment tile is a group, not a panel.** Clicking it expands a
   **sub-strip** — a second row of the four regular-width tiles it groups,
   **Analyze · Plots · Scripts · AI**, left-aligned under it — and clicking it
-  again collapses the row. The four tiles, their panels, cards, and handlers
+  again collapses the row. The sub-tiles are **title-only** (icon and name
+  on a 38px chip): the Experiment tile above already says what is loaded,
+  so their status lines go to the tooltip instead of the chip. The four tiles, their panels, cards, and handlers
   are the existing ones, unchanged; only their row moved. Opening one of
   those panels programmatically (the auto-open of Analyze after Load + QC)
   expands the sub-strip first, because the panel hangs from a tile in it.

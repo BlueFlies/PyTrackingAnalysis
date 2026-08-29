@@ -141,9 +141,30 @@ def test_container_tiles_are_wide_and_one_width(hub):
         hub._strip.width() - sum(t.width() for t in wide) - spacing - margins
     regular = [hub._tiles[k] for k in SUBTILES]
     assert not any(t.is_wide() for t in regular)
-    assert {t.minimumWidth() for t in regular} == {StatusTile.MIN_WIDTH}
-    assert {t.maximumWidth() for t in regular} == {StatusTile.MAX_WIDTH}
+    assert {t.minimumWidth() for t in regular} == {StatusTile.COMPACT_MIN_WIDTH}
+    assert {t.maximumWidth() for t in regular} == {StatusTile.COMPACT_MAX_WIDTH}
     assert wide[0].max_line_chars() > regular[0].max_line_chars()
+
+
+def test_sub_tiles_are_title_only(hub):
+    """The sub-strip's tiles show just icon and title — the Experiment tile
+    above already says what is loaded (user feedback 2026-08-29). Their
+    status lines live on in the tooltip, and the strip is one short row."""
+    from pytrackinganalysis.apps._hub_tiles import StatusTile
+
+    for key in SUBTILES:
+        tile = hub._tiles[key]
+        assert tile.is_compact()
+        assert tile.height() == StatusTile.COMPACT_HEIGHT
+        assert tile.maximumWidth() == StatusTile.COMPACT_MAX_WIDTH
+        assert tile._summary_lbl.isHidden()
+        assert tile._summary_lbl.text() == ""
+        assert tile.toolTip() == tile.summary_text()
+    assert hub._tiles["analyze"].toolTip() == "load an experiment first"
+    assert hub._SUB_STRIP_HEIGHT == StatusTile.COMPACT_HEIGHT + 8
+    for key in CONTAINER_TILES:
+        assert not hub._tiles[key].is_compact()
+        assert hub._tiles[key].height() == StatusTile.HEIGHT
 
 
 def test_experiment_tile_is_inert_until_an_experiment_loads(hub, qapp):
@@ -210,6 +231,32 @@ def test_experiment_tile_expands_the_sub_tiles_and_collapses_them(hub, qapp):
     assert not panel.isVisible()
     for key in SUBTILES:
         assert not hub._tiles[key].isVisible(), key
+
+
+def test_experiment_panels_are_narrow_but_every_button_label_fits(hub, qapp):
+    """The four experiment-level panels are a column of buttons, and a
+    button only needs its label (user feedback 2026-08-29): each panel is
+    at most 390px, and no button is squeezed below its minimum size hint —
+    Qt would clip the label, not elide it."""
+    from PyQt6.QtWidgets import QPushButton
+
+    hub._exp = _fake_exp("Rep1", tracking="TWOCHOICETRACKER", n_total=12)
+    hub._exp.facet_cutoffs = [10, 20]
+    hub._on_experiment_ready()               # populates the plot buttons
+    qapp.processEvents()
+    for key in SUBTILES:
+        hub._open_panel(key)
+        qapp.processEvents()
+        panel = hub._panels[key]
+        assert panel.width() <= 390, key
+        buttons = [b for b in panel.findChildren(QPushButton)
+                   if b.text() and b.isVisible()]
+        assert buttons, key
+        if key == "plots":
+            assert len(buttons) >= 4         # the real plot buttons, not a stub
+        for btn in buttons:
+            assert btn.width() >= btn.minimumSizeHint().width(), \
+                (key, btn.text(), btn.width(), btn.minimumSizeHint().width())
 
 
 def test_opening_an_experiment_panel_expands_the_sub_strip(hub, qapp):
@@ -661,14 +708,15 @@ def test_cards_live_inside_panels_and_stay_functional(hub):
 
 def test_tile_summary_lines_are_hard_capped(hub):
     from pytrackinganalysis.apps._hub_tiles import StatusTile
+    from pytrackinganalysis.ui import Category
 
-    for key, cap in (("analyze", 26),
-                     ("project", round(26 * StatusTile.WIDE_SCALE))):
-        tile = hub._tiles[key]
+    regular = StatusTile("x", "X", "batch", Category.LOAD)
+    for tile, cap in ((regular, 26),
+                      (hub._tiles["project"], round(26 * StatusTile.WIDE_SCALE))):
         assert tile.max_line_chars() == cap
         tile.set_summary(["x" * 100, "y" * 100, "third line is dropped"])
         text = tile.summary_text()
-        assert all(len(line) <= cap for line in text.splitlines()), key
+        assert all(len(line) <= cap for line in text.splitlines()), tile.key
         assert len(text.splitlines()) == 2
 
 

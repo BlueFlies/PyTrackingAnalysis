@@ -52,6 +52,10 @@ class StatusTile(QFrame):
     *wide* tiles are ``WIDE_SCALE`` the regular width range, with a
     proportionally longer summary cap. The cap is a last resort: a summary
     that must not elide is chosen with :meth:`fitting`, which measures.
+
+    *compact* tiles are title-only — icon and title on one short chip, no
+    summary lines (the sub-strip's tiles, user feedback 2026-08-29); their
+    status still goes to the tooltip.
     """
 
     clicked = pyqtSignal(str)
@@ -68,10 +72,14 @@ class StatusTile(QFrame):
     #: status readout keeps most of the strip.
     WIDE_SCALE = 1.75 * 0.75
     HEIGHT = 84
+    #: Title-only tiles: one icon + title row, and a narrower width range.
+    COMPACT_HEIGHT = 38
+    COMPACT_MIN_WIDTH = 96
+    COMPACT_MAX_WIDTH = 150
 
     def __init__(self, key: str, title: str, icon_name: str,
                  category: Category, parent: QWidget | None = None, *,
-                 wide: bool = False) -> None:
+                 wide: bool = False, compact: bool = False) -> None:
         super().__init__(parent)
         self.key = key
         self._category = category
@@ -79,6 +87,8 @@ class StatusTile(QFrame):
         self._active = False
         self._clickable = True
         self._wide = wide
+        self._compact = compact
+        self._plain_summary = ""
         #: (left, right) corner radii. With hairline seams between chips a
         #: gentle radius keeps the seams from flaring near the corners.
         self._radii = (5, 5)
@@ -87,9 +97,14 @@ class StatusTile(QFrame):
         scale = self.WIDE_SCALE if wide else 1.0
         self.setSizePolicy(QSizePolicy.Policy.Preferred,
                            QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(round(self.MIN_WIDTH * scale))
-        self.setMaximumWidth(round(self.MAX_WIDTH * scale))
-        self.setFixedHeight(self.HEIGHT)
+        if compact:
+            self.setMinimumWidth(self.COMPACT_MIN_WIDTH)
+            self.setMaximumWidth(self.COMPACT_MAX_WIDTH)
+            self.setFixedHeight(self.COMPACT_HEIGHT)
+        else:
+            self.setMinimumWidth(round(self.MIN_WIDTH * scale))
+            self.setMaximumWidth(round(self.MAX_WIDTH * scale))
+            self.setFixedHeight(self.HEIGHT)
         self._max_line_chars = round(self._MAX_LINE_CHARS * scale)
 
         lay = QVBoxLayout(self)
@@ -109,25 +124,41 @@ class StatusTile(QFrame):
         self._summary_lbl = QLabel("")
         self._summary_lbl.setStyleSheet("font-size: 9pt;")
         self._summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
-        lay.addWidget(self._summary_lbl, 1,
-                      Qt.AlignmentFlag.AlignTop)
+        if compact:
+            ## Title-only: the label exists (fits() measures with its font)
+            ## but never shows.
+            self._summary_lbl.hide()
+        else:
+            lay.addWidget(self._summary_lbl, 1,
+                          Qt.AlignmentFlag.AlignTop)
         self._restyle()
 
     # ------------------------------------------------------------------
 
     def set_summary(self, lines: list[str]) -> None:
         full = [str(line) for line in lines]
+        self._plain_summary = "\n".join(full)
+        ## The untruncated summary is always one hover away — and for a
+        ## compact tile it is the only place the summary goes.
+        self.setToolTip(self._plain_summary)
+        if self._compact:
+            return
         clipped = []
         for line in full[:2]:
             if len(line) > self._max_line_chars:
                 line = line[: self._max_line_chars - 1] + "…"
             clipped.append(line)
         self._summary_lbl.setText("\n".join(clipped))
-        ## The untruncated summary is always one hover away.
-        self.setToolTip("\n".join(full))
 
     def summary_text(self) -> str:
+        """The status lines as shown — or, for a compact tile, as its
+        tooltip carries them."""
+        if self._compact:
+            return self._plain_summary
         return self._summary_lbl.text()
+
+    def is_compact(self) -> bool:
+        return self._compact
 
     def max_line_chars(self) -> int:
         """The summary cap this tile's width affords."""
@@ -234,7 +265,8 @@ class StatusTile(QFrame):
         container tiles would sit at ~208px whatever the window; the
         Preferred policy still lets them shrink to the minimum when the
         window is narrow."""
-        return QSize(self.maximumWidth(), self.HEIGHT)
+        return QSize(self.maximumWidth(),
+                     self.COMPACT_HEIGHT if self._compact else self.HEIGHT)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.MouseButton.LeftButton and self._clickable:
