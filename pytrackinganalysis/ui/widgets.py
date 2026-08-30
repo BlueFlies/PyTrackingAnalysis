@@ -184,11 +184,17 @@ class Card(QFrame):
         subtitle: str | None = None,
         icon_name: str | None = None,
         parent: QWidget | None = None,
+        *,
+        tinted_title: bool = False,
     ) -> None:
+        """*tinted_title* paints the title text in the category color (as
+        the Hub's tiles paint theirs) instead of the theme's text color, so
+        a card can match the tile it opens under."""
         super().__init__(parent)
         self.setObjectName("PtrackCard")
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._category = category
+        self._tinted_title = tinted_title
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(14, 12, 14, 12)
@@ -272,11 +278,12 @@ class Card(QFrame):
             f"QFrame#PtrackCard {{ border-radius: 10px; "
             f"background: {bg.name()}; border: {border}; }}"
         )
+        title = accent if self._tinted_title else text
         self._title_lbl.setStyleSheet(
             f"QLabel#PtrackCardTitle {{"
             f"  border-left: 4px solid {accent};"
             f"  padding-left: 8px;"
-            f"  color: {text};"
+            f"  color: {title};"
             f"}}"
         )
         if self._subtitle_lbl is not None:

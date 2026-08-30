@@ -720,6 +720,24 @@ def test_tile_summary_lines_are_hard_capped(hub):
         assert len(text.splitlines()) == 2
 
 
+def test_batch_card_title_wears_the_batch_tiles_color(hub):
+    """The Batch panel's title matches the tile it opens under — LOAD-blue
+    text, like the tile's title — rather than the theme's text color the
+    other cards use (user feedback 2026-08-29). Dimmed, it mutes like the
+    rest."""
+    from pytrackinganalysis.ui import Category, category_color
+
+    blue = category_color(Category.LOAD)
+    card = hub._cards["batch"]
+    assert f"color: {blue}" in card._title_lbl.styleSheet()
+    assert hub._tiles["batch"]._title_lbl.styleSheet().startswith(f"color: {blue}")
+    assert f"color: {blue}" not in hub._cards["project"]._title_lbl.styleSheet()
+    card.set_dimmed(True)
+    assert f"color: {blue}" not in card._title_lbl.styleSheet()
+    card.set_dimmed(False)
+    assert f"color: {blue}" in card._title_lbl.styleSheet()
+
+
 def test_strip_has_no_divider_and_uniform_spacing(hub):
     """The strip is one flat row: no divider widget, no extra spacer — the
     grouping cue lives in the tiles' own dim/lit states."""

@@ -1714,11 +1714,15 @@ class HubWindow(QMainWindow):
         A Batch Run executes one designated Project Script in every checked
         Project — there is no third script level, and a Batch never pools
         results across Projects."""
+        ## LOAD-blue, like the Batch tile (whose title and glyph are LOAD-
+        ## blue): the card's title wears the same color as the tile it
+        ## opens under (user feedback 2026-08-29).
         card = Card(
             "Batch",
-            category=Category.NEUTRAL,
+            category=Category.LOAD,
             subtitle="Run a Project Script in every Project of this folder.",
             icon_name="batch",
+            tinted_title=True,
         )
         card.add_title_widget(
             HelpButton("batch_run", tooltip="Batch Runs over many Projects")
